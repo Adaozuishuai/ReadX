@@ -1,0 +1,192 @@
+{
+  "resources": [
+    {
+      "finding": {
+        "k": "代码公开声明",
+        "v": "论文声称代码公开，并给出链接 https://github.com/Ruyi-Zha/naf_cbct",
+        "page": 1,
+        "excerpt": "Code available at https://github.com/Ruyi-Zha/naf_cbct."
+      },
+      "assessment": "AI分析/推断：这是论文声称的公开性，尚未在线核实仓库是否存在、是否包含训练/评测脚本、是否与论文版本一致。复现前不能假定代码可用。",
+      "action": "在线访问该 URL，核对仓库是否包含数据准备、训练、评测脚本及与论文一致的超参；若不可用，则需按论文方法自行实现。"
+    },
+    {
+      "finding": {
+        "k": "人类器官数据来源",
+        "v": "人类器官数据来自公开数据集 LIDC-IDRI 与 Open Scientific Visualization Datasets，包含 chest、jaw、foot、abdomen",
+        "page": 6,
+        "excerpt": "We evaluate our method using public datasets of human organ CTs [4,12], including chest, jaw, foot and abdomen. The chest data are from LIDC-IDRI dataset [4], and the rest are from Open Scientific Visualization Datasets [12]."
+      },
+      "assessment": "AI分析/推断：数据为公开来源，但论文未说明具体下载版本、预处理脚本与划分，复现时数据一致性存在风险。",
+      "action": "核对原 PDF 与补充材料中是否给出具体数据版本/预处理；从官方来源下载后，按论文描述的 TIGRE 投影生成流程重建投影。"
+    },
+    {
+      "finding": {
+        "k": "体模数据来源",
+        "v": "体模数据由 GE C-arm Medical System 扫描硅主动脉体模获得，含 582 张 500×500 透视投影，并生成 512×512×510 CT 作为 ground truth",
+        "page": 6,
+        "excerpt": "We collect a phantom dataset by scanning a silicon aortic phantom with GE C-arm Medical System. This system captures 582 500×500 fluoroscopy projections with position primary angle from -103◦to 93◦and position secondary angle of 0◦. A 512×512×510 CT image is also generated with inbuilt algorithms as the ground truth."
+      },
+      "assessment": "AI分析/推断：体模数据为自采数据，论文未说明是否公开，复现该数据集存在不可获得风险。",
+      "action": "核对补充材料或官方仓库是否提供体模数据；若不可得，需在人类器官数据上复现并单独说明体模结果无法验证。"
+    },
+    {
+      "finding": {
+        "k": "投影生成工具",
+        "v": "人类器官数据使用 TIGRE 工具箱生成投影，50 个投影，3% 噪声，180° 范围",
+        "page": 6,
+        "excerpt": "In TIGRE [5], we capture 50 projections with 3% noise in the range of 180◦. We train our model with these projections and evaluate its performance with the raw volumetric CT data."
+      },
+      "assessment": "AI分析/推断：TIGRE 的几何参数、噪声注入方式与随机种子未说明，投影生成细节直接影响复现一致性。",
+      "action": "核对补充材料中 TIGRE 几何配置与噪声实现；固定随机种子与几何参数后重新生成投影，比较重建指标。"
+    }
+  ],
+  "environment": [
+    {
+      "finding": {
+        "k": "深度学习框架",
+        "v": "方法用 PyTorch 实现",
+        "page": 6,
+        "excerpt": "Our proposed method is implemented in PyTorch [17]."
+      },
+      "assessment": "AI分析/推断：仅知框架为 PyTorch，未说明版本号，不同版本可能影响 hash encoder 等实现行为。",
+      "action": "核对官方仓库的 requirements 或环境文件；若无，则记录实际使用的 PyTorch 版本并做一致性验证。"
+    },
+    {
+      "finding": {
+        "k": "GPU 型号",
+        "v": "所有实验在单张 RTX 3090 GPU 上完成",
+        "page": 6,
+        "excerpt": "All experiments are conducted on a single RTX 3090 GPU."
+      },
+      "assessment": "AI分析/推断：论文报告了 GPU 型号但未给出 CUDA 版本、显存占用或特殊算子依赖；hash encoder 可能依赖自定义 CUDA 扩展。",
+      "action": "核对官方仓库是否含自定义 CUDA 算子及编译说明；在目标环境先做小规模 profiling，记录峰值显存与编译依赖。"
+    },
+    {
+      "finding": {
+        "k": "hash encoder 超参来源",
+        "v": "hash encoder 使用与 Müller 等 [14] 相同的超参数设置",
+        "page": 6,
+        "excerpt": "We use the same hyper-parameter setting for hash encoder as [14]."
+      },
+      "assessment": "AI分析/推断：论文将 hash encoder 超参外包给引用文献，未在本方法中列出具体值，复现需查阅 [14] 并确认其默认配置。",
+      "action": "核对补充材料是否列出 hash encoder 具体超参；若否，按 [14] 默认配置实现并做敏感性实验。"
+    }
+  ],
+  "cost": [
+    {
+      "finding": {
+        "k": "重建时间",
+        "v": "论文称方法可在 10-40 分钟内重建详细 CT 模型，与迭代方法相当",
+        "page": 3,
+        "excerpt": "While most INR approaches take hours for training, our method can reconstruct a detailed CT model within 10-40 minutes, which is comparable to iterative methods."
+      },
+      "assessment": "AI分析/推断：该时间范围未区分数据集大小与硬件细节，仅可作为论文报告成本，不能据此推断用户设备可跑或显存占用。",
+      "action": "在固定 views、几何、分辨率、batch 下先做小规模 profiling，再报告实际时间与峰值显存。"
+    },
+    {
+      "finding": {
+        "k": "与 IntraTomo3D 的时间对比",
+        "v": "NAF 比频率编码深度学习方法 IntraTomo3D 快 3 倍，IntraTomo3D 训练需超过一小时",
+        "page": 8,
+        "excerpt": "IntraTomo3D requires more than one hour to train the network. Benefiting from the compact network design, NAF spends similar running time to iterative methods and is 3×faster than the frequency-encoding deep learning method IntraTomo3D."
+      },
+      "assessment": "AI分析/推断：该对比为论文报告值，未给出各数据集具体耗时数值，复现时需自行测量。",
+      "action": "在相同硬件与数据集上分别运行 NAF 与 IntraTomo3D，记录收敛时间与最终指标，验证 3 倍加速是否可复现。"
+    },
+    {
+      "finding": {
+        "k": "网络规模",
+        "v": "NAF 的 MLP 为 4 层全连接，前三层 32 通道，最后一层 1 个神经元；比 Zang 等 [28] 的 6 层 256 通道 MLP 小 10 倍",
+        "page": 5,
+        "excerpt": "the network is composed of 4 fully-connected layers. The first three layers are 32-channel wide and have ReLU activation functions in between, while the last layer has one neuron followed by a sigmoid activation. A skip connection is included to concatenate the network input to the second layer’s activation. By contrast, Zang et al. [28] use a 6-layer 256-channel MLP to learn features from a frequency encoder. Our network is 10×smaller."
+      },
+      "assessment": "AI分析/推断：网络规模小意味着参数量少，但论文未给出具体参数量或显存占用，不能据此推断显存需求。",
+      "action": "按论文结构实现后统计参数量，并在固定 batch 下测量峰值显存。"
+    }
+  ],
+  "missing": [
+    {
+      "finding": {
+        "k": "射线采样点数 N 的完整规则",
+        "v": "论文给出 chest CT 采样 192 点，并称采样数取决于 CT 尺寸，但未给出其他数据集的 N 值",
+        "page": 6,
+        "excerpt": "The sampling quantity of each ray depends on the size of CT data. For example, we sample 192 points along each ray for the 128×128×128 chest CT."
+      },
+      "assessment": "AI分析/推断：其他数据集（jaw、foot、abdomen、aorta）的 N 未说明，复现时需自行确定，可能影响重建质量与时间。",
+      "action": "核对补充材料是否列出各数据集 N；若否，按 CT 尺寸比例设定 N 并做敏感性实验。"
+    },
+    {
+      "finding": {
+        "k": "学习率调度细节",
+        "v": "使用 Adam 优化器，学习率从 1 ×10−3 降至 1 ×10−4，但未说明调度策略与步数",
+        "page": 6,
+        "excerpt": "We use Adam optimizer with a learning rate that starts at 1 ×10−3 and steps down to 1 ×10−4."
+      },
+      "assessment": "AI分析/推断：调度策略（如 step、cosine、plateau）与触发条件未说明，影响收敛行为与复现一致性。",
+      "action": "核对补充材料或官方仓库中的调度实现；若否，采用常见 step 调度并记录实际曲线。"
+    },
+    {
+      "finding": {
+        "k": "体模投影几何参数",
+        "v": "体模扫描给出主角度 -103° 到 93°、次角度 0°，但未说明源到探测器距离、源到旋转中心距离等几何参数",
+        "page": 6,
+        "excerpt": "This system captures 582 500×500 fluoroscopy projections with position primary angle from -103◦to 93◦and position secondary angle of 0◦."
+      },
+      "assessment": "AI分析/推断：CBCT 重建依赖精确几何，缺失几何参数将导致体模数据无法正确复现。",
+      "action": "核对补充材料或官方仓库是否提供体模几何参数；若否，需从扫描系统元数据中提取或放弃体模复现。"
+    },
+    {
+      "finding": {
+        "k": "训练迭代次数/收敛判据",
+        "v": "论文未说明训练迭代次数或收敛判据",
+        "page": null,
+        "excerpt": null
+      },
+      "assessment": "AI分析/推断：当前材料未找到迭代次数或收敛判据，复现时无法确定训练终止条件，可能影响时间与指标对比。",
+      "action": "核对补充材料或官方仓库中的训练配置；若否，按损失曲线平台期设定终止条件并记录。"
+    }
+  ],
+  "risks": [
+    {
+      "finding": {
+        "k": "评测指标拼写",
+        "v": "论文将 PSNR 写作 PNSR，并称 PSNR 统计评估伪影抑制，SSIM 衡量感知差异",
+        "page": 6,
+        "excerpt": "We evaluate five methods quantitatively in terms of peak signal-to-noise ratio (PNSR) and structural similarity (SSIM) [25]. PSNR (dB) statistically assesses the artifact suppression performance, while SSIM measures the perceptual difference between two signals."
+      },
+      "assessment": "AI分析/推断：拼写不一致可能反映笔误，但指标定义本身明确；复现时需确认实际计算的是 PSNR 而非其他变体。",
+      "action": "核对官方仓库中的指标实现，确认使用标准 PSNR/SSIM 及数据范围（如归一化方式）。"
+    },
+    {
+      "finding": {
+        "k": "投影噪声注入",
+        "v": "人类器官数据投影含 3% 噪声，但未说明噪声类型与注入方式",
+        "page": 6,
+        "excerpt": "In TIGRE [5], we capture 50 projections with 3% noise in the range of 180◦."
+      },
+      "assessment": "AI分析/推断：噪声类型（高斯/泊松）与注入位置未说明，不同实现会改变重建难度与指标。",
+      "action": "核对补充材料或 TIGRE 配置；固定噪声模型与随机种子后重新生成投影并比较指标。"
+    },
+    {
+      "finding": {
+        "k": "基线实现来源",
+        "v": "FDK、SART、ASD-POCS 为已有方法，IntraTomo3D 为作者实现的 CBCT 变体",
+        "page": 6,
+        "excerpt": "We implement a CBCT variant of IntraTomo [28], named IntraTomo3D, as an example of frequency-encoding deep learning methods."
+      },
+      "assessment": "AI分析/推断：基线实现细节（参数、迭代次数、正则权重）未说明，复现时基线指标可能不可比。",
+      "action": "核对补充材料或官方仓库中的基线配置；若否，记录实际使用的基线参数并做对比实验。"
+    },
+    {
+      "finding": {
+        "k": "hash encoder 实现一致性",
+        "v": "论文采用 hash encoder，输出维度为 32，并称其利用人体器官的平滑性与稀疏性",
+        "page": 5,
+        "excerpt": "Compared with frequency encoder, hash encoder produces much smaller outputs (32 in our setting) with competitive feature quality for two reasons."
+      },
+      "assessment": "AI分析/推断：hash encoder 的具体实现（哈希函数、分辨率层级、特征表大小）依赖 [14]，若实现不一致将影响重建质量与时间。",
+      "action": "核对官方仓库是否复用 [14] 的官方实现；若自行实现，需与 [14] 默认配置对齐并做消融实验。"
+    }
+  ]
+}

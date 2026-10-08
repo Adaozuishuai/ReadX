@@ -1,0 +1,47 @@
+{
+  "papers" : [
+    {
+      "abstract" : "【摘要概述】IntraTomo 面向病态的 CT 反问题，将基于学习的方法与基于模型的方法结合：『正弦图预测模块』把密度场表示为可微的神经网络函数，从不完整或退化的投影数据中自监督训练；『几何修正模块』施加局部与非局部先验；两模块迭代执行。在 limited-angle（45°）、极稀疏视角（最少 8 views）与超分辨（8×）三类设定下均优于此前工作，模拟与真实数据一致。",
+      "authors" : [
+        "Guangming Zang",
+        "Ramzi Idoughi",
+        "Rui Li",
+        "Peter Wonka",
+        "Wolfgang Heidrich"
+      ],
+      "id" : "intratomo-2021",
+      "pdfUrl" : "https:\/\/vccimaging.org\/Publications\/Zang2021IntraTomo\/Zang2021IntraTomo.pdf",
+      "title" : "IntraTomo: Self-supervised Learning-based Tomography via Sinogram Synthesis and Prediction",
+      "venue" : "ICCV 2021",
+      "why" : "NAF 的直接前作：同样自监督、无需训练数据，但走『正弦图预测 + 几何修正』两模块迭代路线，而不是连续函数表示；而且它敢测 8 views 和 45° limited-angle——正好对照 NAF 只报 50 views 的保守设定。注意：本文无 arXiv 版，PDF 从作者主页取。",
+      "year" : "2021"
+    },
+    {
+      "arxiv" : "2312.15676",
+      "title" : "3DGR-CT: Sparse-View CT Reconstruction with a 3D Gaussian Representation",
+      "venue" : "arXiv 2023",
+      "why" : "把『连续函数』换成『3D 高斯』：表示范式与 NAF 正面相对撞，是 INDEX 对比表最想回答的问题——离散高斯和连续场在稀疏视角下谁更稳。"
+    },
+    {
+      "arxiv" : "2401.00135",
+      "title" : "Deep Radon Prior: A Fully Unsupervised Framework for Sparse-View CT Reconstruction",
+      "venue" : "arXiv 2023",
+      "why" : "另一条路线：不用 INR \/ 高斯表示，而是把先验放在 Radon 域。用来检验一个更大的问题——决定重建质量的到底是『表示』还是『先验』。"
+    },
+    {
+      "abstract" : "Computed tomography (CT) throughput is limited by scan time, which grows with both the number of projections acquired and the detector integration time for each projection. Reconstructing high-quality volumes from sparse-view or low-dose measurements therefore depends on using an informative prior, typically a neural network trained for one specific scan setting and retrained whenever the modality, geometry, or material changes. We investigate whether a single diffusion model trained across several imaging domains can instead serve as a reusable prior for heterogeneous CT reconstruction problems. We evaluate the proposed method using the same diffusion visual transformer model and normalized denoising strength on three datasets that differ in modality, beam geometry, material, and degradation type, spanning additively manufactured metal parts and concrete microstructure imaged with cone-bean X-ray CT and parallel-beam neutron CT respectively. The proposed method improves upon analytic reconstructions in all three cases, demonstrating transferability across the evaluated problems and providing a step toward a reusable foundation prior for heterogeneous CT reconstruction.",
+      "arxiv" : "2608.23190",
+      "authors" : [
+        "Haley Duba-Sullivan",
+        "Patxi Fernandez-Zelaia",
+        "Obaidullah Rahman",
+        "Amirkoushyar Ziabari"
+      ],
+      "pdfUrl" : "https:\/\/arxiv.org\/pdf\/2608.23190",
+      "published" : "2026-08-24",
+      "source" : "arXiv",
+      "title" : "Toward a Foundation Plug-and-Play Prior for Computed Tomography Reconstruction via a Multimodal Diffusion Model",
+      "venue" : "arXiv"
+    }
+  ]
+}

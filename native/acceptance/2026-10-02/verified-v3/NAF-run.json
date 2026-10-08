@@ -1,0 +1,42 @@
+[
+  {
+    "module" : "tldr",
+    "seconds" : "4",
+    "status" : "structural validation passed; semantic review pending"
+  },
+  {
+    "module" : "deep",
+    "seconds" : "32",
+    "status" : "structural validation passed; semantic review pending"
+  },
+  {
+    "module" : "method",
+    "seconds" : "29",
+    "status" : "structural validation passed; semantic review pending"
+  },
+  {
+    "module" : "critical",
+    "seconds" : "60",
+    "status" : "structural validation passed; semantic review pending"
+  },
+  {
+    "module" : "experiment",
+    "seconds" : "72",
+    "status" : "failed: 字段「hash encoder 超参数」缺少可核对的原文摘录或页码；未保存，请重试。"
+  },
+  {
+    "module" : "apply",
+    "seconds" : "150",
+    "status" : "failed: 字段「论文事实」缺少可核对的原文摘录或页码；未保存，请重试。"
+  },
+  {
+    "module" : "chat-unknown",
+    "seconds" : "6",
+    "status" : "response received; semantic review pending"
+  },
+  {
+    "module" : "chat-geometry",
+    "seconds" : "15",
+    "status" : "response received; semantic review pending"
+  }
+]

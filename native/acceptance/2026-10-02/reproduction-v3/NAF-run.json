@@ -1,0 +1,7 @@
+[
+  {
+    "module" : "reproduce",
+    "seconds" : "30",
+    "status" : "structural validation passed; semantic review pending"
+  }
+]

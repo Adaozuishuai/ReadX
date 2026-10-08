@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'">
+<title>CBCT 每日精读</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">CBCT 每日精读 <span class="tag">Windows</span></div>
+  <nav>
+    <button data-mode="today" class="active">今日论文</button>
+    <button data-mode="library">论文库</button>
+    <button data-mode="compare">对比</button>
+    <button data-mode="trend">趋势</button>
+    <button data-mode="ideas">想法</button>
+    <button data-mode="settings">设置</button>
+  </nav>
+  <div class="spacer"></div>
+  <button id="btn-import" class="ghost">导入 PDF</button>
+</header>
+<main id="main"></main>
+<footer>工作区：<span id="root-path">…</span> · 数据与 macOS 版共用同一份本地文件（queue.json / papers / library / app/data）</footer>
+<script src="app.js"></script>
+</body>
+</html>

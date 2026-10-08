@@ -1,0 +1,17 @@
+[
+  {
+    "module" : "apply",
+    "seconds" : "90",
+    "status" : "structural validation passed; semantic review pending"
+  },
+  {
+    "module" : "chat-unknown",
+    "seconds" : "5",
+    "status" : "response received; semantic review pending"
+  },
+  {
+    "module" : "chat-geometry",
+    "seconds" : "13",
+    "status" : "response received; semantic review pending"
+  }
+]

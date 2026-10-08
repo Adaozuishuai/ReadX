@@ -1,0 +1,170 @@
+{
+  "reusable": [
+    {
+      "title": "将衰减系数场建模为坐标到μ的连续隐式函数（INR/MLP）",
+      "suggestion": "在 Walnut/LUNA16/AAPM 的稀疏视角 CBCT 体重建中，可复用「把衰减系数场表示为 3D 空间坐标的连续函数、由全连接网络参数化」这一建模范式，作为 Implicit Representation 主干；若再叠加 Diffusion 或 Transformer，可将其作为去噪/先验模块而非替换该主干。适用前提：需要已知扫描几何以进行 ray sampling 与投影合成。",
+      "constraint": "数据域：Walnut/LUNA16/AAPM（论文未涉及，需自行确认其体数据与投影可得性）；views：论文为 50 views（Page 6），用户稀疏视角数量未知；几何：论文用 TIGRE 生成 180° 锥束投影与 GE C-arm 真实扫描（Page 6），用户几何未知；GPU：单卡 16 GB，论文用单张 RTX 3090（Page 6），论文未说明显存占用。",
+      "verification": "在同一几何与 views 数下，用 PSNR/SSIM/RMSE 对比 (a) 纯 INR 主干 与 (b) INR+Diffusion/Transformer 变体；固定随机种子与采样点数，报告收敛曲线与单卡 16 GB 下的峰值显存。",
+      "evidence": [
+        {
+          "k": "方法表示形式",
+          "v": "衰减系数被表示为 3D 空间坐标的连续函数，由全连接深度神经网络参数化",
+          "page": 1,
+          "excerpt": "the desired attenuation coeﬃcients are represented as a continuous function of 3D spatial coordinates, parameterized by a fully-connected deep neural network"
+        },
+        {
+          "k": "网络输入输出",
+          "v": "MLP 输入为编码后的空间坐标 (x,y,z)，输出为该位置的衰减系数 µ",
+          "page": 2,
+          "excerpt": "we train a Multi-Layer Perceptron (MLP), whose input is an encoded spatial coordinate (x,y,z) and whose output is the attenuation coeﬃcient µ at that location"
+        }
+      ]
+    },
+    {
+      "title": "自监督投影一致性损失（无需外部训练数据）",
+      "suggestion": "可复用「仅用被扫描对象的 X 射线投影、通过最小化真实投影与合成投影之间的误差来优化网络」的自监督训练协议，避免依赖外部 CT 数据集；在低剂量设定下可在此基础上加入噪声建模或 Diffusion 先验。适用前提：需要可微的投影合成算子与已知扫描几何。",
+      "constraint": "数据域：论文为人体器官（chest/jaw/foot/abdomen）与硅胶主动脉体模（Page 6），用户为 Walnut/LUNA16/AAPM（论文未涉及）；views：论文 50（Page 6）；几何：论文 TIGRE 180° 与 GE C-arm −103°~93°（Page 6）；GPU：单卡 16 GB，论文未说明显存。",
+      "verification": "在相同 views 与几何下，比较自监督投影损失单独训练 vs. 加入 Diffusion/Transformer 先验后的 PSNR/SSIM/RMSE；并做「无外部数据」与「有外部预训练」的对照，量化外部数据带来的增益。",
+      "evidence": [
+        {
+          "k": "自监督定义",
+          "v": "NAF 不需要外部 CT 扫描，只需要感兴趣对象的 X 射线投影",
+          "page": 2,
+          "excerpt": "NAF requires no external CT scans but the X-ray projections of the interested object"
+        },
+        {
+          "k": "损失函数",
+          "v": "通过最小化真实与合成投影之间的 L2 损失更新网络",
+          "page": 5,
+          "excerpt": "NAF is updated by minimizing the L2 loss between real and synthesized projec- tions"
+        }
+      ]
+    }
+  ],
+  "adaptation": [
+    {
+      "title": "用 hash encoding 替换频率编码以压缩编码输出维度",
+      "suggestion": "若在单卡 16 GB 下受限于网络宽度/深度，可把常用 frequency-domain encoder 换成 learning-based hash encoder，以更小的编码输出（论文为 32）配合更紧凑的 MLP；论文称其后续网络比频率编码方案小 10×。适用前提：需按目标体数据分辨率重新设定采样点数与 hash 表超参（论文称超参见补充材料，正文未给出）。",
+      "constraint": "数据域：论文为人体器官与体模（Page 6），用户 Walnut/LUNA16/AAPM 未验证；views：论文 50（Page 6）；几何：论文 TIGRE/GE C-arm（Page 6）；GPU：单卡 16 GB，论文用 RTX 3090 但未说明显存占用与各数据集训练时长明细。",
+      "verification": "在相同 views/几何下做消融：frequency encoder vs. hash encoder，固定 MLP 层数与通道数，比较 PSNR/SSIM/RMSE、训练时间与峰值显存；并扫描 hash 表大小 T 与分辨率层数 L。",
+      "evidence": [
+        {
+          "k": "编码输出维度",
+          "v": "hash encoder 产生的输出远小于频率编码，论文设定为 32",
+          "page": 5,
+          "excerpt": "hash encoder produces much smaller out- puts (32 in our setting) with competitive feature quality"
+        },
+        {
+          "k": "网络规模对比",
+          "v": "论文网络比 Zang 等人的 6 层 256 通道 MLP 小 10 倍",
+          "page": 5,
+          "excerpt": "Zang et al. [28] use a 6-layer 256-channel MLP to learn features from a frequency encoder. Our network is 10×smaller."
+        }
+      ]
+    },
+    {
+      "title": "按体数据尺寸自适应设定每射线采样点数 N",
+      "suggestion": "可复用「N 大于目标 CT 尺寸以保证每条射线穿过的每个网格单元至少有一个采样点」的采样准则，在 Walnut/LUNA16/AAPM 不同分辨率体数据上按尺寸缩放 N；论文示例为 128³ chest CT 采样 192 点。适用前提：需已知体数据体素尺寸与射线-立方体相交范围。",
+      "constraint": "数据域：论文示例为 128×128×128 chest（Page 6），用户数据集分辨率未知；views：论文 50（Page 6）；几何：论文 TIGRE/GE C-arm（Page 6）；GPU：单卡 16 GB，论文未说明 N 与显存/时间的定量关系。",
+      "verification": "在固定 views 与几何下，对 N 做网格搜索（如按体素对角线倍数取值），报告 PSNR/SSIM/RMSE 与单卡 16 GB 下的峰值显存、单次迭代耗时，确定不触发 OOM 的最大 N。",
+      "evidence": [
+        {
+          "k": "采样准则",
+          "v": "N 大于期望 CT 尺寸可确保每条射线穿过的每个网格单元至少分配一个采样点",
+          "page": 4,
+          "excerpt": "Setting N greater than the desired CT size ensures that at least one sample is assigned to every grid cell that an X-ray traverses"
+        },
+        {
+          "k": "采样点数示例",
+          "v": "对 128×128×128 chest CT 每条射线采样 192 个点",
+          "page": 6,
+          "excerpt": "we sample 192 points along each ray for the 128×128×128 chest CT"
+        }
+      ]
+    }
+  ],
+  "conflicts": [
+    {
+      "title": "论文未验证 Walnut/LUNA16/AAPM 与用户几何，直接迁移存在域与几何错配风险",
+      "suggestion": "论文实验域为人体器官（chest/jaw/foot/abdomen）与硅胶主动脉体模，几何为 TIGRE 生成的 180° 锥束投影与 GE C-arm 真实扫描；用户数据域（Walnut 为坚果类体模、LUNA16 为肺部 CT、AAPM 为低剂量 CT 挑战数据）与几何均不同。迁移前需先确认投影生成方式与几何标定，否则 ray sampling 与投影合成会失配。",
+      "constraint": "数据域：论文为人体器官与体模（Page 6），用户为 Walnut/LUNA16/AAPM（论文未涉及）；views：论文 50（Page 6）；几何：论文 TIGRE 180°、GE C-arm −103°~93°（Page 6），用户几何未知；GPU：单卡 16 GB，论文未说明显存。",
+      "verification": "先在用户几何下用 TIGRE 或等价工具生成与论文一致的 50 views 投影，跑通 NAF 基线并报告 PSNR/SSIM/RMSE；再逐步替换为用户真实几何，量化几何失配带来的指标下降。",
+      "evidence": [
+        {
+          "k": "实验数据域",
+          "v": "实验在包含人体器官与体模的五个数据集上进行",
+          "page": 6,
+          "excerpt": "We conduct experiments on five datasets containing human organ and phantom data"
+        },
+        {
+          "k": "投影生成与几何",
+          "v": "用 TIGRE 在 180° 范围内采集 50 个含 3% 噪声的投影",
+          "page": 6,
+          "excerpt": "we capture 50 projections with 3% noise in the range of 180◦"
+        }
+      ]
+    },
+    {
+      "title": "论文未涉及 Diffusion 与 Transformer，直接叠加缺乏论文依据",
+      "suggestion": "论文方法为 MLP + hash encoder 的隐式表示，未使用 Diffusion 或 Transformer；用户主题中的 Diffusion/Transformer 属于新增模块，需自行设计并验证，不能声称论文支持。潜在冲突点：Diffusion 采样通常需要多次前向，可能与论文强调的「10-40 分钟重建」时间预算冲突（Page 3），在单卡 16 GB 下需实测。",
+      "constraint": "数据域：论文为人体器官与体模（Page 6）；views：论文 50（Page 6）；几何：论文 TIGRE/GE C-arm（Page 6）；GPU：单卡 16 GB，论文用 RTX 3090 但未说明显存与 Diffusion 相关开销。",
+      "verification": "在相同 views/几何下，对比 NAF 基线 vs. NAF+Diffusion 先验 vs. NAF+Transformer 的 PSNR/SSIM/RMSE、训练/推理时间与峰值显存；若 Diffusion 推理步数导致时间超预算，报告时间-精度权衡曲线。",
+      "evidence": [
+        {
+          "k": "方法组成",
+          "v": "NAF 由 ray sampling、position encoding、attenuation coefficient prediction、projection synthesis 四个模块组成",
+          "page": 3,
+          "excerpt": "NAF consists of four modules: ray sampling, position encoding, attenuation coeﬃcientprediction,andprojectionsynthesis"
+        },
+        {
+          "k": "时间预算",
+          "v": "论文方法可在 10-40 分钟内重建详细 CT 模型",
+          "page": 3,
+          "excerpt": "method can reconstruct a detailed CT model within 10-40 minutes"
+        }
+      ]
+    }
+  ],
+  "validation": [
+    {
+      "title": "在用户数据集与几何下复现 NAF 基线并报告 PSNR/SSIM/RMSE",
+      "suggestion": "先在 Walnut/LUNA16/AAPM 上按论文协议（50 views、180° 锥束、3% 噪声）复现 NAF，作为后续 Diffusion/Transformer 改动的对照基线；论文指标为 PSNR/SSIM，用户额外要求 RMSE，需自行补充 RMSE 计算。适用前提：需能生成或获取与论文一致的投影数据。",
+      "constraint": "数据域：论文为人体器官与体模（Page 6），用户为 Walnut/LUNA16/AAPM（论文未涉及）；views：论文 50（Page 6）；几何：论文 TIGRE 180°、GE C-arm（Page 6）；GPU：单卡 16 GB，论文未说明显存。",
+      "verification": "固定随机种子，在相同 views/几何下训练 NAF 至收敛，报告 PSNR/SSIM/RMSE 与训练时间、峰值显存；与论文 Table 2 中同域数据（如 chest/abdomen）的数值做趋势对照，而非直接数值比较。",
+      "evidence": [
+        {
+          "k": "评测指标",
+          "v": "论文用 PSNR 与 SSIM 定量评估五种方法",
+          "page": 6,
+          "excerpt": "We evaluate five methods quantitatively in terms of peak signal-to-noise ratio (PNSR) and structural similarity (SSIM)"
+        },
+        {
+          "k": "基线结果",
+          "v": "论文报告 NAF 在 abdomen 数据集上 PSNR 比次优方法 SART 高 3.07 dB",
+          "page": 7,
+          "excerpt": "the PSNR value of our method in the abdomen dataset is 3.07 dB higher than that of the second-best method SART"
+        }
+      ]
+    },
+    {
+      "title": "views 数量与低剂量噪声的鲁棒性验证",
+      "suggestion": "论文 Figure 4 显示性能随输入 views 增加而提升，且论文在投影中加入 3% 噪声；用户主题含 Low-dose 与 Sparse-view，建议在用户数据集上扫描 views 数（如 25/50/100）与噪声水平，验证方法在更稀疏、更低剂量下的退化曲线。适用前提：需能控制投影生成时的 views 数与噪声参数。",
+      "constraint": "数据域：论文为人体器官与体模（Page 6），用户为 Walnut/LUNA16/AAPM（论文未涉及）；views：论文固定 50（Page 6），Figure 4 展示了不同 views 下的性能趋势但正文未给出具体 views 数值；几何：论文 TIGRE/GE C-arm（Page 6）；GPU：单卡 16 GB，论文未说明显存。",
+      "verification": "在用户几何下生成 views ∈ {25, 50, 100} 与噪声 ∈ {0%, 3%, 更高} 的投影，训练 NAF 及改进版，报告 PSNR/SSIM/RMSE 随 views/噪声的变化曲线，并与论文 Figure 4 的趋势定性对照。",
+      "evidence": [
+        {
+          "k": "views 与性能关系",
+          "v": "性能随输入 views 增加而提升",
+          "page": 8,
+          "excerpt": "It is clear that the performance in- creases with the rise of input views"
+        },
+        {
+          "k": "噪声设定",
+          "v": "投影含 3% 噪声",
+          "page": 6,
+          "excerpt": "we capture 50 projections with 3% noise in the range of 180◦"
+        }
+      ]
+    }
+  ]
+}

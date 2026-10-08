@@ -1,0 +1,13 @@
+.DS_Store
+.workbuddy/
+**/__pycache__/
+*.py[cod]
+/app/config.json
+/app/data/
+/app/node_modules/
+/native/.build/
+/native/.swiftpm/
+/native/boot.log
+/native/layout.log
+/library/text/
+/library/*.pdf

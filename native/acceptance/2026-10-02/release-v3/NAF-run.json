@@ -1,0 +1,22 @@
+[
+  {
+    "module" : "experiment",
+    "seconds" : "17",
+    "status" : "structural validation passed; semantic review pending"
+  },
+  {
+    "module" : "apply",
+    "seconds" : "167",
+    "status" : "failed: 证据校验未通过，未保存：「论文事实」的数字 3 未被所附摘录支持"
+  },
+  {
+    "module" : "chat-unknown",
+    "seconds" : "4",
+    "status" : "response received; semantic review pending"
+  },
+  {
+    "module" : "chat-geometry",
+    "seconds" : "17",
+    "status" : "response received; semantic review pending"
+  }
+]

@@ -1,0 +1,112 @@
+{
+  "resources": [
+    {
+      "finding": {
+        "k": "代码公开声明",
+        "v": "Code available at https://github.com/Ruyi-Zha/naf_cbct.",
+        "page": 1,
+        "excerpt": "Code available at https://github.com/Ruyi-Zha/naf_cbct."
+      },
+      "assessment": "AI推断：论文声称代码公开，但当前材料未提供仓库内容、依赖清单或权重文件；是否可直接复现需在线核实，不能据此断言代码可用或与论文一致。",
+      "action": "在线访问该仓库核对是否包含训练脚本、hash encoder 实现、几何配置与超参文件；若缺失，记录缺口并联系作者。"
+    },
+    {
+      "finding": {
+        "k": "数据集来源",
+        "v": "We conduct experiments on five datasets containing human organ and phantom data.",
+        "page": 6,
+        "excerpt": "We conduct experiments on five datasets containing human organ and phantom data. Details are listed in Table 1."
+      },
+      "assessment": "AI推断：人体器官数据来自公开数据集，phantom 为自采；复现需分别获取公开数据与自采数据，后者可能不可得。",
+      "action": "核对 Table 1 与正文，确认每个数据集的获取途径；对 phantom 数据确认是否有公开替代或需自行扫描。"
+    }
+  ],
+  "environment": [
+    {
+      "finding": {
+        "k": "深度学习框架",
+        "v": "Our proposed method is implemented in PyTorch [17].",
+        "page": 6,
+        "excerpt": "Our proposed method is implemented in PyTorch [17]."
+      },
+      "assessment": "AI推断：仅知框架为 PyTorch，未给出具体版本；hash encoder 与 CUDA 加速可能对版本敏感，需核对官方仓库的依赖声明。",
+      "action": "核对官方仓库的 requirements/环境文件，记录 PyTorch 与 CUDA 版本；在固定随机种子下做一次前向/反向一致性检查。"
+    },
+    {
+      "finding": {
+        "k": "GPU 与 CUDA 加速",
+        "v": "All experiments are conducted on a single RTX 3090 GPU.",
+        "page": 6,
+        "excerpt": "All experiments are conducted on a single RTX 3090 GPU."
+      },
+      "assessment": "AI推断：论文报告单卡 RTX 3090，但未说明 CUDA/cuDNN 版本或是否使用自定义 CUDA 算子；hash encoder 的加速实现可能依赖特定算子。",
+      "action": "核对仓库是否含自定义 CUDA 扩展；在目标机器上先跑通小规模前向，确认算子可编译。"
+    }
+  ],
+  "cost": [
+    {
+      "finding": {
+        "k": "重建时间范围",
+        "v": "our method can reconstruct a detailed CT model within 10-40 minutes, which is comparable to iterative methods.",
+        "page": 3,
+        "excerpt": "While most INR approaches take hours for training, our method can reconstruct a detailed CT model within 10-40 minutes, which is comparable to iterative methods."
+      },
+      "assessment": "AI推断：10-40 分钟为论文报告的整体重建时间，未按数据集/分辨率拆分；复现时实际耗时取决于 views、分辨率、batch 与硬件，需自行 profiling。",
+      "action": "在固定 views、几何、分辨率、batch 下分别对 chest 与 abdomen 记录端到端训练时间，与论文区间对照。"
+    },
+    {
+      "finding": {
+        "k": "训练迭代与显存",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      "assessment": "AI推断：当前材料未找到迭代次数、收敛判据与峰值显存；无法据此估算显存占用或训练预算。",
+      "action": "核对补充材料与官方仓库的训练配置，记录迭代次数、停止条件与峰值显存；若缺失，设计固定 batch 的 profiling 实验。"
+    }
+  ],
+  "missing": [
+    {
+      "finding": {
+        "k": "射线采样点数与 CT 尺寸关系",
+        "v": "The sampling quantity of each ray depends on the size of CT data. For example, we sample 192 points along each ray for the 128×128×128 chest CT.",
+        "page": 6,
+        "excerpt": "The sampling quantity of each ray depends on the size of CT data. For example, we sample 192 points along each ray for the 128×128×128 chest CT."
+      },
+      "assessment": "AI推断：仅给出 chest 的 192 点示例，其余数据集（jaw/foot/abdomen/aorta）的采样点数未在正文列出，需核对补充材料；采样点数直接影响重建质量与耗时。",
+      "action": "核对补充材料中每个数据集的采样点数；若缺失，按 CT 尺寸比例做消融，记录对 PSNR/SSIM 与时间的影响。"
+    },
+    {
+      "finding": {
+        "k": "投影几何与预处理细节",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      "assessment": "AI推断：当前材料未找到探测器像素间距、源到探测器/源到旋转中心距离、噪声添加方式与归一化等几何/预处理参数；这些是 CBCT 前向投影复现的关键前提。",
+      "action": "核对补充材料与官方仓库的几何配置文件；若缺失，参照 TIGRE 默认几何并做几何参数敏感性实验。"
+    }
+  ],
+  "risks": [
+    {
+      "finding": {
+        "k": "投影生成工具与噪声设置",
+        "v": "In TIGRE [5], we capture 50 projections with 3% noise in the range of 180◦.",
+        "page": 6,
+        "excerpt": "In TIGRE [5], we capture 50 projections with 3% noise in the range of 180◦. We train our model with these projections and evaluate its performance with the raw volumetric CT data."
+      },
+      "assessment": "AI推断：人体器官数据由 TIGRE 合成投影，噪声水平与角度范围影响重建难度；若复现时噪声模型或角度采样不同，PSNR/SSIM 不可直接对比。",
+      "action": "固定 TIGRE 版本、噪声种子与角度采样，复现 chest 的 50 views/3% 噪声设置，与论文 Table 2 数值对照。"
+    },
+    {
+      "finding": {
+        "k": "评测指标与基线实现",
+        "v": "We evaluate five methods quantitatively in terms of peak signal-to-noise ratio (PNSR) and structural similarity (SSIM) [25].",
+        "page": 6,
+        "excerpt": "We evaluate five methods quantitatively in terms of peak signal-to-noise ratio (PNSR) and structural similarity (SSIM) [25]."
+      },
+      "assessment": "AI推断：论文使用 PSNR/SSIM，但未说明计算时的数据范围、窗口或是否逐切片平均；基线 IntraTomo3D 为作者自行实现的 CBCT 变体，实现差异会影响对比公平性。",
+      "action": "核对指标计算脚本（数据范围、逐切片或整体）；对 IntraTomo3D 复现时记录其超参与训练轮数，确保与 NAF 在相同 views 与几何下对比。"
+    }
+  ]
+}

@@ -1,0 +1,262 @@
+{
+  "dataset": [
+    {
+      "k": "数据集数量与类型",
+      "v": "五个数据集，包含人体器官与体模（phantom）数据",
+      "page": 6,
+      "excerpt": "We conduct experiments on five datasets containing human organ and phantom data. Details are listed in Table 1."
+    },
+    {
+      "k": "人体器官数据集来源",
+      "v": "chest、jaw、foot、abdomen；chest 来自 LIDC-IDRI，其余来自 Open Scientific Visualization Datasets",
+      "page": 6,
+      "excerpt": "We evaluate our method using public datasets of human organ CTs [4,12], including chest, jaw, foot and abdomen. The chest data are from LIDC-IDRI dataset [4], and the rest are from Open Scientific Visualization Datasets [12]."
+    },
+    {
+      "k": "体模数据集采集",
+      "v": "用 GE C-arm Medical System 扫描硅主动脉体模",
+      "page": 6,
+      "excerpt": "We collect a phantom dataset by scanning a silicon aortic phantom with GE C-arm Medical System."
+    },
+    {
+      "k": "体模 ground truth CT 尺寸",
+      "v": "512×512×510",
+      "page": 6,
+      "excerpt": "A 512×512×510 CT image is also generated with inbuilt algorithms as the ground truth."
+    },
+    {
+      "k": "Table 1 Chest 行",
+      "v": "CT dimension 128×128×128；扫描方式 TIGRE；扫描范围 0°~180°；投影数 50；探测器分辨率 256×256",
+      "page": 6,
+      "excerpt": "Chest [4] 128×128×128 TIGRE [5] 0◦ | ∼180◦ 50 256×256"
+    },
+    {
+      "k": "Table 1 Jaw 行",
+      "v": "CT dimension 256×256×256；扫描方式 TIGRE；扫描范围 0°~180°；投影数 50；探测器分辨率 512×512",
+      "page": 6,
+      "excerpt": "Jaw [12] 256×256×256 TIGRE [5] 0◦ | ∼180◦ 50 512×512"
+    },
+    {
+      "k": "Table 1 Foot 行",
+      "v": "CT dimension 256×256×256；扫描方式 TIGRE；扫描范围 0°~180°；投影数 50；探测器分辨率 512×512",
+      "page": 6,
+      "excerpt": "Foot [12] 256×256×256 TIGRE [5] 0◦ | ∼180◦ 50 512×512"
+    },
+    {
+      "k": "Table 1 Abdomen 行",
+      "v": "CT dimension 512×512×463；扫描方式 TIGRE；扫描范围 0°~180°；投影数 50；探测器分辨率 1024×1024",
+      "page": 6,
+      "excerpt": "Abdomen [12] 512×512×463 TIGRE [5] 0◦ | ∼180◦ 50 1024×1024"
+    },
+    {
+      "k": "Table 1 Aorta 行",
+      "v": "CT dimension 512×512×510；扫描方式 GE C-arm；扫描范围 −103°~93°；投影数 50（582）；探测器分辨率 500×500",
+      "page": 6,
+      "excerpt": "Aorta 512×512×510 GE C-arm−103◦ | ∼93◦ 50 (582) 500×500"
+    }
+  ],
+  "acquisition": [
+    {
+      "k": "人体器官投影生成方式",
+      "v": "用断层工具箱 TIGRE 生成投影",
+      "page": 6,
+      "excerpt": "Since these datasets only provide volumetric CT scans, we generate projections by a tomographic toolbox TIGRE [5]."
+    },
+    {
+      "k": "人体器官投影视图数与噪声",
+      "v": "在 180° 范围内采集 50 个投影，含 3% 噪声",
+      "page": 6,
+      "excerpt": "In TIGRE [5], we capture 50 projections with 3% noise in the range of 180◦."
+    },
+    {
+      "k": "体模系统投影采集参数",
+      "v": "582 张 500×500 透视投影；position primary angle 从 −103° 到 93°；position secondary angle 为 0°",
+      "page": 6,
+      "excerpt": "This system captures 582 500×500 fluoroscopy projections with position primary angle from -103◦to 93◦and position secondary angle of 0◦."
+    },
+    {
+      "k": "体模实验实际使用投影数",
+      "v": "仅使用 50 个投影",
+      "page": 6,
+      "excerpt": "We only use 50 projections for experiments."
+    },
+    {
+      "k": "SOD/SDD 等几何参数",
+      "v": "论文未说明",
+      "page": null,
+      "excerpt": null
+    }
+  ],
+  "training": [
+    {
+      "k": "实现框架",
+      "v": "PyTorch",
+      "page": 6,
+      "excerpt": "Our proposed method is implemented in PyTorch [17]."
+    },
+    {
+      "k": "优化器与学习率",
+      "v": "Adam 优化器，学习率从 1×10⁻³ 降至 1×10⁻⁴",
+      "page": 6,
+      "excerpt": "We use Adam optimizer with a learning rate that starts at 1 ×10−3 and steps down to 1 ×10−4."
+    },
+    {
+      "k": "batch size",
+      "v": "每次迭代 2048 条射线",
+      "page": 6,
+      "excerpt": "The batch size is 2048 rays at each iteration."
+    },
+    {
+      "k": "每条射线采样点数",
+      "v": "取决于 CT 数据大小；例如 128×128×128 chest CT 每条射线采样 192 个点",
+      "page": 6,
+      "excerpt": "The sampling quantity of each ray depends on the size of CT data. For example, we sample 192 points along each ray for the 128×128×128 chest CT."
+    },
+    {
+      "k": "hash encoder 超参数",
+      "v": "使用与 [14] 相同的超参数设置；更多超参数细节见补充材料",
+      "page": 6,
+      "excerpt": "We use the same hyper-parameter setting for hash encoder as [14]. More details of hyper-parameters can be found in the supplementary material."
+    },
+    {
+      "k": "GPU",
+      "v": "单张 RTX 3090 GPU",
+      "page": 6,
+      "excerpt": "All experiments are conducted on a single RTX 3090 GPU."
+    },
+    {
+      "k": "epoch 数",
+      "v": "论文未说明",
+      "page": null,
+      "excerpt": null
+    }
+  ],
+  "loss": [
+    {
+      "k": "损失类型",
+      "v": "真实投影与合成投影之间的 L2 损失（公式转写待核对）",
+      "page": 5,
+      "excerpt": "NAF is updated by minimizing the L2 loss between real and synthesized projections. The loss function Lis defined as:"
+    },
+    {
+      "k": "损失权重",
+      "v": "论文未说明",
+      "page": null,
+      "excerpt": null
+    }
+  ],
+  "baselines": [
+    {
+      "k": "FDK",
+      "v": "解析方法代表，引用 [7]",
+      "page": 6,
+      "excerpt": "FDK [7] is firstly chosen as a representative of analytical methods."
+    },
+    {
+      "k": "SART",
+      "v": "鲁棒迭代重建算法，引用 [2]",
+      "page": 6,
+      "excerpt": "The second method SART[2] is a robust iterative reconstruction algorithm."
+    },
+    {
+      "k": "ASD-POCS",
+      "v": "带 total-variation 正则化的迭代方法，引用 [20]",
+      "page": 6,
+      "excerpt": "ASD-POCS[20] is another iterative method with a total-variation regularizer."
+    },
+    {
+      "k": "IntraTomo3D",
+      "v": "IntraTomo [28] 的 CBCT 变体，作为频率编码深度学习方法示例",
+      "page": 6,
+      "excerpt": "We implement a CBCT variant of IntraTomo [28], named IntraTomo3D, as an example of frequency-encoding deep learning methods."
+    },
+    {
+      "k": "baseline 代码来源",
+      "v": "论文未说明",
+      "page": null,
+      "excerpt": null
+    },
+    {
+      "k": "baseline 是否重训及是否同设置",
+      "v": "论文未说明",
+      "page": null,
+      "excerpt": null
+    }
+  ],
+  "metrics": [
+    {
+      "k": "评价指标",
+      "v": "PSNR 与 SSIM",
+      "page": 6,
+      "excerpt": "We evaluate five methods quantitatively in terms of peak signal-to-noise ratio (PNSR) and structural similarity (SSIM) [25]."
+    },
+    {
+      "k": "指标含义",
+      "v": "PSNR(dB) 统计评估伪影抑制性能；SSIM 衡量两信号间的感知差异；PSNR/SSIM 越高表示重建越准确",
+      "page": 6,
+      "excerpt": "PSNR (dB)statisticallyassessestheartifactsuppressionperformance,whileSSIMmea-sures the perceptual diﬀerence between two signals. Higher PNSR/SSIM values represent the accurate reconstruction and vice versa."
+    },
+    {
+      "k": "指标数据范围",
+      "v": "论文未说明",
+      "page": null,
+      "excerpt": null
+    }
+  ],
+  "results": [
+    {
+      "k": "Table 2 FDK 行",
+      "v": "Chest 22.89/.78；Jaw 28.59/.78；Foot 23.92/.58；Abdomen 22.39/.59；Aorta 12.11/.21",
+      "page": 7,
+      "excerpt": "FDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+    },
+    {
+      "k": "Table 2 SART 行",
+      "v": "Chest 32.12/.95；Jaw 32.67/.93；Foot 30.13/.93；Abdomen 31.38/.92；Aorta 27.31/.77",
+      "page": 7,
+      "excerpt": "SART [2] 32.12/.95 32.67/.93 30.13/.93 31.38/.92 27.31/.77"
+    },
+    {
+      "k": "Table 2 ASD-POCS 行",
+      "v": "Chest 29.78/.92；Jaw 32.78/.93；Foot 28.67/.89；Abdomen 30.34/.91；Aorta 27.30/.76",
+      "page": 7,
+      "excerpt": "ASD-POCS [20] 29.78/.92 32.78/.93 28.67/.89 30.34/.91 27.30/.76"
+    },
+    {
+      "k": "Table 2 IntraTomo3D 行",
+      "v": "Chest 31.94/.95；Jaw 31.95/.91；Foot 31.43/.91；Abdomen 30.43/.90；Aorta 29.38/.82",
+      "page": 7,
+      "excerpt": "IntraTomo3D [28] 31.94/.95 31.95/.91 31.43/.91 30.43/.90 29.38/.82"
+    },
+    {
+      "k": "Table 2 NAF (Ours) 行",
+      "v": "Chest 33.05/.96；Jaw 34.14/.94；Foot 31.63/.94；Abdomen 34.45/.95；Aorta 30.34/.88",
+      "page": 7,
+      "excerpt": "NAF (Ours) 33.05/.96 34.14/.94 31.63/.94 34.45/.95 30.34/.88"
+    },
+    {
+      "k": "abdomen 数据集 PSNR 领先幅度",
+      "v": "比第二好的 SART 高 3.07 dB",
+      "page": 7,
+      "excerpt": "For example, the PSNR value of our method in the abdomen dataset is 3.07 dB higher than that of the second-best method SART."
+    },
+    {
+      "k": "重建耗时",
+      "v": "10-40 分钟内重建详细 CT 模型，与迭代方法相当",
+      "page": 3,
+      "excerpt": "method can reconstruct a detailed CT model within 10-40 minutes, which is comparable to iterative methods."
+    },
+    {
+      "k": "相对 IntraTomo3D 加速",
+      "v": "NAF 比频率编码深度学习方法 IntraTomo3D 快 3 倍",
+      "page": 8,
+      "excerpt": "Benefiting from the compact network design, NAF spends similar running time to iterative methods and is 3×faster than the frequency-encoding deep learning method IntraTomo3D."
+    },
+    {
+      "k": "显存",
+      "v": "论文未说明",
+      "page": null,
+      "excerpt": null
+    }
+  ]
+}

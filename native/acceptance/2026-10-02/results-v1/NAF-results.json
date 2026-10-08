@@ -1,0 +1,333 @@
+```json
+{
+  "tables": [
+    {
+      "id": "table2",
+      "caption": {
+        "k": "caption",
+        "v": "Table 2: PSNR/SSIM measurements of five methods on five datasets.",
+        "page": 7,
+        "excerpt": "Table 2: PSNR/SSIM measurements of five methods on five datasets."
+      },
+      "header": {
+        "k": "header",
+        "v": "表头为五个数据集列：Chest, Jaw, Foot, Abdomen, Aorta；行标签为五个方法：FDK [7], SART [2], ASD-POCS [20], IntraTomo3D [28], NAF (Ours)。单元格格式为 PSNR/SSIM。",
+        "page": 7,
+        "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21\nSART [2] 32.12/.95 32.67/.93 30.13/.93 31.38/.92 27.31/.77\nASD-POCS [20] 29.78/.92 32.78/.93 28.67/.89 30.34/.91 27.30/.76\nIntraTomo3D [28] 31.94/.95 31.95/.91 31.43/.91 30.43/.90 29.38/.82\nNAF (Ours) 33.05/.96 34.14/.94 31.63/.94 34.45/.95 30.34/.88"
+      },
+      "protocol": {
+        "k": "protocol",
+        "v": "人体器官数据由 TIGRE 在 180° 范围内生成 50 个投影并加 3% 噪声；Aorta 使用 GE C-arm 采集的 582 个投影中的 50 个。评测指标为 PSNR 和 SSIM。",
+        "page": 6,
+        "excerpt": "In TIGRE [5], we capture 50 projections with 3% noise in the range of 180◦. We train our model with these projections and evaluate its performance with the raw volumetric CT data.\nPhantom: We collect a phantom dataset by scanning a silicon aortic phantom with GE C-arm Medical System. This system captures 582 500×500 fluoroscopy projections with position primary angle from -103◦to 93◦and position secondary angle of 0◦. A 512×512×510 CT image is also generated with inbuilt algorithms as the ground truth. We only use 50 projections for experiments."
+      },
+      "columns": [
+        {
+          "id": "chest_psnr",
+          "label": "Chest",
+          "metric": "PSNR",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Chest 数据集列，PSNR 值。表头为 Chest，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        },
+        {
+          "id": "chest_ssim",
+          "label": "Chest",
+          "metric": "SSIM",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Chest 数据集列，SSIM 值。表头为 Chest，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        },
+        {
+          "id": "jaw_psnr",
+          "label": "Jaw",
+          "metric": "PSNR",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Jaw 数据集列，PSNR 值。表头为 Jaw，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        },
+        {
+          "id": "jaw_ssim",
+          "label": "Jaw",
+          "metric": "SSIM",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Jaw 数据集列，SSIM 值。表头为 Jaw，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        },
+        {
+          "id": "foot_psnr",
+          "label": "Foot",
+          "metric": "PSNR",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Foot 数据集列，PSNR 值。表头为 Foot，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        },
+        {
+          "id": "foot_ssim",
+          "label": "Foot",
+          "metric": "SSIM",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Foot 数据集列，SSIM 值。表头为 Foot，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        },
+        {
+          "id": "abdomen_psnr",
+          "label": "Abdomen",
+          "metric": "PSNR",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Abdomen 数据集列，PSNR 值。表头为 Abdomen，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        },
+        {
+          "id": "abdomen_ssim",
+          "label": "Abdomen",
+          "metric": "SSIM",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Abdomen 数据集列，SSIM 值。表头为 Abdomen，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        },
+        {
+          "id": "aorta_psnr",
+          "label": "Aorta",
+          "metric": "PSNR",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Aorta 数据集列，PSNR 值。表头为 Aorta，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        },
+        {
+          "id": "aorta_ssim",
+          "label": "Aorta",
+          "metric": "SSIM",
+          "unit": "论文未说明",
+          "context": {
+            "k": "context",
+            "v": "Aorta 数据集列，SSIM 值。表头为 Aorta，行标签为方法名。",
+            "page": 7,
+            "excerpt": "Chest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          }
+        }
+      ],
+      "rows": [
+        {
+          "id": "fdk",
+          "method": "FDK [7]",
+          "evidence": {
+            "k": "evidence",
+            "v": "FDK [7] 行：Chest 22.89/.78，Jaw 28.59/.78，Foot 23.92/.58，Abdomen 22.39/.59，Aorta 12.11/.21。",
+            "page": 7,
+            "excerpt": "FDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21"
+          },
+          "cells": [
+            {"columnID": "chest_psnr", "valueText": "22.89", "uncertaintyText": null},
+            {"columnID": "chest_ssim", "valueText": ".78", "uncertaintyText": null},
+            {"columnID": "jaw_psnr", "valueText": "28.59", "uncertaintyText": null},
+            {"columnID": "jaw_ssim", "valueText": ".78", "uncertaintyText": null},
+            {"columnID": "foot_psnr", "valueText": "23.92", "uncertaintyText": null},
+            {"columnID": "foot_ssim", "valueText": ".58", "uncertaintyText": null},
+            {"columnID": "abdomen_psnr", "valueText": "22.39", "uncertaintyText": null},
+            {"columnID": "abdomen_ssim", "valueText": ".59", "uncertaintyText": null},
+            {"columnID": "aorta_psnr", "valueText": "12.11", "uncertaintyText": null},
+            {"columnID": "aorta_ssim", "valueText": ".21", "uncertaintyText": null}
+          ]
+        },
+        {
+          "id": "sart",
+          "method": "SART [2]",
+          "evidence": {
+            "k": "evidence",
+            "v": "SART [2] 行：Chest 32.12/.95，Jaw 32.67/.93，Foot 30.13/.93，Abdomen 31.38/.92，Aorta 27.31/.77。",
+            "page": 7,
+            "excerpt": "SART [2] 32.12/.95 32.67/.93 30.13/.93 31.38/.92 27.31/.77"
+          },
+          "cells": [
+            {"columnID": "chest_psnr", "valueText": "32.12", "uncertaintyText": null},
+            {"columnID": "chest_ssim", "valueText": ".95", "uncertaintyText": null},
+            {"columnID": "jaw_psnr", "valueText": "32.67", "uncertaintyText": null},
+            {"columnID": "jaw_ssim", "valueText": ".93", "uncertaintyText": null},
+            {"columnID": "foot_psnr", "valueText": "30.13", "uncertaintyText": null},
+            {"columnID": "foot_ssim", "valueText": ".93", "uncertaintyText": null},
+            {"columnID": "abdomen_psnr", "valueText": "31.38", "uncertaintyText": null},
+            {"columnID": "abdomen_ssim", "valueText": ".92", "uncertaintyText": null},
+            {"columnID": "aorta_psnr", "valueText": "27.31", "uncertaintyText": null},
+            {"columnID": "aorta_ssim", "valueText": ".77", "uncertaintyText": null}
+          ]
+        },
+        {
+          "id": "asd_pocs",
+          "method": "ASD-POCS [20]",
+          "evidence": {
+            "k": "evidence",
+            "v": "ASD-POCS [20] 行：Chest 29.78/.92，Jaw 32.78/.93，Foot 28.67/.89，Abdomen 30.34/.91，Aorta 27.30/.76。",
+            "page": 7,
+            "excerpt": "ASD-POCS [20] 29.78/.92 32.78/.93 28.67/.89 30.34/.91 27.30/.76"
+          },
+          "cells": [
+            {"columnID": "chest_psnr", "valueText": "29.78", "uncertaintyText": null},
+            {"columnID": "chest_ssim", "valueText": ".92", "uncertaintyText": null},
+            {"columnID": "jaw_psnr", "valueText": "32.78", "uncertaintyText": null},
+            {"columnID": "jaw_ssim", "valueText": ".93", "uncertaintyText": null},
+            {"columnID": "foot_psnr", "valueText": "28.67", "uncertaintyText": null},
+            {"columnID": "foot_ssim", "valueText": ".89", "uncertaintyText": null},
+            {"columnID": "abdomen_psnr", "valueText": "30.34", "uncertaintyText": null},
+            {"columnID": "abdomen_ssim", "valueText": ".91", "uncertaintyText": null},
+            {"columnID": "aorta_psnr", "valueText": "27.30", "uncertaintyText": null},
+            {"columnID": "aorta_ssim", "valueText": ".76", "uncertaintyText": null}
+          ]
+        },
+        {
+          "id": "intratomo3d",
+          "method": "IntraTomo3D [28]",
+          "evidence": {
+            "k": "evidence",
+            "v": "IntraTomo3D [28] 行：Chest 31.94/.95，Jaw 31.95/.91，Foot 31.43/.91，Abdomen 30.43/.90，Aorta 29.38/.82。",
+            "page": 7,
+            "excerpt": "IntraTomo3D [28] 31.94/.95 31.95/.91 31.43/.91 30.43/.90 29.38/.82"
+          },
+          "cells": [
+            {"columnID": "chest_psnr", "valueText": "31.94", "uncertaintyText": null},
+            {"columnID": "chest_ssim", "valueText": ".95", "uncertaintyText": null},
+            {"columnID": "jaw_psnr", "valueText": "31.95", "uncertaintyText": null},
+            {"columnID": "jaw_ssim", "valueText": ".91", "uncertaintyText": null},
+            {"columnID": "foot_psnr", "valueText": "31.43", "uncertaintyText": null},
+            {"columnID": "foot_ssim", "valueText": ".91", "uncertaintyText": null},
+            {"columnID": "abdomen_psnr", "valueText": "30.43", "uncertaintyText": null},
+            {"columnID": "abdomen_ssim", "valueText": ".90", "uncertaintyText": null},
+            {"columnID": "aorta_psnr", "valueText": "29.38", "uncertaintyText": null},
+            {"columnID": "aorta_ssim", "valueText": ".82", "uncertaintyText": null}
+          ]
+        },
+        {
+          "id": "naf",
+          "method": "NAF (Ours)",
+          "evidence": {
+            "k": "evidence",
+            "v": "NAF (Ours) 行：Chest 33.05/.96，Jaw 34.14/.94，Foot 31.63/.94，Abdomen 34.45/.95，Aorta 30.34/.88。",
+            "page": 7,
+            "excerpt": "NAF (Ours) 33.05/.96 34.14/.94 31.63/.94 34.45/.95 30.34/.88"
+          },
+          "cells": [
+            {"columnID": "chest_psnr", "valueText": "33.05", "uncertaintyText": null},
+            {"columnID": "chest_ssim", "valueText": ".96", "uncertaintyText": null},
+            {"columnID": "jaw_psnr", "valueText": "34.14", "uncertaintyText": null},
+            {"columnID": "jaw_ssim", "valueText": ".94", "uncertaintyText": null},
+            {"columnID": "foot_psnr", "valueText": "31.63", "uncertaintyText": null},
+            {"columnID": "foot_ssim", "valueText": ".94", "uncertaintyText": null},
+            {"columnID": "abdomen_psnr", "valueText": "34.45", "uncertaintyText": null},
+            {"columnID": "abdomen_ssim", "valueText": ".95", "uncertaintyText": null},
+            {"columnID": "aorta_psnr", "valueText": "30.34", "uncertaintyText": null},
+            {"columnID": "aorta_ssim", "valueText": ".88", "uncertaintyText": null}
+          ]
+        }
+      ]
+    }
+  ],
+  "stability": [
+    {
+      "evidence": {
+        "k": "evidence",
+        "v": "作者报告 NAF 在人体器官和体模数据集上均取得定量最佳结果，PSNR 和 SSIM 值显著高于其他方法。",
+        "page": 7,
+        "excerpt": "Our method produces quantitatively best results in both human organ and phantom datasets as listed in Table 2. Both PSNR and SSIM values are significantly higher than other methods."
+      },
+      "interpretation": "AI解读：在论文所报告的五个数据集和两个指标上，NAF 的数值一致高于四个基线；这属于跨已列数据集/指标的一致性，不等同于跨随机种子或跨中心统计稳定性。"
+    },
+    {
+      "evidence": {
+        "k": "evidence",
+        "v": "作者报告 NAF 在重建 CT 体积的所有切片上优于其他方法。",
+        "page": 8,
+        "excerpt": "Fig. 3 indicates that NAF outperforms other methods in all slices of the reconstructed CT volume."
+      },
+      "interpretation": "AI解读：作者以切片级比较支持一致性，但该结论仅针对 abdomen 数据集的 Fig. 3，未说明是否覆盖全部数据集。"
+    }
+  ],
+  "ablation": [],
+  "generalization": [
+    {
+      "evidence": {
+        "k": "evidence",
+        "v": "作者在五个数据集（chest、jaw、foot、abdomen、aorta）上评估方法，包含人体器官和体模数据。",
+        "page": 6,
+        "excerpt": "We conduct experiments on five datasets containing human organ and phantom data. Details are listed in Table 1."
+      },
+      "interpretation": "AI解读：论文在多个数据集上测试，但均为论文内部同分布评测，未报告跨中心、跨扫描仪或域外泛化实验。"
+    }
+  ],
+  "efficiency": [
+    {
+      "evidence": {
+        "k": "evidence",
+        "v": "作者报告 NAF 可在 10-40 分钟内重建详细 CT 模型，与迭代方法相当。",
+        "page": 3,
+        "excerpt": "method can reconstruct a detailed CT model within 10-40 minutes, which is comparable to iterative methods."
+      },
+      "interpretation": "AI解读：该时间为重建/训练耗时，原文未区分训练时间、推理时间或显存占用。"
+    },
+    {
+      "evidence": {
+        "k": "evidence",
+        "v": "作者报告 NAF 与迭代方法耗时相近，且比频率编码深度学习方法 IntraTomo3D 快 3 倍。",
+        "page": 8,
+        "excerpt": "Benefiting from the compact network design, NAF spends similar running time to iterative methods and is 3×faster than the frequency-encoding deep learning method IntraTomo3D."
+      },
+      "interpretation": "AI解读：该比较基于 Fig. 5 的运行时间，原文未说明是否包含数据加载或预处理时间。"
+    }
+  ],
+  "statistics": [
+    {
+      "k": "statistics",
+      "v": "作者措辞/作者报告：作者使用“significantly higher”描述 NAF 的 PSNR 和 SSIM 高于其他方法，但未报告统计检验方法或 p 值。",
+      "page": 7,
+      "excerpt": "Both PSNR and SSIM values are significantly higher than other methods."
+    }
+  ],
+  "missing": [
+    "Table 2 的 PSNR 单位未在原文中明确说明，需核对原 PDF 或补充材料。",
+    "Table 2 的 SSIM 单位未在原文中明确说明，需核对原 PDF 或补充材料。",
+    "论文未说明是否进行了统计显著性检验，仅使用“significantly”措辞。",
+    "论文未报告跨随机种子或多次运行的方差/置信区间。",
+    "论文未报告显存占用。",
+    "论文未报告推理时间与训练时间的区分。",
+    "论文未报告跨中心或域外泛化实验。",
+    "论文未报告消融实验。",
+    "Table 1 中 Aorta 数据集的扫描范围、投影数等细节需核对原 PDF 表格布局。",
+    "Fig. 3、Fig. 4、Fig. 5 的具体数值未在正文中给出，需核对原 PDF 图内信息。"
+  ]
+}
+```

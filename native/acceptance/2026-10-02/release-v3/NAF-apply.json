@@ -1,0 +1,175 @@
+{
+  "reusable": [
+    {
+      "title": "将衰减系数场参数化为坐标到μ的连续函数（INR/MLP）",
+      "suggestion": "在 Walnut/LUNA16/AAPM 上把体重建目标写成 f:(x,y,z)->μ 的连续函数，用 MLP 拟合，输出体素时按需查询坐标即可得到离散 CT。适用前提：需要已知扫描几何以生成射线；论文未说明 Walnut/LUNA16/AAPM 的几何参数，需自行获取或仿真。",
+      "constraint": "数据域：Walnut/LUNA16/AAPM（论文未涉及）；views：用户为 sparse-view，论文用 50 views；几何：论文用 cone-beam 与 GE C-arm，用户几何未知；GPU：单卡 16 GB，论文用单张 RTX 3090（论文未说明显存占用）。",
+      "verification": "在相同 views 与几何下，对比 INR-MLP 与用户 baseline 的 PSNR/SSIM/RMSE；做体素查询分辨率一致性检查（同一模型在不同输出网格尺寸下的指标稳定性）。",
+      "evidence": [
+        {"k": "论文事实", "v": "衰减系数被表示为 3D 空间坐标的连续函数，由全连接深度网络参数化", "page": 1, "excerpt": "the desired attenuation coeﬃcients are represented as a continuous function of 3D spatial coordinates, parameterized by a fully-connected deep neural network"},
+        {"k": "论文事实", "v": "最终输出通过查询体素坐标得到离散 3D 矩阵", "page": 5, "excerpt": "We build a voxel grid with the desired size and pass the voxel coordinates to the trained MLP to predict the corresponding attenuation coeﬃcients."}
+      ]
+    },
+    {
+      "title": "自监督投影一致性损失（无需外部训练数据）",
+      "suggestion": "用真实投影与合成投影之间的 L2 误差作为唯一监督信号，避免依赖外部 CT 训练集，适合 Walnut/LUNA16/AAPM 上跨域迁移。适用前提：需要可微的投影合成算子与已知几何。",
+      "constraint": "数据域：Walnut/LUNA16/AAPM（论文未涉及）；views：论文 50 views；几何：论文用 TIGRE 生成 180° 内 50 投影、3% 噪声；用户几何未知。",
+      "verification": "消融：仅用投影损失 vs 加入额外正则；在相同 views 下报告 PSNR/SSIM/RMSE，并检查是否出现 overfitting 到噪声（训练/测试投影误差曲线）。",
+      "evidence": [
+        {"k": "论文事实", "v": "NAF 通过最小化真实与合成投影的 L2 损失更新", "page": 5, "excerpt": "NAF is updated by minimizing the L2 loss between real and synthesized projections."},
+        {"k": "论文事实", "v": "自监督指不需要外部 CT 扫描，只用目标对象的 X 射线投影", "page": 2, "excerpt": "we use ‘self-supervised’ to highlight that NAF requires no external CT scans but the X-ray projections of the interested object."}
+      ]
+    },
+    {
+      "title": "用 hash encoding 替代频率编码以压缩网络规模",
+      "suggestion": "在 16 GB 单卡约束下，用多分辨率 hash 特征表 + 线性插值替代频率编码，可显著减小后续 MLP 宽度/深度。适用前提：需要调 hash 表大小 T、层数 L 与每层特征维度；论文未给出这些超参的具体数值（称在补充材料）。",
+      "constraint": "GPU：单卡 16 GB；论文用单张 RTX 3090，论文未说明显存占用与 hash 表显存开销；数据域：论文为人体器官与体模，用户为 Walnut/LUNA16/AAPM。",
+      "verification": "在相同 MLP 容量下对比 hash vs frequency encoder 的 PSNR/SSIM/RMSE 与峰值显存、收敛时间；做 hash 表大小 T 的敏感性扫描。",
+      "evidence": [
+        {"k": "论文事实", "v": "hash encoder 输出更小（本文设置 32），后续网络更紧凑", "page": 5, "excerpt": "Compared with frequency encoder, hash encoder produces much smaller outputs (32 in our setting) with competitive feature quality"},
+        {"k": "论文事实", "v": "本文 MLP 为 4 层，前三层 32 通道，最后一层 1 神经元 + sigmoid，含 skip connection", "page": 5, "excerpt": "the network is composed of 4 fully-connected layers. The first three layers are 32-channel wide and have ReLU activation functions in between, while the last layer has one neuron followed by a sigmoid activation."}
+      ]
+    },
+    {
+      "title": "沿射线分层采样 + Beer 定律数值积分合成投影",
+      "suggestion": "对每条射线分 N 个等距 bin 各采一点，用 I=I0·exp(-Σ μi δi) 合成投影；N 需大于目标 CT 尺寸以保证每个网格单元至少一个采样点。适用前提：需要射线-立方体相交计算与几何标定。",
+      "constraint": "views：论文 50；几何：cone-beam；用户几何未知；N 的取值论文按 CT 尺寸设定（如 128³ chest 用 192 点），用户数据尺寸不同需重设。",
+      "verification": "扫描 N（如 128/192/256）对 PSNR/SSIM/RMSE 与显存/时间的影响；检查 N 小于 CT 尺寸时的混叠伪影。",
+      "evidence": [
+        {"k": "论文事实", "v": "采用分层采样，将射线分为 N 个等距 bin 并在每 bin 均匀采一点", "page": 4, "excerpt": "A stratified sampling method [13] is adopted, where we divide a ray into N evenly spaced bins and uniformly sample one point at each bin."},
+        {"k": "论文事实", "v": "N 大于目标 CT 尺寸以保证每个网格单元至少一个采样点", "page": 4, "excerpt": "Setting N greater than the desired CT size ensures that at least one sample is assigned to every grid cell that an X-ray traverses."},
+        {"k": "论文事实", "v": "128×128×128 chest CT 每条射线采样 192 点", "page": 6, "excerpt": "we sample 192 points along each ray for the 128×128×128 chest CT."}
+      ]
+    }
+  ],
+  "adaptation": [
+    {
+      "title": "将 NAF 迁移到 Walnut/LUNA16/AAPM 需重建几何与投影生成流程",
+      "suggestion": "论文用 TIGRE 从体数据生成 50 投影（180°、3% 噪声），并用 GE C-arm 采集体模。迁移到 Walnut/LUNA16/AAPM 时，需先确认这些数据集是否提供投影；若只提供体数据，则需用 TIGRE 或等价工具按用户几何生成稀疏投影，并保证训练/评测使用同一几何。",
+      "constraint": "数据域：Walnut/LUNA16/AAPM（论文未涉及）；views：用户 sparse-view，论文 50；几何：论文为 cone-beam 180° 与 C-arm -103°~93°；用户几何未知。",
+      "verification": "固定几何与 views，分别用 TIGRE 生成投影与（若有）真实投影做一致性对比；报告 PSNR/SSIM/RMSE 并注明投影来源。",
+      "evidence": [
+        {"k": "论文事实", "v": "人体器官数据集仅提供体 CT，投影由 TIGRE 生成，180° 内 50 投影、3% 噪声", "page": 6, "excerpt": "Since these datasets only provide volumetric CT scans, we generate projections by a tomographic toolbox TIGRE [5]. In TIGRE [5], we capture 50 projections with 3% noise in the range of 180◦."},
+        {"k": "论文事实", "v": "体模用 GE C-arm 采集 582 个 500×500 投影，实验只用 50 个", "page": 6, "excerpt": "This system captures 582 500×500 fluoroscopy projections with position primary angle from -103◦to 93◦and position secondary angle of 0◦. ... We only use 50 projections for experiments."}
+      ]
+    },
+    {
+      "title": "在 16 GB 单卡上控制 batch 与采样点数的显存预算",
+      "suggestion": "论文 batch size 为 2048 rays/iteration，采样点数随 CT 尺寸变化。迁移到 16 GB 卡时，若 Walnut/LUNA16/AAPM 体尺寸更大（如 512³ 级），需按显存下调 batch 或 N，或采用梯度累积。论文未说明显存占用，需实测。",
+      "constraint": "GPU：单卡 16 GB；论文用单张 RTX 3090，论文未说明显存占用；数据域尺寸：论文 abdomen 512×512×463、aorta 512×512×510。",
+      "verification": "在目标数据尺寸下扫描 (batch, N) 组合，记录峰值显存与 PSNR/SSIM/RMSE，找出不 OOM 的最优组合。",
+      "evidence": [
+        {"k": "论文事实", "v": "batch size 为每次迭代 2048 条射线", "page": 6, "excerpt": "The batch size is 2048 rays at each iteration."},
+        {"k": "论文事实", "v": "所有实验在单张 RTX 3090 GPU 上完成", "page": 6, "excerpt": "All experiments are conducted on a single RTX 3090 GPU."}
+      ]
+    },
+    {
+      "title": "用 hash encoding 的稀疏性假设适配低剂量/稀疏视角场景",
+      "suggestion": "论文论证人体器官由若干均匀介质组成、自然物体偏光滑，因此稠密频率编码冗余。若 Walnut（坚果）与 AAPM 体模同样具有分段均匀/光滑结构，可沿用 hash encoding；若 LUNA16 肺结节含大量高频细节，需评估 hash 表容量是否足够。",
+      "constraint": "数据域：Walnut/LUNA16/AAPM（论文未涉及）；论文对象为 chest/jaw/foot/abdomen 与硅胶主动脉体模；低剂量：论文仅用 3% 噪声模拟，未做真实低剂量实验。",
+      "verification": "在目标数据上对比 hash vs frequency encoder 的 PSNR/SSIM/RMSE，并做边缘区域（如结节、骨小梁）的局部指标与视觉对比。",
+      "evidence": [
+        {"k": "论文事实", "v": "人体由若干均匀介质组成，介质内衰减近似均匀，仅边缘附近需要高频", "page": 4, "excerpt": "a human body usually consists of several homogeneous media, such as muscles and bones. Attenuation coeﬃcients remain approximately uniform inside one medium but vary between diﬀerent media. High-frequency features are not necessary unless for points near edges."},
+        {"k": "论文事实", "v": "hash 函数多对一性质契合人体器官稀疏性", "page": 5, "excerpt": "the many-to-one property of hash function conforms to the sparsity nature of human organs."}
+      ]
+    },
+    {
+      "title": "引入 Transformer 作为编码器/解码器的迁移路径（论文未涉及）",
+      "suggestion": "用户方法含 Transformer，但论文 NAF 未使用 Transformer。可尝试用 Transformer 替换或增强 hash encoder 的特征聚合，或用于跨视角投影特征融合。此为推断，论文无相关证据，需自行设计并验证。",
+      "constraint": "方法：用户含 Transformer，论文为 MLP + hash encoder；GPU：16 GB 单卡，Transformer 显存开销论文未说明。",
+      "verification": "消融：MLP+hash vs Transformer+hash vs 纯 Transformer，在相同 views 与几何下比较 PSNR/SSIM/RMSE 与显存/时间。",
+      "evidence": [
+        {"k": "论文事实", "v": "NAF 的衰减系数预测网络为 4 层全连接 MLP，未提及 Transformer", "page": 5, "excerpt": "We represent the bounded field with a simple MLP Φ, which takes the encoded spatial coordinates as inputs and outputs the attenuation coeﬃcients µat that position."}
+      ]
+    },
+    {
+      "title": "将 Diffusion 先验与 NAF 自监督管线结合的迁移路径（论文未涉及）",
+      "suggestion": "用户主题含 Diffusion，论文未涉及。可考虑用 Diffusion 模型作为稀疏视角下的先验/正则，与 NAF 的投影一致性损失联合优化。此为推断，需注意 Diffusion 采样开销与 16 GB 显存约束。",
+      "constraint": "方法：用户含 Diffusion，论文未涉及；GPU：16 GB 单卡；views：sparse-view。",
+      "verification": "对比 NAF-only vs NAF+Diffusion 先验，在相同 views 下报告 PSNR/SSIM/RMSE 与推理时间/显存。",
+      "evidence": [
+        {"k": "论文事实", "v": "NAF 的损失函数为真实与合成投影的 L2 损失", "page": 5, "excerpt": "NAF is updated by minimizing the L2 loss between real and synthesized projections."}
+      ]
+    }
+  ],
+  "conflicts": [
+    {
+      "title": "论文未验证 Walnut/LUNA16/AAPM，跨域性能未知",
+      "suggestion": "论文实验仅在 chest/jaw/foot/abdomen 与硅胶主动脉体模上完成，未涉及 Walnut/LUNA16/AAPM。直接迁移存在域偏移风险，需重新调参并验证。",
+      "constraint": "数据域：用户为 Walnut/LUNA16/AAPM，论文为人体器官与体模；论文未说明这些数据集上的表现。",
+      "verification": "在 Walnut/LUNA16/AAPM 上复现 NAF 并报告 PSNR/SSIM/RMSE，与论文报告值对比，分析域差异来源。",
+      "evidence": [
+        {"k": "论文事实", "v": "实验在五个数据集上进行，含人体器官与体模", "page": 6, "excerpt": "We conduct experiments on five datasets containing human organ and phantom data."},
+        {"k": "论文事实", "v": "人体器官数据集为 chest、jaw、foot、abdomen", "page": 6, "excerpt": "We evaluate our method using public datasets of human organ CTs [4,12], including chest, jaw, foot and abdomen."}
+      ]
+    },
+    {
+      "title": "论文未做真实低剂量实验，仅用 3% 噪声模拟",
+      "suggestion": "用户主题含 Low-dose，但论文仅在 TIGRE 生成投影时加 3% 噪声，未在真实低剂量数据上验证。低剂量下的噪声统计与模拟噪声可能不同，需谨慎。",
+      "constraint": "低剂量：论文用 3% 噪声模拟；用户为 Low-dose，真实噪声模型未知。",
+      "verification": "在真实低剂量投影（若有）与模拟噪声投影上分别评测，比较 PSNR/SSIM/RMSE 与噪声鲁棒性。",
+      "evidence": [
+        {"k": "论文事实", "v": "TIGRE 生成 50 投影并加 3% 噪声", "page": 6, "excerpt": "we capture 50 projections with 3% noise in the range of 180◦"}
+      ]
+    },
+    {
+      "title": "论文未说明 hash encoder 超参与显存，16 GB 约束下需自行标定",
+      "suggestion": "论文称 hash encoder 超参与补充材料一致，但正文未给出 T、L、每层特征维度等具体值，也未报告显存占用。在 16 GB 单卡上迁移时不能直接照搬，需实测。",
+      "constraint": "GPU：单卡 16 GB；论文用 RTX 3090，论文未说明显存占用；超参：论文未说明具体数值。",
+      "verification": "在目标数据上扫描 hash 表大小 T 与层数 L，记录峰值显存与指标，确定 16 GB 下的可行配置。",
+      "evidence": [
+        {"k": "论文事实", "v": "hash encoder 使用与 [14] 相同的超参设置，更多细节在补充材料", "page": 6, "excerpt": "We use the same hyper-parameter setting for hash encoder as [14]. More details of hyper-parameters can be found in the supplementary material."}
+      ]
+    },
+    {
+      "title": "论文未涉及 Transformer 与 Diffusion，方法组合无直接依据",
+      "suggestion": "用户方法含 Implicit Representation 与 Transformer，主题含 Diffusion，但论文仅用 MLP + hash encoder，未涉及 Transformer/Diffusion。将二者结合属于新设计，不能声称论文已验证。",
+      "constraint": "方法：用户含 Transformer/Diffusion，论文未涉及；需自行设计并验证。",
+      "verification": "设计消融实验，分别验证 Transformer 与 Diffusion 组件对 PSNR/SSIM/RMSE 的贡献，并报告显存与时间开销。",
+      "evidence": [
+        {"k": "论文事实", "v": "NAF 由 ray sampling、position encoding、attenuation coefficient prediction、projection synthesis 四模块组成", "page": 3, "excerpt": "NAF consists of four modules: ray sampling, position encoding, attenuation coeﬃcientprediction,andprojectionsynthesis."}
+      ]
+    }
+  ],
+  "validation": [
+    {
+      "title": "在 Walnut/LUNA16/AAPM 上复现 NAF 并报告 PSNR/SSIM/RMSE",
+      "suggestion": "按论文设置（50 views、cone-beam、TIGRE 生成投影）在三个数据集上复现，报告 PSNR/SSIM/RMSE，并与论文 Table 2 的对应方法对比。注意论文未报告 RMSE，需自行计算。",
+      "constraint": "数据域：Walnut/LUNA16/AAPM；views：50（论文设置）；几何：cone-beam 180°；GPU：16 GB 单卡。",
+      "verification": "固定随机种子与几何，重复 3 次取均值±方差；与 FDK/SART/ASD-POCS/IntraTomo3D 在相同条件下对比。",
+      "evidence": [
+        {"k": "论文事实", "v": "Table 2 报告五种方法在五个数据集上的 PSNR/SSIM", "page": 7, "excerpt": "Table 2: PSNR/SSIM measurements of five methods on five datasets."},
+        {"k": "论文事实", "v": "论文用 PSNR 与 SSIM 评估，未提及 RMSE", "page": 6, "excerpt": "We evaluate five methods quantitatively in terms of peak signal-to-noise ratio (PNSR) and structural similarity (SSIM) [25]."}
+      ]
+    },
+    {
+      "title": "不同 views 数量的鲁棒性验证",
+      "suggestion": "论文 Fig.4 显示性能随 views 增加而提升，NAF 在多数情况下更优。迁移到用户 sparse-view 设置时，需在多个 views 数（如 20/30/50/100）下评测，确认方法在更稀疏条件下的表现。",
+      "constraint": "views：用户 sparse-view，论文 50；论文未说明低于 50 views 的具体表现。",
+      "verification": "在 20/30/50/100 views 下分别训练并报告 PSNR/SSIM/RMSE 曲线，与 baseline 对比。",
+      "evidence": [
+        {"k": "论文事实", "v": "Fig.4 显示迭代与学习方法在不同 views 数下的性能，性能随 views 增加而提升", "page": 8, "excerpt": "Figure 4 shows the performance of iterative methods and learning-based methods under diﬀerent number of views. It is clear that the performance increases with the rise of input views."}
+      ]
+    },
+    {
+      "title": "运行时间与收敛性验证",
+      "suggestion": "论文称 NAF 在 10-40 分钟内重建，且比 IntraTomo3D 快 3 倍。迁移到 16 GB 单卡时需实测收敛时间，确认是否满足临床/实验迭代需求。",
+      "constraint": "GPU：单卡 16 GB；论文用 RTX 3090，论文未说明显存占用；时间：论文 10-40 分钟。",
+      "verification": "记录达到稳定 PSNR/SSIM 所需迭代数与墙钟时间，与 SART/ASD-POCS/IntraTomo3D 对比。",
+      "evidence": [
+        {"k": "论文事实", "v": "NAF 可在 10-40 分钟内重建详细 CT 模型", "page": 3, "excerpt": "our method can reconstruct a detailed CT model within 10-40 minutes, which is comparable to iterative methods."},
+        {"k": "论文事实", "v": "NAF 比频率编码深度学习方法 IntraTomo3D 快 3 倍", "page": 8, "excerpt": "NAF spends similar running time to iterative methods and is 3×faster than the frequency-encoding deep learning method IntraTomo3D."}
+      ]
+    },
+    {
+      "title": "消融验证 hash encoder 与频率编码的差异",
+      "suggestion": "论文称 hash encoder 在性能与效率上优于频率编码。迁移时需在目标数据上做消融，确认该结论是否成立，并记录显存与时间。",
+      "constraint": "数据域：Walnut/LUNA16/AAPM；GPU：16 GB 单卡；论文未说明 hash 超参具体值。",
+      "verification": "固定 MLP 容量，对比 hash vs frequency encoder 的 PSNR/SSIM/RMSE、峰值显存、收敛时间。",
+      "evidence": [
+        {"k": "论文事实", "v": "hash encoder 在性能与效率上优于常用频率域编码器", "page": 1, "excerpt": "This encoder outperforms the commonly used frequency-domain encoder in terms of having higher performance and eﬃciency"},
+        {"k": "论文事实", "v": "频率编码输出尺寸常设为 256 或更大，导致网络更宽更深、训练耗时数小时", "page": 4, "excerpt": "the size of encoder output is set to 256 or greater. The following network must be wider and deeper to cope with the inﬂated inputs. As a result, it takes hours to train millions of network parameters"}
+      ]
+    }
+  ]
+}
