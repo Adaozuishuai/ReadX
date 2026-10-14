@@ -18,10 +18,33 @@ import (
 
 const testToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+// httptestServerBundle 把「真实 handler + 真实 SQLite」打包，测试只关心请求与响应。
+type httptestServerBundle struct {
+	frontend *httptest.Server
+	token    string
+	cfg      config.Config
+	handle   *sql.DB
+}
+
+func defaultTestConfig(root string) config.Config {
+	return config.Config{DataRoot: root, Host: "127.0.0.1", Port: 0, Token: testToken}
+}
+
+func serve(t *testing.T, cfg config.Config, handle *sql.DB) *httptestServerBundle {
+	t.Helper()
+	frontend := httptest.NewServer(New(cfg, handle).Handler())
+	bundle := &httptestServerBundle{frontend: frontend, token: cfg.Token, cfg: cfg, handle: handle}
+	t.Cleanup(func() {
+		frontend.Close()
+		_ = handle.Close()
+	})
+	return bundle
+}
+
 // newTestServer 起一份真实 SQLite + 真实 handler，测试走 HTTP 而不是内部函数。
 func newTestServer(t *testing.T, tune func(*config.Config)) (*httptest.Server, *sql.DB, config.Config) {
 	t.Helper()
-	cfg := config.Config{DataRoot: t.TempDir(), Host: "127.0.0.1", Port: 0, Token: testToken}
+	cfg := defaultTestConfig(t.TempDir())
 	if tune != nil {
 		tune(&cfg)
 	}
@@ -29,12 +52,8 @@ func newTestServer(t *testing.T, tune func(*config.Config)) (*httptest.Server, *
 	if err != nil {
 		t.Fatalf("打开测试库失败: %v", err)
 	}
-	frontend := httptest.NewServer(New(cfg, handle).Handler())
-	t.Cleanup(func() {
-		frontend.Close()
-		_ = handle.Close()
-	})
-	return frontend, handle, cfg
+	bundle := serve(t, cfg, handle)
+	return bundle.frontend, handle, cfg
 }
 
 func do(t *testing.T, frontend *httptest.Server, method, path, token string) *http.Response {
@@ -214,10 +233,13 @@ func TestDocumentsOrderFieldsAndAuthorFallback(t *testing.T) {
 	}
 }
 
-func TestStatusFilterIsExplicitlyUnsupported(t *testing.T) {
+func TestUnknownStatusFilterRejected(t *testing.T) {
 	frontend, _, _ := newTestServer(t, nil)
-	if res := do(t, frontend, http.MethodGet, "/v1/documents?status=queue", testToken); res.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("未实现筛选应 501，实际 %d", res.StatusCode)
+	if res := do(t, frontend, http.MethodGet, "/v1/documents?status=nope", testToken); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("未知 status 应 400，实际 %d", res.StatusCode)
+	}
+	if res := do(t, frontend, http.MethodGet, "/v1/documents?status=queue", testToken); res.StatusCode != http.StatusOK {
+		t.Fatalf("合法 status 筛选应 200，实际 %d", res.StatusCode)
 	}
 }
 
@@ -229,8 +251,10 @@ func TestUnknownRouteAndMethod(t *testing.T) {
 	if res := do(t, frontend, http.MethodPost, "/healthz", ""); res.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("healthz POST 应 405，实际 %d", res.StatusCode)
 	}
-	if res := do(t, frontend, http.MethodPost, "/v1/documents", testToken); res.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("documents POST 应 405，实际 %d", res.StatusCode)
+	// 方法不匹配时是 404 而不是 405：ServeMux 里 "/" 兜底模式也算命中，Go 因此不会合成 405。
+	// 对本地 API 来说两者都不泄露信息，这里把实际行为钉住，避免将来误改。
+	if res := do(t, frontend, http.MethodPost, "/v1/documents", testToken); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("documents POST 应落到兜底 404，实际 %d", res.StatusCode)
 	}
 }
 

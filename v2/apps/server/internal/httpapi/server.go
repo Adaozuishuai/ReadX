@@ -42,8 +42,17 @@ func New(cfg config.Config, handle *sql.DB) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.Handle("/v1/meta", s.requireBearer(http.HandlerFunc(s.handleMeta)))
-	mux.Handle("/v1/documents", s.requireBearer(http.HandlerFunc(s.handleDocuments)))
+
+	withAuth := func(h http.HandlerFunc) http.Handler { return s.requireBearer(h) }
+	mux.Handle("/v1/meta", withAuth(s.handleMeta))
+	mux.Handle("GET /v1/documents", withAuth(s.handleDocuments))
+	mux.Handle("POST /v1/import", withAuth(s.handleImport))
+	mux.Handle("GET /v1/documents/{key}", withAuth(s.handleDocument))
+	mux.Handle("PATCH /v1/documents/{key}/status", withAuth(s.handleStatusPatch))
+	mux.Handle("GET /v1/documents/{key}/pages", withAuth(s.handlePageList))
+	mux.Handle("GET /v1/documents/{key}/pages/{page}", withAuth(s.handlePageGet))
+	mux.Handle("PUT /v1/documents/{key}/pages/{page}", withAuth(s.handlePagePut))
+	mux.Handle("GET /v1/documents/{key}/pdf", withAuth(s.handlePDF))
 
 	if s.cfg.StaticDir != "" {
 		mux.HandleFunc("/", s.handleStatic)
@@ -176,16 +185,33 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "只允许 GET")
 		return
 	}
-	if r.URL.Query().Get("status") != "" {
-		// 明确拒绝而不是静默忽略，避免前端误以为筛选生效（S1 补筛选）。
-		writeError(w, http.StatusNotImplemented, "status 筛选将在下一阶段提供")
+	status := r.URL.Query().Get("status")
+	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	if status != "" && !knownStatus(status) {
+		writeError(w, http.StatusBadRequest, "status 只能是 queue / reading / done / archive")
 		return
 	}
-	rows, err := s.handle.QueryContext(r.Context(),
-		`SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at
-		 FROM documents
-		 ORDER BY CASE status WHEN 'reading' THEN 0 WHEN 'done' THEN 2 ELSE 1 END,
-		          added_at DESC, id`)
+	query := `SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at
+		 FROM documents`
+	var where []string
+	var args []any
+	if status != "" {
+		where = append(where, `status = ?`)
+		args = append(args, status)
+	}
+	if search != "" {
+		// 与旧版一样只做包含匹配（LIKE 大小写不敏感对 ASCII 有效），不做模糊打分——
+		// 宁可少召回也不要给出无法解释的排序。
+		where = append(where, `(lower(title) LIKE ? OR lower(authors) LIKE ? OR lower(venue) LIKE ? OR lower(key) LIKE ?)`)
+		pattern := "%" + search + "%"
+		args = append(args, pattern, pattern, pattern, pattern)
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += ` ORDER BY CASE status WHEN 'reading' THEN 0 WHEN 'done' THEN 2 ELSE 1 END, added_at DESC, id`
+
+	rows, err := s.handle.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "查询文档失败: "+err.Error())
 		return

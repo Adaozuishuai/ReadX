@@ -2,8 +2,9 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2023", "DOM"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "declaration": true,

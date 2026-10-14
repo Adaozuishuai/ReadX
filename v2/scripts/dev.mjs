@@ -109,11 +109,15 @@ function launchDesktop(env) {
 }
 
 function runNpm(args, cwd, env = {}) {
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const child = spawn(npm, args, {
+  // Windows 上 npm 是 .cmd：Node 20+ 不允许不带 shell 直接 spawn 它（EINVAL），
+  // 而带 shell 时参数必须自己拼成一条命令串。
+  const isWin = process.platform === 'win32';
+  const command = isWin ? `npm ${args.join(' ')}` : 'npm';
+  const child = spawn(command, isWin ? [] : args, {
     cwd,
     stdio: 'inherit',
     windowsHide: true,
+    shell: isWin,
     env: { ...process.env, ...env },
   });
   track(child, `npm ${args.join(' ')}`);

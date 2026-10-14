@@ -1,9 +1,14 @@
 import type {
   ApiFailure,
   BootstrapInfo,
+  DocumentDetail,
   DocumentsResponse,
   HealthResponse,
+  ImportReport,
   MetaResponse,
+  PageListResponse,
+  PageText,
+  WireStatus,
 } from '@cbct/shared';
 import { isApiFailure } from '@cbct/shared';
 
@@ -33,14 +38,21 @@ export function isTransportFailure(error: unknown): boolean {
   return error instanceof TypeError || (error instanceof ApiError && error.status === 0);
 }
 
-async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
+async function request<T>(path: string, init?: { signal?: AbortSignal; method?: string; body?: unknown }): Promise<T> {
   const { apiBase, token } = bootstrap();
   const headers = new Headers({ Accept: 'application/json' });
   if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init?.body !== undefined) headers.set('Content-Type', 'application/json');
 
   let response: Response;
   try {
-    response = await fetch(apiBase + path, { headers, signal, credentials: 'omit' });
+    response = await fetch(apiBase + path, {
+      headers,
+      signal: init?.signal,
+      method: init?.method ?? 'GET',
+      body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+      credentials: 'omit',
+    });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new ApiError('本地服务未响应，请确认 server 已启动', 0);
@@ -63,8 +75,37 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   return payload as T;
 }
 
+function query(params: Record<string, string | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value && value.trim()) search.set(key, value.trim());
+  }
+  const rendered = search.toString();
+  return rendered ? `?${rendered}` : '';
+}
+
 export const api = {
-  health: (signal?: AbortSignal) => request<HealthResponse>('/healthz', signal),
-  meta: (signal?: AbortSignal) => request<MetaResponse>('/v1/meta', signal),
-  documents: (signal?: AbortSignal) => request<DocumentsResponse>('/v1/documents', signal),
+  health: (signal?: AbortSignal) => request<HealthResponse>('/healthz', { signal }),
+  meta: (signal?: AbortSignal) => request<MetaResponse>('/v1/meta', { signal }),
+  documents: (signal?: AbortSignal, filters?: { status?: string; q?: string }) =>
+    request<DocumentsResponse>(`/v1/documents${query(filters ?? {})}`, { signal }),
+  document: (key: string, signal?: AbortSignal) => request<DocumentDetail>(`/v1/documents/${encodeURIComponent(key)}`, { signal }),
+  pages: (key: string, signal?: AbortSignal) =>
+    request<PageListResponse>(`/v1/documents/${encodeURIComponent(key)}/pages`, { signal }),
+  page: (key: string, page: number, signal?: AbortSignal) =>
+    request<PageText>(`/v1/documents/${encodeURIComponent(key)}/pages/${page}`, { signal }),
+  putPage: (key: string, page: number, text: string) =>
+    request<{ page: number; hash: string; chars: number }>(`/v1/documents/${encodeURIComponent(key)}/pages/${page}`, {
+      method: 'PUT',
+      body: { text },
+    }),
+  setStatus: (key: string, status: WireStatus) =>
+    request<{ key: string; status: string }>(`/v1/documents/${encodeURIComponent(key)}/status`, {
+      method: 'PATCH',
+      body: { status },
+    }),
+  importLegacy: (forceBackup = false) =>
+    request<ImportReport>('/v1/import', { method: 'POST', body: { forceBackup } }),
+  /** PDF 直链：渲染进程的 pdf.js 用它取字节（同源 + 同 token 通道）。 */
+  pdfURL: (key: string): string => `/v1/documents/${encodeURIComponent(key)}/pdf`,
 };

@@ -8,6 +8,8 @@
 /** server 打印到 stdout 的就绪行前缀，desktop 壳按它解析。 */
 export const READY_PREFIX = 'CBCT_V2_READY ';
 
+export * from './text.js';
+
 /** dev 模式下 server 写出的就绪文件，Vite proxy 靠它注入本地 token。 */
 export const DEV_INFO_FILE = 'apps/server/dev-info.json';
 
@@ -88,6 +90,52 @@ export interface ReadyInfo {
   dataRoot: string;
   dbPath: string;
   pid: number;
+}
+
+export interface PageSummary {
+  page: number;
+  chars: number;
+  hash: string;
+  updatedAt: string;
+}
+
+export interface PageText {
+  page: number;
+  text: string;
+  chars: number;
+  hash: string;
+  updatedAt: string;
+}
+
+export interface PageListResponse {
+  key: string;
+  pages: PageSummary[];
+  total: number;
+}
+
+/** 详情：documents 表的一行 + 逐页索引 + 已存精读产物（未解析时为 null）。 */
+export interface DocumentDetail {
+  document: DocumentSummary;
+  pages: PageSummary[];
+  reading: Record<string, unknown> | null;
+  hasPdf: boolean;
+  hasText: boolean;
+  fromOcr: boolean;
+}
+
+/** 一次「旧 JSON → SQLite」导入的结果。 */
+export interface ImportReport {
+  documentsAdded: number;
+  documentsUpdated: number;
+  documentsUnchanged: number;
+  pagesImported: number;
+  pagesUnchanged: number;
+  textCaches: number;
+  readingsImported: number;
+  backupDir?: string;
+  warnings: string[];
+  startedAt: string;
+  finishedAt: string;
 }
 
 declare global {

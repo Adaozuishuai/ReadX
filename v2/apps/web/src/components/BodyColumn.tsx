@@ -1,15 +1,32 @@
+import { useEffect, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
-import { statusLabel } from '@cbct/shared';
+import { collapseInlineWhitespace, paragraphizePage, splitParagraphs, statusLabel } from '@cbct/shared';
+import type { DocumentPhase } from '../hooks/useDocument';
+import { usePageText } from '../hooks/useDocument';
 import type { WorkspacePhase } from '../hooks/useWorkspace';
 
 interface Props {
   phase: WorkspacePhase;
+  detail: DocumentPhase;
   selected: DocumentSummary | null;
 }
 
-/** 中栏：正文容器。S0 只提供骨架与状态，pdf.js 渲染在 S1 接入同一块区域。 */
-export function BodyColumn({ phase, selected }: Props) {
+/** 中栏：正文容器。S1 先接旧版逐页缓存（文本层），pdf.js 视图在同一块区域继续挂。 */
+export function BodyColumn({ phase, detail, selected }: Props) {
   const meta = phase.kind === 'ready' ? phase.meta : null;
+  const pages = detail.kind === 'ready' ? detail.detail.pages : [];
+  const [page, setPage] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!pages.length) {
+      setPage(null);
+      return;
+    }
+    const first = pages[0];
+    if (first) setPage(first.page);
+  }, [pages]);
+
+  const body = usePageText(selected?.key ?? null, page);
 
   return (
     <section className="flex h-full min-h-0 flex-col gap-3">
@@ -36,80 +53,60 @@ export function BodyColumn({ phase, selected }: Props) {
       </div>
 
       <div className="card-surface flex min-h-0 flex-1 flex-col overflow-hidden rounded-card">
-        <Toolbar hasDocument={Boolean(selected)} />
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
-          {selected ? <PendingBody /> : <NoSelection />}
+        <Toolbar
+          pages={pages.map((item) => item.page)}
+          page={page}
+          onStep={(delta) => setPage((current) => step(pages.map((item) => item.page), current, delta))}
+          disabled={!pages.length}
+        />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <Body body={body} detail={detail} hasSelection={Boolean(selected)} onPage={(value) => setPage(value)} />
         </div>
       </div>
     </section>
   );
 }
 
-function Toolbar({ hasDocument }: { hasDocument: boolean }) {
-  return (
-    <div className="flex items-center gap-2 border-b border-line px-3 py-2">
-      <Segmented
-        options={[
-          { id: 'text', label: '文本层' },
-          { id: 'pdf', label: 'PDF 原文' },
-        ]}
-        value="text"
-        onChange={() => undefined}
-        disabled={!hasDocument}
-      />
-      <span className="mx-1 h-4 w-px bg-line" />
-      <GhostButton disabled={!hasDocument}>上一页</GhostButton>
-      <span className="rounded-md bg-surface-sunk px-2 py-1 text-[12px] text-ink-faint">— / —</span>
-      <GhostButton disabled={!hasDocument}>下一页</GhostButton>
-      <span className="ml-auto flex items-center gap-1">
-        <GhostButton disabled={!hasDocument}>缩小</GhostButton>
-        <GhostButton disabled={!hasDocument}>放大</GhostButton>
-        <GhostButton disabled={!hasDocument}>适应宽度</GhostButton>
-      </span>
-    </div>
-  );
+function step(pages: number[], current: number | null, delta: number): number | null {
+  if (!pages.length || current == null) return current;
+  const index = pages.indexOf(current);
+  const next = pages[Math.min(Math.max(index + delta, 0), pages.length - 1)];
+  return next ?? current;
 }
 
-function Segmented({
-  options,
-  value,
-  onChange,
+function Toolbar({
+  pages,
+  page,
+  onStep,
   disabled,
 }: {
-  options: readonly { id: string; label: string }[];
-  value: string;
-  onChange: (id: string) => void;
+  pages: number[];
+  page: number | null;
+  onStep: (delta: number) => void;
   disabled: boolean;
 }) {
+  const index = page == null ? -1 : pages.indexOf(page);
   return (
-    <div className={`flex items-center gap-1 rounded-pill bg-surface-sunk p-1 ${disabled ? 'opacity-50' : ''}`}>
-      {options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(option.id)}
-          className={[
-            'rounded-pill px-2.5 py-1 text-[12px] transition',
-            option.id === value ? 'bg-surface font-medium text-ink shadow-sm' : 'text-ink-soft',
-          ].join(' ')}
-        >
-          {option.label}
-        </button>
-      ))}
+    <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+      <span className="rounded-pill bg-surface-sunk px-2.5 py-1 text-[12px] font-medium text-ink-soft">文本层</span>
+      <span className="mx-1 h-4 w-px bg-line" />
+      <GhostButton disabled={disabled || index <= 0} onClick={() => onStep(-1)}>
+        上一页
+      </GhostButton>
+      <span className="rounded-md bg-surface-sunk px-2 py-1 text-[12px] tabular-nums text-ink-soft">
+        {page ?? '—'} / {pages.length || '—'}
+      </span>
+      <GhostButton disabled={disabled || index < 0 || index >= pages.length - 1} onClick={() => onStep(1)}>
+        下一页
+      </GhostButton>
+      {pages.length ? (
+        <span className="ml-auto text-[11px] text-ink-faint">共 {pages.length} 页有正文缓存</span>
+      ) : null}
     </div>
   );
 }
 
-function GhostButton({
-  children,
-  disabled,
-  onClick,
-}: {
-  children: React.ReactNode;
-  disabled?: boolean;
-  onClick?: () => void;
-}) {
+function GhostButton({ children, disabled, onClick }: { children: React.ReactNode; disabled?: boolean; onClick?: () => void }) {
   return (
     <button
       type="button"
@@ -122,26 +119,83 @@ function GhostButton({
   );
 }
 
-function PendingBody() {
+function Body({
+  body,
+  detail,
+  hasSelection,
+  onPage,
+}: {
+  body: ReturnType<typeof usePageText>;
+  detail: DocumentPhase;
+  hasSelection: boolean;
+  onPage: (page: number) => void;
+}) {
+  if (!hasSelection) return <Centered title="从左侧选一篇论文开始" note="三栏工作区：左栏论文库、中栏原文、右栏对话与精读产物。" />;
+  if (detail.kind === 'loading') return <Centered title="载入论文信息…" />;
+  if (detail.kind === 'error') return <Centered title="读取失败" note={detail.message} />;
+
+  const fromOcr = detail.kind === 'ready' && detail.detail.fromOcr;
+  const pages = detail.kind === 'ready' ? detail.detail.pages : [];
+
+  if (!pages.length) {
+    return (
+      <Centered
+        title="这篇还没有正文缓存"
+        note="旧版里读过的论文会自动带过来；没读过的论文要在 S1 后半段用内置 pdf.js 抽取正文后才会出现文本层。"
+      />
+    );
+  }
+
   return (
-    <div className="max-w-md text-center">
-      <p className="text-[15px] font-medium">正文尚未接入</p>
-      <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
-        S1 会在这一块挂载 pdf.js：文本层按页抽取、两端对齐重排、点击摘录跳转到原文页；
-        抽取结果按页上传 server 缓存，与旧版 <code className="rounded bg-surface-sunk px-1">library/text</code> 同格式互通。
-      </p>
-      <p className="stage-note mt-3">当前为 S0 骨架，仅验证前后端连通与三栏布局。</p>
+    <div className="mx-auto flex max-w-[72ch] flex-col gap-4 px-6 py-6">
+      {fromOcr ? (
+        <p className="rounded-lg bg-warn/10 px-3 py-2 text-[12px] leading-relaxed text-warn">
+          该论文的全文来自 OCR 识别，摘录校验可能失效，引用前请人工核对原文页。
+        </p>
+      ) : null}
+      {body.kind === 'loading' ? <Centered title="读取正文…" /> : null}
+      {body.kind === 'error' ? <Centered title="正文读取失败" note={body.message} /> : null}
+      {body.kind === 'missing' ? <Centered title="这一页还没有正文" /> : null}
+      {body.kind === 'ready' ? (
+        <>
+          {pages.length > 1 ? (
+            <nav className="flex flex-wrap gap-1">
+              {pages.map((item) => (
+                <button
+                  key={item.page}
+                  type="button"
+                  onClick={() => onPage(item.page)}
+                  className="rounded-pill border border-line bg-surface px-2 py-0.5 text-[11px] text-ink-soft transition hover:border-accent hover:text-accent"
+                >
+                  Page {item.page}
+                </button>
+              ))}
+            </nav>
+          ) : null}
+          <article className="text-pane">
+            {splitParagraphs(paragraphizePage(body.text)).map((block, index) =>
+              block.kind === 'page' ? (
+                <p key={`page-${index}`} className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                  Page {block.page}
+                </p>
+              ) : (
+                <p key={`p-${index}`}>{collapseInlineWhitespace(block.text)}</p>
+              ),
+            )}
+          </article>
+        </>
+      ) : null}
     </div>
   );
 }
 
-function NoSelection() {
+function Centered({ title, note }: { title: string; note?: string }) {
   return (
-    <div className="max-w-md text-center">
-      <p className="text-[15px] font-medium">从左侧选一篇论文开始</p>
-      <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
-        三栏工作区：左栏论文库、中栏原文、右栏对话与精读产物。摘录证据校验、四层解析兜底会在后端逐步接管。
-      </p>
+    <div className="flex h-full items-center justify-center p-6">
+      <div className="max-w-md text-center">
+        <p className="text-[15px] font-medium">{title}</p>
+        {note ? <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{note}</p> : null}
+      </div>
     </div>
   );
 }
