@@ -1,0 +1,107 @@
+{
+  "name": "prune-results-bad-row",
+  "kind": "prune-results",
+  "source": "=== Page 1 ===\nWe train using 50 views and report PSNR of 33.05 dB on the Walnut dataset.\nThe loss weight lambda is set to 0.5 and training takes 12 hours on one GPU.\n=== Page 2 ===\nTable 1 compares methods.\nNAF: PSNR 33.05 dB, SSIM 0.912\nFDK: PSNR 29.10 dB, SSIM 0.845\nReferences\n[1] Someone et al.",
+  "payload": {
+    "tables": [
+      {
+        "id": "t1",
+        "caption": {
+          "k": "表题",
+          "v": "Table 1",
+          "page": 2,
+          "excerpt": "Table 1 compares methods."
+        },
+        "header": {
+          "k": "表头",
+          "v": "method PSNR",
+          "page": 2,
+          "excerpt": "Table 1 compares methods."
+        },
+        "protocol": {
+          "k": "协议",
+          "v": "Walnut 50 views",
+          "page": 1,
+          "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+        },
+        "columns": [
+          {
+            "id": "psnr",
+            "label": "PSNR",
+            "metric": "PSNR",
+            "unit": "dB",
+            "context": {
+              "k": "列上下文",
+              "v": "PSNR of 33.05 dB",
+              "page": 1,
+              "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+            },
+            "unitEvidence": {
+              "k": "单位",
+              "v": "dB",
+              "page": 1,
+              "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+            }
+          }
+        ],
+        "rows": [
+          {
+            "id": "naf",
+            "method": "NAF",
+            "evidence": {
+              "k": "方法行",
+              "v": "NAF",
+              "page": 2,
+              "excerpt": "NAF: PSNR 33.05 dB, SSIM 0.912"
+            },
+            "cells": [
+              {
+                "columnID": "psnr",
+                "valueText": "33.05"
+              }
+            ]
+          },
+          {
+            "id": "bad",
+            "method": "BAD",
+            "evidence": {
+              "k": "方法行",
+              "v": "BAD",
+              "page": 2,
+              "excerpt": "这一行摘录不在第 2 页"
+            },
+            "cells": [
+              {
+                "columnID": "psnr",
+                "valueText": "11.11"
+              }
+            ]
+          },
+          {
+            "id": "fdk",
+            "method": "FDK",
+            "evidence": {
+              "k": "方法行",
+              "v": "FDK",
+              "page": 2,
+              "excerpt": "FDK: PSNR 29.10 dB, SSIM 0.845"
+            },
+            "cells": [
+              {
+                "columnID": "psnr",
+                "valueText": "29.10"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "stability": [],
+    "ablation": [],
+    "generalization": [],
+    "efficiency": [],
+    "statistics": [],
+    "missing": []
+  },
+  "visuals": []
+}

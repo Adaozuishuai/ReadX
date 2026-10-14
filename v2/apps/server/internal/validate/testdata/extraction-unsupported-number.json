@@ -1,0 +1,24 @@
+{
+  "name": "extraction-unsupported-number",
+  "kind": "extraction",
+  "expect": {
+    "ok": false
+  },
+  "source": "=== Page 1 ===\nWe train using 50 views and report PSNR of 33.05 dB on the Walnut dataset.\nThe loss weight lambda is set to 0.5 and training takes 12 hours on one GPU.\n=== Page 2 ===\nTable 1 compares methods.\nNAF: PSNR 33.05 dB, SSIM 0.912\nFDK: PSNR 29.10 dB, SSIM 0.845\nReferences\n[1] Someone et al.",
+  "payload": {
+    "dataset": [],
+    "acquisition": [],
+    "training": [],
+    "loss": [],
+    "metrics": [
+      {
+        "k": "PSNR",
+        "v": "99.99 dB",
+        "page": 1,
+        "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+      }
+    ],
+    "results": [],
+    "baselines": []
+  }
+}

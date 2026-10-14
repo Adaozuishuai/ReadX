@@ -53,6 +53,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/documents/{key}/pages/{page}", withAuth(s.handlePageGet))
 	mux.Handle("PUT /v1/documents/{key}/pages/{page}", withAuth(s.handlePagePut))
 	mux.Handle("GET /v1/documents/{key}/pdf", withAuth(s.handlePDF))
+	mux.Handle("GET /v1/readings/{key}", withAuth(s.handleReadingGet))
+	mux.Handle("PUT /v1/readings/{key}/{kind}", withAuth(s.handleReadingPut))
 
 	if s.cfg.StaticDir != "" {
 		mux.HandleFunc("/", s.handleStatic)
