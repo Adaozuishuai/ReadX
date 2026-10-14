@@ -10,7 +10,7 @@
 // 因此这里的设计是：**样本不足时拒绝给出趋势判断**，只报告计数与缺口语义，
 // 而不是输出一个看起来很像结论的百分比。
 //
-// 移植自 native/Sources/CBCTReading/TrendAnalysis.swift；本文件只依赖 ./types（纯逻辑）。
+// 移植自早期 macOS（Swift）版 TrendAnalysis.swift；本文件只依赖 ./types（纯逻辑）。
 
 import { QueueEntry } from './types';
 import { SystemTag } from './systemTags';
@@ -163,7 +163,7 @@ export const forbiddenPhrases = ['首次', '首个', 'first to', 'no one has', '
  * 否定前缀：出现在禁用语之前时，该处属于「声明不构成首次」，不算违规。
  * 例：'不构成「首次」声明' 是否定用法，应放行；'这是首次提出' 才是违规。
  */
-export const negationMarkers = ['不构成', '不是', '不等于', '并非', '不得', '不能', '禁止', '无「', '不存在', 'no claim of', 'not the first'];
+export const negationMarkers = ['不构成', '不代表', '不是', '不等于', '并非', '不得', '不能', '禁止', '无「', '不存在', 'no claim of', 'not the first'];
 
 /**
  * 输出前自检：命中红线措辞即视为不合规。

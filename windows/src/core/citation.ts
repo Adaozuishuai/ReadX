@@ -1,7 +1,7 @@
 // 引用导出（PRD 4.13「引用导出」/ 8.3「支持导出个人 Library」）。
 // 纯字符串函数：不依赖 UI，便于回归测试；NSSavePanel 只在外层包装。
 //
-// 移植纪律：本文件逐条对应 native/Sources/CBCTReading/CitationExport.swift。
+// 移植纪律：本文件逐条对应早期 macOS（Swift）版 CitationExport.swift。
 // 下面每个「为什么这么做」的注释都是从 Swift 版继承的硬约束，不要因为「看起来多余」而删掉。
 
 import { QueueEntry } from './types';

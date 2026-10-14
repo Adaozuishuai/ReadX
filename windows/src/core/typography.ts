@@ -1,4 +1,4 @@
-// 排版尺度。与 native/Sources/CBCTReading/Typography.swift 数值一致。
+// 排版尺度。与早期 macOS（Swift）版 Typography.swift 数值一致。
 // 只定义「尺度」，不含业务逻辑；CSS 侧通过 CSS 变量消费同一套数字。
 
 export const Typography = {

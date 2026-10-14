@@ -24,6 +24,30 @@ export function findRoot(startDir?: string, override?: string | null): string {
   return path.resolve(startDir ?? process.cwd());
 }
 
+// 渲染进程传来的 key 会直接拼进文件名或当对象键使用，必须挡住两类攻击：
+//   1) 原型污染：obj['__proto__'] = ... 走 setter，会改写对象原型（C3 旧缺陷）；
+//   2) 路径穿越：key='../../queue' 可越出数据目录读写（path.join 会归一化 ..）。
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** 用作 Record 键的安全性：非保留名、非空、无 NUL。 */
+export function isSafeObjectKey(key: unknown): key is string {
+  return typeof key === 'string' && key.length > 0 && key.length <= 300 &&
+    !UNSAFE_KEYS.has(key) && !key.includes('\0');
+}
+
+/** 用作文件名一部分的安全性：在对象键基础上再禁 ..、绝对路径与盘符。 */
+export function isSafePathKey(key: unknown): key is string {
+  if (!isSafeObjectKey(key)) return false;
+  return !key.includes('..') && !key.startsWith('/') && !key.startsWith('\\') && !/^[A-Za-z]:/.test(key);
+}
+
+export function assertSafePathKey(key: string, what = 'key'): string {
+  if (!isSafePathKey(key)) {
+    throw new Error(`非法${what}（含路径穿越或保留名，已拒绝）：${JSON.stringify(String(key).slice(0, 60))}`);
+  }
+  return key;
+}
+
 export class Paths {
   constructor(public readonly root: string) {}
 
@@ -39,10 +63,10 @@ export class Paths {
   get progressPath(): string { return path.join(this.dataDir, 'progress.json'); }
   get comparePath(): string { return path.join(this.dataDir, 'compare.json'); }
   get ideasPath(): string { return path.join(this.dataDir, 'ideas.json'); }
-  readingsPath(key: string): string { return path.join(this.dataDir, 'readings', `${key}.json`); }
+  readingsPath(key: string): string { return path.join(this.dataDir, 'readings', `${assertSafePathKey(key)}.json`); }
   readingsHistoryDir(): string { return path.join(this.dataDir, 'readings', 'history'); }
-  pdfTextPath(key: string): string { return path.join(this.textDir, `${key}-v3.txt`); }
-  indexPath(key: string): string { return path.join(this.dataDir, 'embeddings', `${key}.json`); }
+  pdfTextPath(key: string): string { return path.join(this.textDir, `${assertSafePathKey(key)}-v3.txt`); }
+  indexPath(key: string): string { return path.join(this.dataDir, 'embeddings', `${assertSafePathKey(key)}.json`); }
 }
 
 /**

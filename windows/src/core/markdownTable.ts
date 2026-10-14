@@ -1,4 +1,4 @@
-// GFM 管道表格解析。与 native/Sources/CBCTReading/MarkdownTable.swift 语义一致。
+// GFM 管道表格解析。与早期 macOS（Swift）版 MarkdownTable.swift 语义一致。
 //
 // 设计要点（保证「不猜」与「不崩」）：
 // - 只把「表头行 + 分隔行 + 至少一行数据」识别为表格；缺分隔行则按普通段落处理；

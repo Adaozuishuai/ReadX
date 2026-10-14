@@ -1,8 +1,8 @@
 // 研究想法（Idea）与迁移分析（Reproduction 的「应用到我的研究」一侧）。
 //
-// 逐条对应 native/Sources/CBCTReading/IdeaModels.swift。移植纪律：
+// 逐条对应早期 macOS（Swift）版 IdeaModels.swift。移植纪律：
 // 这里每个「刻意不做 X」的注释都继承自 Swift 版，改动前先读
-// native/Tests/CBCTReadingTests/ResearchTests.swift 的对应回归用例。
+// 对应早期 macOS（Swift）版 ResearchTests.swift 的回归用例。
 
 import { randomUUID } from 'node:crypto';
 

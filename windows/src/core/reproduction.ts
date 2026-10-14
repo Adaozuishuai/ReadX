@@ -1,6 +1,6 @@
 // 复现分析（Reproduction）：把论文结论拆成「资源/环境/成本/缺失/风险」五组核对项。
 //
-// 逐条对应 native/Sources/CBCTReading/ReproductionModels.swift。核心纪律：
+// 逐条对应早期 macOS（Swift）版 ReproductionModels.swift。核心纪律：
 // 未知不是空白，未知也必须给出「下一步核对行动」；清单只做提示，不做穷举。
 
 import { createHash } from 'node:crypto';

@@ -10,7 +10,11 @@ export class ThrottledWriter {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private pending = new Map<string, WriteFn>();
 
-  constructor(private windowMs = 600) {}
+  /**
+   * @param onError 落盘失败上报。调用方（IPC handler）早已返回 ok:true，
+   *   这里是唯一能告知用户「自动保存其实没写成」的机会，绝不能静默吞掉。
+   */
+  constructor(private windowMs = 600, private onError?: (key: string, error: unknown) => void) {}
 
   schedule(key: string, write: WriteFn): void {
     this.pending.set(key, write);
@@ -27,7 +31,11 @@ export class ThrottledWriter {
     const write = this.pending.get(key);
     if (!write) return;
     this.pending.delete(key);
-    try { write(); } catch { /* 落盘失败不应中断其它 pending */ }
+    try { write(); } catch (e) {
+      // 不中断其它 pending，但必须上报（默认打到主进程日志）
+      if (this.onError) this.onError(key, e);
+      else console.error(`[ThrottledWriter] 落盘失败 ${key}:`, e);
+    }
   }
 
   /** 退出前冲刷全部待写值。 */

@@ -147,16 +147,17 @@ test('位置校验确实独立生效：只有顺序错、集合仍成立时才�
 
 // ---------- 差值计算 ----------
 
-test('差值计算与相对变化', () => {
+test('差值计算与相对变化（dB 列不给相对百分比）', () => {
   const { analysis } = resultFixture();
   const table = analysis.tables[0];
   const psnr = calculateDifference(table, 'p', 'a', 'b')!;
   assert.ok(Math.abs(psnr.absolute - 10.16) < 1e-10);
-  assert.ok(Math.abs(relativePercent(psnr)! - (psnr.a - psnr.b) / Math.abs(psnr.b) * 100) < 1e-10);
+  // dB 是对数尺度，「相对百分比」无物理意义：必须为 null（与函数注释、macOS 版行为一致）
+  assert.equal(relativePercent(psnr), null);
 
   const ssim = calculateDifference(table, 's', 'a', 'b')!;
   assert.ok(Math.abs(ssim.absolute - 0.18) < 1e-10);
-  assert.ok(Math.abs(relativePercent(ssim)! - 23.0769230769) < 1e-8);
+  assert.ok(Math.abs(relativePercent(ssim)! - 23.0769230769) < 1e-8, '无量纲列仍给相对百分比');
 
   // 同一行不能自比
   assert.equal(calculateDifference(table, 's', 'a', 'a'), null);
@@ -169,6 +170,17 @@ test('分母为 0 时不给相对百分比（避免除零/无穷）', () => {
   const table = analysis.tables[0];
   table.rows[1].cells[1].valueText = '0';
   assert.equal(relativePercent(calculateDifference(table, 's', 'a', 'b')!), null);
+});
+
+test('摘录用 Unicode 负号（−）时，ASCII 记法的单元格不被位置校验误拒', () => {
+  // PDF 原表常排 U+2212，模型输出常用 ASCII '-'。集合校验经 numbers() 归一化能通过，
+  // 位置校验此前用原始 indexOf 会误拒（−22.89 里找不到 -22.89）。两侧统一走 normalized()。
+  const src = '=== Page 1 ===\nTable 1: Brain results. PSNR (dB) and SSIM (dimensionless).\nA 33.05 .96\nB −22.89 .78';
+  const { analysis } = resultFixture();
+  const row = analysis.tables[0].rows[1];
+  row.evidence = { k: 'B', v: 'B −22.89 .78', page: 1, excerpt: 'B −22.89 .78' };
+  row.cells[0].valueText = '-22.89';
+  validateResults(analysis, src); // 不应抛错
 });
 
 test('NaN / 溢出数值不被当作有效值', () => {

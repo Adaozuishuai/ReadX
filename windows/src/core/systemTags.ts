@@ -6,7 +6,7 @@
 // - 只做「文本里确实出现」的关键词匹配，命不中就是空，绝不推测；
 // - 每条系统标签都记录命中的依据词，便于用户核对为什么被打上这个标签。
 //
-// 移植自 native/Sources/CBCTReading/SystemTags.swift（逐条保真，禁止改语义）。
+// 移植自早期 macOS（Swift）版 SystemTags.swift（逐条保真，禁止改语义）。
 
 import { QueueEntry } from './types';
 

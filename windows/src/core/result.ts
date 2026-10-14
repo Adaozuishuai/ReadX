@@ -1,4 +1,4 @@
-// 结果表的结构化抽取与校验。移植自 native/Sources/CBCTReading/ResultModels.swift。
+// 结果表的结构化抽取与校验。移植自早期 macOS（Swift）版 ResultModels.swift。
 //
 // 这是 evidence-first 里最严的一段，核心是三层校验：
 //   1) 每个单元格的数字必须出现在「该行摘录」里（集合语义）；
@@ -197,19 +197,21 @@ export function validateResults(a: ResultsAnalysis, source: string): void {
       // 位置敏感校验：上面的「数字 ∈ 该行数字集合」是集合语义，一行 2×N 个数字时
       // 任意列置换都满足它（实测转置后可整体通过）。这里按「表头定义的列顺序」取出各行
       // 单元格，要求它们在行摘录中按先后顺序出现，从而拦住列错位。
-      // 值必须逐字匹配（保留 .958 这类原记法），与上面的一致性约束一致。
-      const excerpt = row.evidence.excerpt ?? '';
+      // 两侧都过 normalized()：与集合校验同一归一化，避免摘录里的 Unicode 负号（−33.05）
+      // 与单元格的 ASCII 记法（-33.05）集合校验通过、位置校验却误拒。
+      const excerpt = normalized(row.evidence.excerpt ?? '');
       let cursor = 0;
       for (const column of table.columns) {
         const cell = row.cells.find((c) => c.columnID === column.id);
         if (!cell) continue;
-        const at = excerpt.indexOf(cell.valueText, cursor);
+        const needle = normalized(cell.valueText);
+        const at = needle ? excerpt.indexOf(needle, cursor) : -1;
         if (at < 0) {
           throw new Error(
             `单元格数值未按表头列顺序排列，疑似列错位：${row.id}/${column.id} = ${cell.valueText}。请对照 PDF 原表逐列核对后再输出。`,
           );
         }
-        cursor = at + cell.valueText.length;
+        cursor = at + needle.length;
       }
     }
   }
@@ -231,6 +233,8 @@ export interface ResultDifference {
 /** 仅表示报告数值的算术相对变化；对 dB/PSNR 等对数尺度不作物理意义解释。 */
 export function relativePercent(d: ResultDifference): number | null {
   if (d.b === 0) return null;
+  // dB 是对数尺度，「相对百分比」没有物理意义（与 macOS 版行为一致）：只给绝对差。
+  if (/db|decibel/i.test(d.unit)) return null;
   const result = (d.a - d.b) / Math.abs(d.b) * 100;
   return Number.isFinite(result) ? result : null;
 }

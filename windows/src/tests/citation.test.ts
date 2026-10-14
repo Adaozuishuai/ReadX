@@ -1,4 +1,4 @@
-// 引用导出回归：逐条对应 native/Sources/CBCTReading/CitationExport.swift。
+// 引用导出回归：逐条对应早期 macOS（Swift）版 CitationExport.swift。
 // 每条断言都能真正失败（不存在恒真断言）。
 
 import { test } from 'node:test';

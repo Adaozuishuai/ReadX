@@ -123,8 +123,12 @@ export function loadNotes(papersDir: string): LoadNotesResult {
 
 /** 队列条目 -> 笔记匹配（语义与 macOS 版 noteForQueue 一致）。 */
 export function noteForQueue(notes: Note[], q: { arxiv?: string | null; id?: string | null; key?: string; title?: string | null }): Note | null {
+  // arxiv 必须归一化后比较：arXiv 官方 feed 返回带版本号的 id（2209.14540v2），
+  // 而笔记 frontmatter 通常不带版本。直接字符串相等会让这类论文匹配不到自己的笔记，
+  // 从而在论文库里丢掉「有全文缓存/已精读」的标记（NAF 即为该形态）。
+  const qArxiv = q.arxiv ? arxivKey(q.arxiv) : '';
   for (const note of notes) {
-    if (q.arxiv && note.meta.arxiv === q.arxiv) return note;
+    if (qArxiv && arxivKey(note.meta.arxiv ?? '') === qArxiv) return note;
     if (q.id && note.id === q.id) return note;
     const key = q.key ?? (q.arxiv ? arxivKey(q.arxiv) : (q.id ?? ''));
     // 文件名子串匹配仅兜底：短 key 可能误配，故要求 key 足够长

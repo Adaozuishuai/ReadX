@@ -4,17 +4,26 @@ import { QueueEntry } from '../core/types';
 import { arxivKey, deduplicate } from '../core/paper';
 
 const UA = 'cbct-reading-windows/0.1 (research reading assistant)';
+const RATE_LIMIT_RETRY_MS = 5_000;
 
 async function fetchText(url: string, timeoutMs = 30_000): Promise<string> {
   // 出站请求必须有超时：单源挂起不能拖死整次刷新
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: ac.signal });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return await r.text();
-  } finally {
-    clearTimeout(timer);
+  for (let attempt = 0; ; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: ac.signal });
+      // 429 是限流不是故障：公共 API（尤其 Semantic Scholar 无 key 共享池）的窗口
+      // 重置很快，退避后重试一次，大部分瞬时限流都能恢复。
+      if (r.status === 429 && attempt < 1) {
+        await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_RETRY_MS));
+        continue;
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.text();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 // 对比矩阵的列固定逻辑（PRD 5.3「对比维度控制 + 可固定列」）。
 // 纯函数：把「固定列」从滚动区提到前面，便于单元测试与复用。
 //
-// 移植纪律：逐条对应 native/Sources/CBCTReading/CompareModels.swift 的 CompareLayout / Comparability。
+// 移植纪律：逐条对应早期 macOS（Swift）版 CompareModels.swift 的 CompareLayout / Comparability。
 
 /**
  * 把被固定的论文列移到最前，其余保持原有相对顺序。

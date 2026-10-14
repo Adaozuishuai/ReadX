@@ -4,8 +4,13 @@ import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 
-import { Paths, findRoot, readJSON, readJSONStrict, saveJSON, findLocalPdf, readCachedPDFText } from '../core/store';
-import { decodeQueue, rank, matchesProfile, mergedFirstSeen } from '../core/paper';
+import { Paths, findRoot, readJSON, readJSONStrict, saveJSON, atomicWrite, findLocalPdf, readCachedPDFText, OCR_MARKER, isSafeObjectKey, isSafePathKey, assertSafePathKey } from '../core/store';
+import { isLikelyScanned as isLikelyScannedText } from '../core/pdfText';
+import { streak, weekDays, computeToday, followedTopics, groupByTopic, ProgressMap, localDay } from '../core/dashboard';
+
+import { LibraryStore } from '../core/libraryState';
+import { importPaper, ImportResult } from './fetchPaper';
+import { decodeQueue, rank, matchesProfile, mergedFirstSeen, entryKey } from '../core/paper';
 import { LibraryState, Config, QueueEntry, ResearchProfile, ExperimentExtraction, defaultProfile, defaultLibraryState, PROFILE_KEYWORDS as TOPIC_KEYWORDS } from '../core/types';
 import { arxivKey } from '../core/paper';
 import { ThrottledWriter } from '../core/throttle';
@@ -17,9 +22,18 @@ import { loadIdeas, saveIdeas, loadReproduction, saveReproduction, loadCompare, 
 import { bibtexAll, risAll, suggestedFilename } from '../core/citation';
 import { orderedKeys as compareOrderedKeys, reconciled as compareReconciled, warnings as comparabilityWarnings } from '../core/compare';
 import { derive as deriveSystemTags, coverage as tagCoverage, SYSTEM_TAG_CATEGORIES } from '../core/systemTags';
+import { BASELINE_CARDS, matchBaselines, baselineRelation } from '../core/baseline';
+import { CodeSnapshot, CodeMappingAnalysis, decodeCodeMapping, validateCodeMapping, mappingID as mappingIDOf } from '../core/codeMapping';
+import { scanRepository, snapshotContext } from './repository';
+import { ocrImage, ocrAvailable } from './winOcr';
+import { retrievalIndex, prewarmRetrievalIndex, retrieveAcrossLibrary, loadIndices, cachedKeys } from './retrieval';
+import { libraryContextBlock } from '../core/retrieval';
+import { analyzeFigure, locateFigure } from './figureAnalysis';
 import { groupsOf } from '../core/evidence';
+import { validateExtraction, validateConfiguration } from '../core/evidence';
+import { decodeExperiment } from '../core/experiment';
 import { findings as trendFindings, sample as trendSample, disclosure as trendDisclosure, gapStatement, violatesRedline, minimumSample as TREND_MIN_SAMPLE } from '../core/trend';
-import { askStream, preparePaperContext } from './ai';
+import { askStream, preparePaperMaterial, preparePaperContext, generate, generateValidated, pruneGenerated, readingSystemPrompt, JSON_KINDS, transcribeFormula, verifyFormulaTranscription } from './ai';
 import { discover } from './discovery';
 
 let win: BrowserWindow | null = null;
@@ -27,26 +41,25 @@ let paths: Paths;
 
 // 写盘节流：首写立即、窗口内合并、退出前冲刷。
 // 合并语义在 core/throttle.ts 里，并有回归测试锁住「窗口内编辑不得丢失」。
-const writer = new ThrottledWriter(600);
+// 落盘失败必须上报到渲染进程：IPC handler 早已返回 ok:true，静默吞错会让用户
+// 以为「自动保存」成功了（磁盘满/只读时实际丢数据）。
+function notifyWriteError(key: string, error: unknown): void {
+  const msg = `后台落盘失败（${key}）：${error instanceof Error ? error.message : String(error)}`;
+  console.error(msg);
+  if (win && !win.isDestroyed()) win.webContents.send('write-error', msg);
+}
+const writer = new ThrottledWriter(600, notifyWriteError);
 
 /**
- * 论文库状态的内存权威副本。
+ * 论文库状态的内存权威副本与节流落盘。
  *
- * 不能每次改动都「重读磁盘 -> 生成快照 -> 交给节流写」：节流窗口内若发生另一条
- * 写入路径（如直接落盘的「移入回收站」），磁盘上的新值会被窗口结束时落下的旧快照
- * 回滚（已用脚本复现：删除的论文会在 ~600ms 后复活）。
- * 因此这里只保留一份内存状态：所有修改都作用于它，落盘也总是写它。
+ * 语义与两个必须防住的真实缺陷（丢失更新 / 损坏覆盖）都在 core/libraryState.ts 里，
+ * 并有回归测试锁住；这里只持有实例，换工作区时重建。
  */
-let libraryCache: Record<string, LibraryState> | null = null;
+let library = new LibraryStore('', 600, notifyWriteError); // 真实路径在 app.whenReady 里按工作区根设置
 
 function libState(): Record<string, LibraryState> {
-  if (!libraryCache) libraryCache = libraryState();
-  return libraryCache;
-}
-
-function persistLibrary(): void {
-  const snapshot = libState();
-  writer.schedule('library', () => saveJSON(paths.libraryStatePath, snapshot));
+  return library.all();
 }
 
 function createWindow(): void {
@@ -62,9 +75,12 @@ function createWindow(): void {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
+  // 纵深防御：本应用没有任何合法导航/新窗口场景（外链走 shell:openExternal）
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.on('closed', () => { win = null; });
 }
@@ -72,10 +88,6 @@ function createWindow(): void {
 function readConfig(): Config {
   const c = readJSON<Config>(paths.configPath, {});
   return c;
-}
-
-function libraryState(): Record<string, LibraryState> {
-  return readJSON<Record<string, LibraryState>>(paths.libraryStatePath, {});
 }
 
 function profile(): ResearchProfile {
@@ -131,6 +143,8 @@ function libraryItems(): Array<ReturnType<typeof buildItem>> {
       noteFile: note?.file ?? null,
       venue: note?.meta.venue ?? p.venue ?? '',
       kind: note ? 'note' as const : 'queue' as const,
+      // 主题匹配关键词：与 Profile 的关注主题一致，供前端「主题花园/知识图谱」过滤用
+      topicKeywords: TOPIC_KEYWORDS,
     };
   };
 
@@ -237,20 +251,22 @@ function registerIPC(): void {
   });
 
   ipcMain.handle('library:setState', (_e, key: string, patch: Partial<LibraryState>) => {
-    const states = libState();
-    const cur = states[key] ?? defaultLibraryState();
-    states[key] = { ...cur, ...patch, updatedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') };
-    persistLibrary(); // 草稿类编辑可能每次按键触发，节流合并
-    return states[key];
+    return library.set(key, patch);
   });
 
   ipcMain.handle('library:remove', (_e, key: string) => {
     // 回收站语义：标记 deleted，不物理删除，可在库中恢复。
-    // 必须走同一份内存状态与同一个节流器，否则会与在途的草稿写入互相覆盖。
-    const states = libState();
-    states[key] = { ...(states[key] ?? defaultLibraryState()), status: 'deleted' };
-    persistLibrary();
-    return true;
+    // 与草稿写入共用同一份内存状态与同一个节流器，否则会互相覆盖（论文复活）。
+    return library.remove(key);
+  });
+  ipcMain.handle('library:restore', (_e, key: string) => library.restore(key));
+  ipcMain.handle('library:purge', (_e, key: string) => library.purge(key));
+
+  /** 单篇系统标签：合并标题/摘要/venue/why + 已抽取实验字段 + 笔记，派生八类标签。 */
+  ipcMain.handle('tags:for', (_e, key: string) => {
+    const item = libraryItems().find((i) => i.key === key);
+    if (!item) return { ok: false, tags: [] };
+    return { ok: true, tags: deriveSystemTags(tagFieldsFor(item.paper, findNote(key))) };
   });
 
   // ---- 画像 ----
@@ -301,10 +317,28 @@ function registerIPC(): void {
     );
     const result = await discover();
     const day = new Date().toISOString().slice(0, 10);
-    const allPapers = [...result.papers, ...result.preprints];
+    // 单源失败（如 Semantic Scholar 限流 429）时保留上次缓存里属于该源的条目：
+    // 否则一次失败就会把整个「期刊会议」feed 从发现缓存里冲掉，界面却写着「已保留上次结果」。
+    let papers = result.papers;
+    let preprints = result.preprints;
+    if (result.errors.length) {
+      const failedLabels = new Set(result.errors.map((e) => e.split(' ')[0]));
+      const freshKeys = new Set([...result.papers, ...result.preprints].map(entryKey));
+      const sourceLabel = (e: QueueEntry): string => {
+        const s = e.source ?? '';
+        if (s === 'pubmed') return 'PubMed';
+        if (s === 'arXiv 预印本') return 'arXiv';
+        return '期刊会议';
+      };
+      const keep = (list: QueueEntry[] | undefined): QueueEntry[] =>
+        (list ?? []).filter((e) => failedLabels.has(sourceLabel(e)) && !freshKeys.has(entryKey(e)));
+      papers = [...result.papers, ...keep(cache.papers)];
+      preprints = [...result.preprints, ...keep(cache.preprints)];
+    }
+    const allPapers = [...papers, ...preprints];
     const next = {
-      papers: result.papers,
-      preprints: result.preprints,
+      papers,
+      preprints,
       fetchedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
       errors: result.errors,
       firstSeen: mergedFirstSeen(cache.firstSeen ?? {}, allPapers, day),
@@ -314,6 +348,143 @@ function registerIPC(): void {
   });
 
   ipcMain.handle('discovery:get', () => readJSON(paths.discoveryPath, { papers: [], preprints: [], fetchedAt: '', errors: [], firstSeen: {} }));
+
+  // ---- 工作台聚合（复刻 macOS FunHome 的派生量）----
+  const progressMap = (): ProgressMap => readJSON<ProgressMap>(paths.progressPath, {});
+  const noteEntries = (): Array<{ id: string; key: string; title: string; venue: string; dateRead: string; sections: Record<string, string> }> => {
+    const { notes } = loadNotes(paths.papersDir);
+    return notes.map((n) => ({
+      id: n.id, key: noteKey(n), title: noteTitle(n),
+      venue: n.meta.venue ?? '', dateRead: n.meta.date_read ?? '', sections: n.sections,
+    }));
+  };
+
+  ipcMain.handle('dashboard:get', () => {
+    const items = libraryItems();
+    const prof = profile();
+    const prog = progressMap();
+    const states = libState();
+    const stateOf = (k: string): LibraryState => states[k] ?? defaultLibraryState();
+    const notes = noteEntries();
+    const topics = followedTopics(prof.topics);
+
+    const saved = items.filter((i) => i.state.status !== 'deleted');
+    const ranked = saved
+      .filter((i) => i.state.status !== 'ignored' && i.state.relevance >= 0)
+      .sort((a, b) => (a.score === b.score ? String(b.paper.published ?? '').localeCompare(String(a.paper.published ?? '')) : b.score - a.score));
+
+    const todayEntry = computeToday(
+      notes, ranked.map((r) => ({ key: r.key, title: r.paper.title ?? r.key, venue: r.venue })),
+      stateOf, prog,
+    );
+
+    const disc = readJSON<{ papers?: QueueEntry[]; preprints?: QueueEntry[]; firstSeen?: Record<string, string>; fetchedAt?: string; errors?: string[] }>(
+      paths.discoveryPath, { papers: [], preprints: [], fetchedAt: '', errors: [], firstSeen: {} },
+    );
+    const day = localDay(new Date());
+    const firstSeen = disc.firstSeen ?? {};
+    const todayNew = (disc.papers ?? []).filter((p) => firstSeen[entryKey(p)] === day);
+    const todayNewPreprints = (disc.preprints ?? []).filter((p) => firstSeen[entryKey(p)] === day);
+
+    return {
+      streak: streak(prog),
+      week: weekDays(prog),
+      today: todayEntry,
+      unreadCount: saved.filter((i) => ['unread', 'later', 'reading'].includes(i.state.status)).length,
+      readCount: saved.filter((i) => i.state.status === 'read').length,
+      preprints: (disc.preprints ?? []).length,
+      fetchedAt: disc.fetchedAt ?? '',
+      errors: disc.errors ?? [],
+      todayNewCount: todayNew.filter((p) => (p.source ?? '') !== 'PubMed' && !(p.source ?? '').toLowerCase().includes('arxiv')).length,
+      todayNewPubmed: todayNew.filter((p) => (p.source ?? '') === 'PubMed').length,
+      todayNewPreprints: todayNewPreprints.length,
+      topics,
+      topicGroups: groupByTopic(ranked, topics).map(([t, rs]) => ({ topic: t, papers: rs.map((r) => ({ key: r.key, title: r.paper.title ?? r.key, score: r.score, venue: r.venue, reasons: r.reasons })) })),
+      // 推荐前若干（主 feed：非预印本）
+      picks: ranked.filter((i) => !(i.paper.source ?? '').toLowerCase().includes('arxiv')).slice(0, 6)
+        .map((i) => ({ key: i.key, title: i.paper.title ?? i.key, score: i.score, venue: i.venue, source: i.paper.source ?? '', reasons: i.reasons, matchesProfile: i.matchesProfile, hasText: i.hasText, hasPDF: i.hasPDF, abstract: i.paper.abstract ?? '' })),
+      preprintPicks: ranked.filter((i) => (i.paper.source ?? '').toLowerCase().includes('arxiv')).slice(0, 6)
+        .map((i) => ({ key: i.key, title: i.paper.title ?? i.key, score: i.score, venue: i.venue, source: i.paper.source ?? '', reasons: i.reasons, hasText: i.hasText, hasPDF: i.hasPDF, abstract: i.paper.abstract ?? '' })),
+      ideasLinkedCount: (() => { const r = loadIdeas(paths); return r.ok ? r.value.ideas.filter((x) => (x.evidence ?? []).length > 0).length : 0; })(),
+    };
+  });
+
+  // ---- 阅读进度（第④步的反思/批注 + 连续阅读）----
+  ipcMain.handle('progress:get', (_e, key: string) => (progressMap()[key] ?? {}));
+  ipcMain.handle('progress:save', (_e, key: string, patch: Record<string, unknown>) => {
+    // all['__proto__'] = ... 会走 setter 污染原型（旧 C3）；损坏时静默当空再整文件覆盖
+    // 会丢掉全部阅读历史（旧 H9），与 library.json 的「损坏拒写」策略保持一致。
+    if (!isSafeObjectKey(key)) return { ok: false, error: '非法 key（__proto__ 等保留名或空值，已拒绝）' };
+    const r = readJSONStrict<ProgressMap>(paths.progressPath);
+    if (!r.ok && !r.missing) return { ok: false, error: `progress.json 已损坏，未保存以免覆盖：${r.error}` };
+    const all = r.ok ? r.value : {};
+    const cur = Object.prototype.hasOwnProperty.call(all, key) ? all[key] : undefined;
+    all[key] = { ...(cur ?? {}), ...patch } as any;
+    saveJSON(paths.progressPath, all);
+    return { ok: true, value: all[key] };
+  });
+
+  // ---- 自动导入（下载 PDF + 抽取全文）----
+  /** 按 key 找论文条目（含 pdfUrl）：先查论文库（队列+笔记），再查发现缓存。 */
+  const paperByKey = (key: string): QueueEntry | null => {
+    const fromLib = libraryItems().find((i) => i.key === key);
+    if (fromLib) return fromLib.paper;
+    const disc = readJSON<{ papers?: QueueEntry[]; preprints?: QueueEntry[] }>(paths.discoveryPath, {});
+    for (const p of [...(disc.papers ?? []), (disc.preprints ?? [])].flat()) {
+      if (entryKey(p) === key) return p;
+    }
+    return null;
+  };
+
+  /**
+   * 把论文并入 queue.json（若尚无）。
+   * 目的是让自动下载的论文成为论文库的一等公民（能被搜索、对比、记笔记）；
+   * 保持 `{ "papers": [...] }` 对象格式，与 decodeQueue 兼容、不破坏手工条目。
+   */
+  const ensureInQueue = (paper: QueueEntry): void => {
+    // 损坏时抛错拒写：静默回退 {papers:[]} 再保存会把整个队列（含手工条目）覆盖没。
+    const r = readJSONStrict<unknown>(paths.queuePath);
+    if (!r.ok && !r.missing) throw new Error(`queue.json 已损坏，未写入队列以免覆盖：${r.error}`);
+    const raw = r.ok ? r.value : { papers: [] };
+    const papers = decodeQueue(raw);
+    const key = entryKey(paper);
+    if (papers.some((p) => entryKey(p) === key)) return;
+    const merged = [...papers, paper];
+    saveJSON(paths.queuePath, { papers: merged });
+  };
+
+  ipcMain.handle('paper:import', async (_e, key: string, force = false) => {
+    const paper = paperByKey(key);
+    if (!paper) return { ok: false, key, error: '找不到该论文的条目（可能不在队列或发现缓存中）' };
+    const r = await importPaper(paths, key, paper.pdfUrl, force);
+    // 只有真的拿到全文才入队：避免把「下载失败/扫描件」的条目污染论文库
+    if (r.ok) {
+      try { ensureInQueue(paper); }
+      catch (e) { return { ...r, warning: e instanceof Error ? e.message : String(e) }; }
+    }
+    return r;
+  });
+
+  /** 批量导入：逐篇下载，如实报告每篇结果（单篇失败不影响其它）。 */
+  ipcMain.handle('paper:importMany', async (_e, keys: string[]) => {
+    const results: ImportResult[] = [];
+    for (const key of keys ?? []) {
+      const paper = paperByKey(key);
+      if (!paper) { results.push({ ok: false, key, error: '找不到该论文条目' }); continue; }
+      const r = await importPaper(paths, key, paper.pdfUrl, false);
+      if (r.ok) {
+        try { ensureInQueue(paper); }
+        catch (e) { results.push({ ...r, warning: e instanceof Error ? e.message : String(e) }); continue; }
+      }
+      results.push(r);
+    }
+    return {
+      total: results.length,
+      ok: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    };
+  });
 
   // ---- 阅读记录 ----
   ipcMain.handle('reading:get', (_e, key: string) => {
@@ -325,10 +496,242 @@ function registerIPC(): void {
 
   ipcMain.handle('reading:save', (_e, key: string, patch: Record<string, unknown>) => {
     const cur = readJSONStrict<Record<string, unknown>>(paths.readingsPath(key));
+    // 损坏时必须报错，不能回退成 {}：否则这次保存会把改坏的旧解析直接覆盖掉，
+    // 与 reading:get 的显式报错、以及「损坏的 JSON 不静默回退」的硬约束相矛盾。
+    if (!cur.ok && !cur.missing) return { ok: false, error: `阅读记录已损坏，未保存以免覆盖：${cur.error}` };
     const base = cur.ok ? cur.value : {};
     const next = { ...base, ...patch, key, updatedAt: { ...(base.updatedAt as object ?? {}), draft: new Date().toISOString() } };
     writer.schedule(`reading:${key}`, () => saveJSON(paths.readingsPath(key), next));
-    return true;
+    return { ok: true };
+  });
+
+  // ---- 分层精读生成（TL;DR / 5min / Critical / 动机 / 方法公式 / 实验 / 结果 / 迁移）----
+  /**
+   * 生成一类精读产物并落盘到 `app/data/readings/<key>.json`。
+   * 结构化 kind（experiment/results/apply）在保存前必须过证据校验：
+   * 每个事实要有页码 + 逐字摘录（apply 还要求至少一条真实页码依据），否则拒绝保存。
+   */
+  ipcMain.handle('reading:generate', async (_e, key: string, kind: string, force = false) => {
+    const text = readCachedPDFText(paths, key);
+    if (!text) return { ok: false, error: '没有该论文的全文缓存，无法做事实分析。请先「下载并导入全文」。' };
+
+    // 已有缓存且非强制：直接返回（避免重复消耗）
+    const store = readJSONStrict<Record<string, any>>(paths.readingsPath(key));
+    const base = store.ok ? store.value : {};
+    const field: Record<string, string> = { tldr: 'tldr', deep: 'deep', critical: 'critical', motivation: 'motivation', method: 'method', experiment: 'experimentJSON', results: 'resultsJSON', apply: 'applicationJSON' };
+    // kind 白名单：否则任意字符串都会成为 reading JSON 的字段名（可覆盖 key/updatedAt 等）
+    if (!Object.prototype.hasOwnProperty.call(field, kind)) {
+      return { ok: false, error: `未知的精读类型：${String(kind).slice(0, 40)}` };
+    }
+    const cacheKey = field[kind];
+    if (!force && typeof base[cacheKey] === 'string' && base[cacheKey].trim()) {
+      return { ok: true, kind, cached: true, value: base[cacheKey] };
+    }
+
+    const cfg = readConfig();
+    const { material } = preparePaperContext(text, kind, '全文');
+    const sys = readingSystemPrompt(kind, material);
+
+    // 生成 + 自动修正重试（校验失败把错误回喂模型逐条改，最多 2 轮）
+    const g = await generateValidated(cfg, kind, sys, text);
+    if (!g.ok) return { ok: false, error: g.error };
+    const value = g.value;
+    const validationError = g.validationError;
+    const attempts = g.attempts;
+
+    const cur = readJSONStrict<Record<string, any>>(paths.readingsPath(key));
+    if (!cur.ok && !cur.missing) return { ok: false, error: `阅读记录已损坏，未保存以免覆盖：${cur.error}` };
+    const nextBase = cur.ok ? cur.value : {};
+
+    if (JSON_KINDS.has(kind) && validationError) {
+      // 兜底修剪：不消耗 API，把无法逐字核验的事实降级/剔除后重新校验。
+      // 修剪成功 = 通过校验的「部分事实 + 显式未知」，降级清单如实展示给用户。
+      const pruned = pruneGenerated(kind, value, text);
+      if (pruned) {
+        const next: Record<string, any> = { ...nextBase, [cacheKey]: pruned.value, key, updatedAt: { ...(nextBase.updatedAt as object ?? {}), [kind]: new Date().toISOString() } };
+        if (pruned.demoted.length) next[cacheKey + 'Demoted'] = pruned.demoted; else delete next[cacheKey + 'Demoted'];
+        delete next[cacheKey + 'Validation'];
+        saveJSON(paths.readingsPath(key), next);
+        return { ok: true, kind, value: pruned.value, demoted: pruned.demoted, attempts };
+      }
+      // 修剪也无法收敛：失败原文落盘备查（噪音静默记录，不打断）
+      try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        atomicWrite(path.join(paths.dataDir, 'generate-errors', `${key}-${kind}-${stamp}.json`),
+          JSON.stringify({ key, kind, at: new Date().toISOString(), attempts, error: validationError, raw: value }, null, 2));
+      } catch { /* 备查落盘失败不影响主流程 */ }
+      // 已有通过校验的旧结果：保留旧的，只报错，不用未核验内容覆盖可信数据
+      const hadGood = typeof nextBase[cacheKey] === 'string' && String(nextBase[cacheKey]).trim() && !nextBase[cacheKey + 'Validation'];
+      if (hadGood) return { ok: false, error: `校验未通过（已自动修正 ${attempts - 1} 次），已保留原有结果：${validationError}`, raw: value };
+      // 没有旧的可信结果：降级保存并打「未核验」标记——面板永远出得来结果，但不伪造校验背书
+      const next = { ...nextBase, [cacheKey]: value, [cacheKey + 'Validation']: { ok: false, error: validationError, attempts, at: new Date().toISOString() }, key, updatedAt: { ...(nextBase.updatedAt as object ?? {}), [kind]: new Date().toISOString() } };
+      saveJSON(paths.readingsPath(key), next);
+      return { ok: true, kind, value, unverified: validationError, attempts };
+    }
+
+    const next: Record<string, any> = { ...nextBase, [cacheKey]: value, key, updatedAt: { ...(nextBase.updatedAt as object ?? {}), [kind]: new Date().toISOString() } };
+    delete next[cacheKey + 'Validation'];   // 本次通过校验：清掉旧的未核验标记
+    saveJSON(paths.readingsPath(key), next);
+    return { ok: true, kind, value, attempts };
+  });
+
+  ipcMain.handle('reading:cached', (_e, key: string) => {
+    const r = readJSONStrict<Record<string, any>>(paths.readingsPath(key));
+    return r.ok ? r.value : {};
+  });
+
+  /** Baseline 方法卡片（PRD 4.7）：领域常识卡片 + 与当前论文已抽取基线的关系。 */
+  ipcMain.handle('baseline:get', (_e, key?: string) => {
+    let names: string[] = [];
+    if (key) {
+      const r = readJSONStrict<Record<string, any>>(paths.readingsPath(key));
+      if (r.ok && typeof r.value.experimentJSON === 'string') {
+        try {
+          const ex = JSON.parse((r.value.experimentJSON as string).replace(/^```[a-z]*\n?|```$/g, ''));
+          names = (ex.baselines ?? []).map((f: any) => String(f?.v ?? '')).filter(Boolean);
+        } catch { /* 损坏的抽取结果不参与匹配 */ }
+      }
+      // 笔记 frontmatter 里的 baselines 也并入匹配
+      const note = findNote(key);
+      if (note?.sections?.experiments) {
+        const m = note.sections.experiments.match(/[A-Za-z0-9²^\-]{3,}/g) ?? [];
+        names = names.concat(m);
+      }
+    }
+    return { cards: BASELINE_CARDS, matched: matchBaselines(names).map((x) => ({ ...x.card, relation: baselineRelation(x.card, names) })) };
+  });
+
+  /** 迁移建议（apply）产物读取：作为 Idea 附件来源。 */
+  ipcMain.handle('apply:get', (_e, key: string) => {
+    const r = readJSONStrict<Record<string, any>>(paths.readingsPath(key));
+    if (!r.ok || typeof r.value.applicationJSON !== 'string') return { ok: false };
+    try {
+      const app = decodeResearchApplication(r.value.applicationJSON as string);
+      validateResearchApplication(app, readCachedPDFText(paths, key) ?? '');
+      return { ok: true, application: app };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  /** 行内/独立公式的视觉转写与核对（移植自 macOS transcribeFormula / verifyFormulaTranscription）。 */
+  ipcMain.handle('formula:transcribe', async (_e, dataURL: string, feedback = '') => {
+    return transcribeFormula(readConfig(), dataURL, feedback);
+  });
+  ipcMain.handle('formula:verify', async (_e, dataURL: string, transcription: string) => {
+    return verifyFormulaTranscription(readConfig(), dataURL, transcription);
+  });
+
+  // ---- 架构图解析（FigureAnalysis）----
+  ipcMain.handle('figure:locate', (_e, key: string) => {
+    const text = readCachedPDFText(paths, key) ?? '';
+    return locateFigure(text) ?? null;
+  });
+  ipcMain.handle('figure:analyze', async (_e, key: string, dataURL: string) => {
+    return analyzeFigure(paths, readConfig(), key, dataURL);
+  });
+
+  // ---- 扫描版 PDF 的页面 OCR（Windows 内置 OCR，无需下载模型）----
+  ipcMain.handle('ocr:available', () => ocrAvailable());
+  ipcMain.handle('ocr:page', async (_e, key: string, page: number, dataURL: string) => {
+    const r = await ocrImage(dataURL);
+    if (!r.ok) return { ok: false, error: r.error };
+    const text = r.text ?? '';
+    if (!text.trim()) return { ok: false, error: '该页没有识别出文字（可能是纯图片页）。' };
+    // IPC 边界也要校验页码：page 会被插进页标记与正则，非法值会写出永不匹配的坏块。
+    const pageNo = Number(page) | 0;
+    if (!(pageNo >= 1)) return { ok: false, error: '页码无效（需为 ≥ 1 的整数）。' };
+    // 写入/合并到 library/text/<key>-v3.txt，带页标记（与 macOS 版同一格式）。
+    const textPath = paths.pdfTextPath(key);
+    let existing = '';
+    try { existing = fs.readFileSync(textPath, 'utf8'); } catch { /* 首次 OCR */ }
+    // 只要这份缓存里含有 OCR 页，整份文件就必须带 OCR 标记：
+    // 否则 text:get 不会报 isOCR，机器识别文本会被当作原文通过摘录校验（证据来源丢失）。
+    const scanned = isLikelyScannedText(existing);
+    const base = (!existing || scanned) ? '' : existing.replace(OCR_MARKER, '').replace(/^\n+/, '');
+    const body0 = base ? (() => {
+      const re = new RegExp(`=== Page ${pageNo} ===\\n[\\s\\S]*?(?=\\n=== Page |$)`);
+      // 函数式替换：OCR 文本是替换串时 $&/$1 等会被展开（旧 H4），把页块内容复制错置。
+      return re.test(base) ? base.replace(re, () => `=== Page ${pageNo} ===\n${text}`) : base.replace(/\s+$/, '') + `\n\n=== Page ${pageNo} ===\n${text}`;
+    })() : `=== Page ${pageNo} ===\n${text}`;
+    // 只要这份缓存里含有 OCR 页，整份文件就必须带 OCR 标记：
+    // 否则 text:get 不会报 isOCR，机器识别文本会被当作原文通过摘录校验（证据来源丢失）。
+    atomicWrite(textPath, OCR_MARKER + '\n' + body0 + '\n');
+    return { ok: true, page: pageNo, chars: text.length, lines: text.split('\n').length };
+  });
+
+  // ---- 论文 ↔ 代码映射（PRD 4.9）----
+  const codePath = (key: string): string => path.join(paths.dataDir, 'code', `${assertSafePathKey(key)}.json`);
+
+  /** 扫描公开 GitHub 仓库，固定 commit，落盘快照。token 只从配置读取，不进 prompt。 */
+  ipcMain.handle('code:scan', async (_e, key: string, url: string) => {
+    try {
+      const cfg = readConfig();
+      const snapshot = await scanRepository(url, key, cfg.githubToken ?? null);
+      fs.mkdirSync(path.dirname(codePath(key)), { recursive: true });
+      saveJSON(codePath(key), snapshot);
+      return { ok: true, snapshot: { repository: snapshot.repository, commit: snapshot.commit, files: snapshot.files.length, paths: snapshot.paths.length, warnings: snapshot.warnings, fileList: snapshot.files.map((f) => ({ path: f.path, category: f.category, lines: f.text.split('\n').length })) } };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  ipcMain.handle('code:get', (_e, key: string) => {
+    const r = readJSONStrict<CodeSnapshot>(codePath(key));
+    if (!r.ok) return { ok: false, missing: r.missing };
+    const s = r.value;
+    let analysis: CodeMappingAnalysis | null = null;
+    let validateError: string | null = null;
+    if (typeof s.mappingJSON === 'string') {
+      try { analysis = decodeCodeMapping(s.mappingJSON); validateCodeMapping(analysis, s); }
+      catch (e) { validateError = e instanceof Error ? e.message : String(e); }
+    }
+    return { ok: true, snapshot: { repository: s.repository, commit: s.commit, scannedAt: s.scannedAt, files: s.files.length, paths: s.paths.length, warnings: s.warnings, fileList: s.files.map((f) => ({ path: f.path, category: f.category, lines: f.text.split('\n').length })) }, analysis, validateError, confirmations: s.confirmations ?? {} };
+  });
+
+  /** 生成映射：调用 AI，校验后落盘（校验失败不覆盖旧结果）。 */
+  ipcMain.handle('code:map', async (_e, key: string) => {
+    const r = readJSONStrict<CodeSnapshot>(codePath(key));
+    if (!r.ok) return { ok: false, error: '还没有仓库快照，请先扫描仓库。' };
+    const snapshot = r.value;
+    const text = readCachedPDFText(paths, key);
+    if (!text) return { ok: false, error: '没有论文全文缓存，无法生成映射。' };
+    const cfg = readConfig();
+    const { material } = preparePaperContext(text, 'method', '全文');
+    const sys = readingSystemPrompt('code', material) + '\n\n【仓库代码（固定 commit）】\n' + snapshotContext(snapshot);
+    const res = await generate(cfg, sys, '请生成论文概念到代码的映射 JSON。');
+    if (!res.ok) return { ok: false, error: res.error };
+    let analysis: CodeMappingAnalysis;
+    try {
+      analysis = decodeCodeMapping(res.text as string);
+      validateCodeMapping(analysis, snapshot);
+      // 论文依据也过 evidence 校验（页码必须真实存在）
+      for (const m of analysis.mappings) {
+        validateExtraction({ dataset: [m.paper], acquisition: [], training: [], loss: [], metrics: [], results: [] }, text);
+      }
+    } catch (e) {
+      return { ok: false, error: `校验未通过，未覆盖旧快照：${e instanceof Error ? e.message : String(e)}`, raw: res.text };
+    }
+    const next: CodeSnapshot = { ...snapshot, mappingJSON: res.text as string, mappingSource: text };
+    saveJSON(codePath(key), next);
+    return { ok: true, analysis };
+  });
+
+  /** 人工核对 / 明确映射：保存某条映射的核对说明。 */
+  ipcMain.handle('code:confirm', (_e, key: string, mappingID: string, note: string) => {
+    const r = readJSONStrict<CodeSnapshot>(codePath(key));
+    if (!r.ok) return { ok: false, error: '没有仓库快照' };
+    const snapshot = r.value;
+    if (typeof snapshot.mappingJSON === 'string') {
+      try {
+        const a = decodeCodeMapping(snapshot.mappingJSON);
+        if (!a.mappings.some((m) => mappingIDOf(m) === mappingID)) return { ok: false, error: '找不到该映射' };
+      } catch { return { ok: false, error: '快照里的映射无法解析' }; }
+    }
+    const confirmations = { ...(snapshot.confirmations ?? {}) };
+    if (note.trim()) confirmations[mappingID] = note.trim(); else delete confirmations[mappingID];
+    saveJSON(codePath(key), { ...snapshot, confirmations });
+    return { ok: true, confirmations };
   });
 
   // 对比用字段：来自笔记 frontmatter（论文级事实），不是库状态。
@@ -407,6 +810,8 @@ function registerIPC(): void {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
     const cur = readJSONStrict<Record<string, unknown>>(paths.readingsPath(key));
+    // 同 reading:save：损坏时拒绝保存，避免用新解析覆盖掉可人工修复的旧数据。
+    if (!cur.ok && !cur.missing) return { ok: false, error: `阅读记录已损坏，未保存以免覆盖：${cur.error}` };
     const base = cur.ok ? cur.value : {};
     const visuals = Array.isArray(base.resultVisuals) ? (base.resultVisuals as Array<{ id: string; kind: string }>) : [];
     // 只有存在图/表资源时才做绑定校验：没有资源时要求绑定会让用户无法保存任何解读。
@@ -585,7 +990,16 @@ function registerIPC(): void {
     return { ok: true, checks: repoAuditChecks(snapshot) };
   });
   ipcMain.handle('reproduction:setTask', (_e, key: string, revision: string, itemID: string, patch: { status?: string; note?: string }) => {
+    // revision='__proto__' 时 doc.revisions[revision] 返回 Object.prototype（?? 不兜底），
+    // 下一行赋值会直接污染主进程全局原型（旧 C3 复发路径）。
+    if (!isSafePathKey(key)) return { ok: false, error: '非法 key（含路径穿越或保留名，已拒绝）' };
+    if (!isSafeObjectKey(revision) || !isSafeObjectKey(itemID)) {
+      return { ok: false, error: '非法 revision 或核对项 ID（__proto__ 等保留名，已拒绝）' };
+    }
+    if (patch == null || typeof patch !== 'object') return { ok: false, error: 'patch 必须是对象' };
     const r = loadReproduction(paths, key);
+    // 损坏时拒写：否则空 doc 落盘会覆盖掉文件里已有的 analyses/revisions。
+    if (!r.ok) return { ok: false, error: `复现核对文件已损坏，未保存以免覆盖：${r.error}` };
     const doc: ReproductionChecklistDoc = r.value;
     // 新分析不继承旧核对结果：状态写在指纹对应的 revision 下
     doc.revisions[revision] = doc.revisions[revision] ?? {};
@@ -602,7 +1016,10 @@ function registerIPC(): void {
     return { baseURL: c.baseURL ?? '', model: c.model ?? '', hasKey: !!(c.apiKey && c.apiKey.length && !c.apiKey.includes('在这里填入')), path: paths.configPath };
   });
   ipcMain.handle('config:set', (_e, patch: { baseURL?: string; model?: string; apiKey?: string }) => {
-    const c = readConfig();
+    // 损坏时拒写：静默回退 {} 会把没随 patch 提交的字段（含 apiKey）覆盖丢。
+    const r = readJSONStrict<Config>(paths.configPath);
+    if (!r.ok && !r.missing) return { ok: false, error: `config.json 已损坏，未保存以免覆盖：${r.error}` };
+    const c = r.ok ? r.value : {};
     const next: Config = {
       ...c,
       baseURL: patch.baseURL ?? c.baseURL,
@@ -614,17 +1031,46 @@ function registerIPC(): void {
   });
 
   // ---- AI 流式问答 ----
+  /** 论文标题查找（跨论文候选材料的来源标注用）。 */
+  const titleOf = (key: string): string | null => {
+    const item = libraryItems().find((i) => i.key === key);
+    return item ? (item.paper.title ?? key) : null;
+  };
+
   ipcMain.handle('ai:ask', async (e, req: { key: string; mode: string; question: string; scope: string; pdfText?: string }) => {
     const cfg = readConfig();
-    return await askStream(cfg, req, (delta) => {
+    // 跨论文扩展检索（R-05）：只读本地索引 + 至多 3 秒的查询向量请求，失败回退关键词；
+    // 结果作为「候选材料」附在材料后。检索失败不阻断问答。
+    let pdfText = req.pdfText ?? '';
+    try {
+      const passages = await retrieveAcrossLibrary(paths, cfg, req.question, req.key, titleOf, 3);
+      if (passages.length) pdfText += libraryContextBlock(passages);
+    } catch { /* 检索不可用不影响单篇问答 */ }
+    return await askStream(cfg, { ...req, pdfText }, (delta) => {
       if (!e.sender.isDestroyed()) e.sender.send('ai:delta', delta);
     });
   });
 
+  // ---- 检索索引（R-05）：构建/读取/prewarm ----
+  ipcMain.handle('retrieval:build', async (_e, key: string, allowEmbedding = true) => {
+    try {
+      const idx = await retrievalIndex(paths, readConfig(), key, allowEmbedding);
+      return idx ? { ok: true, chunks: idx.chunks.length, model: idx.model, embedded: idx.chunks.filter((c) => c.vector).length } : { ok: false, error: '没有可检索的全文缓存。' };
+    } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+  });
+
+  ipcMain.handle('retrieval:status', () => {
+    const keys = cachedKeys(paths);
+    const indices = loadIndices(paths, keys);
+    const withVectors = Object.values(indices).filter((i) => i.chunks.some((c) => c.vector)).length;
+    return { cached: keys.length, indexed: Object.keys(indices).length, embedded: withVectors };
+  });
+
   ipcMain.handle('ai:prepare', (_e, key: string, question: string, scope: string) => {
     const text = readCachedPDFText(paths, key);
-    if (!text) return { ok: false, error: '还没有该论文的全文缓存，请先在 macOS 版或本应用内完成 PDF 文本抽取' };
-    return { ok: true, ...preparePaperContext(text, question, scope) };
+    // 打开论文时后台预热嵌入索引（不阻塞问答）
+    if (text) prewarmRetrievalIndex(paths, readConfig(), key);
+    return preparePaperMaterial(text, question, scope);
   });
 
   ipcMain.handle('shell:openExternal', (_e, url: string) => {
@@ -634,11 +1080,55 @@ function registerIPC(): void {
     return true;
   });
 
+  /** 打开 papers/*.md 笔记文件（「原有精读笔记 ↗」）。只允许 papers 目录内的 .md。 */
+  ipcMain.handle('note:openFile', (_e, file: string) => {
+    const name = path.basename(String(file ?? ''));
+    if (!name.endsWith('.md')) return { ok: false, error: '只允许打开 Markdown 笔记' };
+    const full = path.join(paths.papersDir, name);
+    if (!fs.existsSync(full)) return { ok: false, error: '笔记文件不存在' };
+    void shell.openPath(full);
+    return { ok: true, path: full };
+  });
+
+  /** 保存文本导出（Compare Markdown/CSV、Ideas Markdown）。 */
+  ipcMain.handle('export:text', async (_e, name: string, content: string) => {
+    const r = await dialog.showSaveDialog(win!, { title: '导出', defaultPath: path.basename(String(name || 'export.txt')) });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    writeExport(r.filePath, String(content ?? ''));
+    return { ok: true, path: r.filePath };
+  });
+
+  /** 导出研究资产（JSON bundle，schema 1.4）。回收站条目不导出。 */
+  ipcMain.handle('export:research', async () => {
+    const items = libraryItems().filter((i) => i.state.status !== 'deleted');
+    const { notes } = loadNotes(paths.papersDir);
+    const noteText: Record<string, string> = {};
+    for (const n of notes) {
+      try { noteText[n.file] = fs.readFileSync(path.join(paths.papersDir, n.file), 'utf8'); } catch { /* 读取失败不阻断导出 */ }
+    }
+    const ideas = (() => { const r = loadIdeas(paths); return r.ok ? r.value.ideas : []; })();
+    const bundle = {
+      schemaVersion: '1.4',
+      exportedAt: new Date().toISOString(),
+      profile: profile(),
+      papers: items.map((i) => i.paper),
+      library: Object.fromEntries(items.map((i) => [i.key, i.state])),
+      progress: progressMap(),
+      notes: noteText,
+      ideas,
+    };
+    const r = await dialog.showSaveDialog(win!, { title: '导出研究资产', defaultPath: `CBCT-research-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: 'JSON', extensions: ['json'] }] });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    writeExport(r.filePath, JSON.stringify(bundle, null, 2));
+    return { ok: true, path: r.filePath };
+  });
+
   ipcMain.handle('root:reveal', () => { shell.openPath(paths.root); return true; });
 }
 
 app.whenReady().then(() => {
   paths = new Paths(findRoot(undefined, process.env.CBCT_ROOT ?? null));
+  library = new LibraryStore(paths.libraryStatePath, 600, notifyWriteError);
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: '文件',
@@ -649,7 +1139,7 @@ app.whenReady().then(() => {
           if (!r.canceled && r.filePaths.length) {
             process.env.CBCT_ROOT = r.filePaths[0];
             paths = new Paths(findRoot(undefined, r.filePaths[0]));
-            libraryCache = null; // 换工作区必须丢弃旧状态缓存
+            library = new LibraryStore(paths.libraryStatePath, 600, notifyWriteError); // 换工作区必须丢弃旧状态缓存
             win?.reload();
           }
         } },
@@ -667,4 +1157,4 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 // 退出前必须冲刷节流中的草稿，否则窗口关闭会丢最后一次编辑
-app.on('before-quit', () => writer.flushAll());
+app.on('before-quit', () => { writer.flushAll(); library.flush(); });

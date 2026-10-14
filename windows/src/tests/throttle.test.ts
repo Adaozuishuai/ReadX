@@ -55,3 +55,16 @@ test('flushAll 在退出前写掉所有待写值', () => {
   assert.equal(disk.a, 'y', '退出时必须写掉窗口内未落盘的最新值');
   assert.deepEqual(w.pendingKeys(), []);
 });
+
+test('落盘失败经 onError 上报，不中断其它 key 的写入', () => {
+  // 旧实现 catch {} 静默吞错：调用方已返回 ok:true，磁盘满/只读时用户以为已保存。
+  const errors: Array<{ key: string; msg: string }> = [];
+  const w = new ThrottledWriter(50, (key, e) => errors.push({ key, msg: e instanceof Error ? e.message : String(e) }));
+  w.schedule('bad', () => { throw new Error('ENOSPC'); });
+  let goodWritten = false;
+  w.schedule('good', () => { goodWritten = true; });
+  assert.equal(errors.length, 1, '失败必须上报');
+  assert.equal(errors[0].key, 'bad');
+  assert.match(errors[0].msg, /ENOSPC/);
+  assert.ok(goodWritten, '一个 key 失败不得影响其它 key');
+});

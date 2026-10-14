@@ -1,4 +1,4 @@
-// 系统标签移植保真回归：把 native/Tests/CBCTReadingTests/SystemTagTests.swift 的断言
+// 系统标签移植保真回归：把早期 macOS（Swift）版回归用例 SystemTagTests.swift 的断言
 // 逐条翻成 TS，并额外锁死「八类关键词表一字不差」。
 // 任何一条失败都说明移植改变了语义，而不是「测试太严」。
 

@@ -12,5 +12,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src/core/**/*.ts", "src/main/discovery.ts", "src/tests/**/*.ts"]
+  "include": ["src/core/**/*.ts", "src/main/discovery.ts", "src/main/fetchPaper.ts", "src/main/repository.ts", "src/main/retrieval.ts", "src/main/figureAnalysis.ts", "src/main/winOcr.ts", "src/tests/**/*.ts"]
 }

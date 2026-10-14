@@ -1,4 +1,4 @@
-// 迷你 Markdown 块级解析。与 native/Sources/CBCTReading/Markdown.swift 语义一致。
+// 迷你 Markdown 块级解析。与早期 macOS（Swift）版 Markdown.swift 语义一致。
 
 import { MarkdownTable, isDelimiterRow, parseTable } from './markdownTable';
 

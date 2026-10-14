@@ -1,4 +1,4 @@
-// 移植保真度回归：把 Swift 版 native/Tests/CBCTReadingTests/ 的断言逐条翻成 TS。
+// 移植保真度回归：断言取自早期 macOS（Swift）版的回归用例，逐条翻成 TS。
 // 任何一条失败都说明移植改变了语义，而不是「测试太严」。
 
 import { test } from 'node:test';
@@ -55,8 +55,8 @@ test('GFM 表格被解析为 table 块，而不是字面竖线段落', () => {
 });
 
 test('真实产物：NAF 几何表完整解析且数值逐字保留', () => {
-  const artifact = path.join(ROOT, 'native/acceptance/2026-10-02/verified-v3/NAF-chat-geometry.md');
-  if (!fs.existsSync(artifact)) return; // 产物缺失则跳过（与 Swift 版一致）
+  const artifact = path.join(__dirname, '..', '..', 'fixtures', 'verified-v3', 'NAF-chat-geometry.md');
+  if (!fs.existsSync(artifact)) return; // 产物缺失则跳过
   const src = fs.readFileSync(artifact, 'utf8');
   const tables = parseMarkdown(src)
     .filter((b) => b.kind === 'table')

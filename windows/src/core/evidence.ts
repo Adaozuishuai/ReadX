@@ -1,7 +1,7 @@
 // Evidence：evidence-first 校验链。这是全项目可信度的根，移植必须逐条保真。
 //
 // 移植纪律：这里每一个「刻意不做 X」的注释都是从 Swift 版继承的硬约束，
-// 改动前请先读 native/Tests/CBCTReadingTests/ResearchTests.swift 里对应的回归用例。
+// 改动前请先读早期 macOS（Swift）版 ResearchTests.swift 里对应的回归用例。
 
 import { ExperimentExtraction, ExperimentField } from './types';
 
@@ -77,6 +77,9 @@ const SPELLED: Record<string, string> = {
  */
 export function numbers(text: string): Set<string> {
   let s = text.normalize('NFKC').toLowerCase().replace(/−/g, '-').replace(/–/g, '-');
+  // 符号与数字间的空白（'5×10 - 4' 是 '5×10⁻⁴' 被文本抽取拆开的常见形态）：
+  // 两侧统一压成 '-4'，否则 v 与摘录 token 不一致造成误拒。
+  s = s.replace(/([+\-])[ \t]+(?=[\d.])/g, '$1');
   for (const [word, value] of Object.entries(SPELLED)) {
     s = s.replace(new RegExp(`\\b${word}\\b`, 'g'), value);
   }
@@ -292,7 +295,7 @@ export function groupsOf(x: ExperimentExtraction): Array<[string, string, Experi
   ];
 }
 
-const UNKNOWN_VALUES = ['论文未说明', '论文中未说明', '论文中未找到', '未报告'];
+const UNKNOWN_VALUES = ['论文未说明', '论文中未说明', '论文中未找到', '未报告', '论文未报告', '论文未提及', '未提及', '原文未说明', '文中未提及', '论文中没有说明'];
 
 /** 每个字段必须有页码 + 能出现在该页的逐字摘录，且字段里的数字要被摘录支持。 */
 export function validateExtraction(x: ExperimentExtraction, source: string): void {
@@ -304,14 +307,20 @@ export function validateExtraction(x: ExperimentExtraction, source: string): voi
 
   const problems: string[] = [];
   for (const field of fields) {
-    if (UNKNOWN_VALUES.includes(field.v) && (field.page == null) && (field.excerpt == null)) continue;
+    // 「未知声明」放行条件：page/excerpt 均为 null，且 v 是对报告状态的否定陈述、不含任何数字
+    // （'论文未报告显著性检验' 这类长句是模型的合法措辞变体；带数字或肯定性事实的仍需摘录背书）。
+    const declaredUnknown = field.page == null && field.excerpt == null &&
+      (UNKNOWN_VALUES.includes(field.v) || (/^(?:论文|原文|文中)?[^。；;]*未(?:报告|说明|提及|找到|发现|提供|进行)/.test(field.v) && numbers(field.v).size === 0));
+    if (declaredUnknown) continue;
     const page = field.page ?? undefined;
     const pageText = page != null ? byPage.get(page) : undefined;
     const quote = field.excerpt ?? '';
     const ok = page != null && pageText !== undefined && quote &&
       normalized(quote).length >= 8 && normalized(pageText).includes(normalized(quote));
     if (!ok) {
-      let diagnostic = `「${field.k}」缺少对应页的逐字摘录；引用单页不可拼接跨页文字`;
+      // 模型漏发 k 时诊断会显示「undefined」无法定位——明确报形状错误
+      const label = field.k && String(field.k).trim() ? field.k : '(该条目缺少 k 字段：每项必须是 {"k","v","page","excerpt"} 四键齐全的对象)';
+      let diagnostic = `「${label}」缺少对应页的逐字摘录；引用单页不可拼接跨页文字`;
       if (page != null && pageText !== undefined && quote) {
         const fragment = matchingQuoteFragment(quote, pageText);
         if (fragment) {
@@ -321,7 +330,10 @@ export function validateExtraction(x: ExperimentExtraction, source: string): voi
       problems.push(diagnostic);
       continue;
     }
-    const unsupported = [...numbers(field.v)].filter((n) => !numbers(quote).has(n));
+    // IEEE 风格的文内引用号（Adam method[42]）是参考文献编号，不是被报告的测量值；
+    // 从 v 的数字义务中剔除（摘录侧不动——多一个集合成员无害），否则每条带引用的事实都被误拒。
+    const vNumbers = numbers(field.v.replace(/\[\d{1,4}\]/g, ' '));
+    const unsupported = [...vNumbers].filter((n) => !numbers(quote).has(n));
     if (unsupported.length) {
       problems.push(`「${field.k}：${field.v.slice(0, 100)}」的数字 ${unsupported.sort().join(', ')} 未被所附摘录支持`);
     }

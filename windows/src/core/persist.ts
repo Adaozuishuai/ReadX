@@ -11,7 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { Paths, readJSONStrict, saveJSON, atomicWrite } from './store';
+import { Paths, readJSONStrict, saveJSON, atomicWrite, assertSafePathKey } from './store';
 
 export interface StoredIdea {
   id: string;
@@ -61,7 +61,7 @@ export interface ReproductionChecklistDoc {
 }
 
 export function reproductionPath(paths: Paths, key: string): string {
-  return path.join(paths.dataDir, 'reproduction', `${key}.json`);
+  return path.join(paths.dataDir, 'reproduction', `${assertSafePathKey(key)}.json`);
 }
 
 export function loadReproduction(paths: Paths, key: string): { ok: boolean; missing?: boolean; error?: string; value: ReproductionChecklistDoc } {

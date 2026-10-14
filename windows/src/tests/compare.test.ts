@@ -1,4 +1,4 @@
-// 对比布局与可比性回归：逐条对应 native/Sources/CBCTReading/CompareModels.swift。
+// 对比布局与可比性回归：逐条对应早期 macOS（Swift）版 CompareModels.swift。
 // 每条断言都能真正失败（不存在恒真断言）。
 
 import { test } from 'node:test';

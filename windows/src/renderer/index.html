@@ -2,26 +2,34 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; worker-src 'self' blob:; base-uri 'none'; form-action 'none'">
 <title>CBCT 每日精读</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">CBCT 每日精读 <span class="tag">Windows</span></div>
-  <nav>
-    <button data-mode="today" class="active">今日论文</button>
-    <button data-mode="library">论文库</button>
-    <button data-mode="compare">对比</button>
-    <button data-mode="trend">趋势</button>
-    <button data-mode="ideas">想法</button>
-    <button data-mode="settings">设置</button>
-  </nav>
-  <div class="spacer"></div>
-  <button id="btn-import" class="ghost">导入 PDF</button>
-</header>
-<main id="main"></main>
-<footer>工作区：<span id="root-path">…</span> · 数据与 macOS 版共用同一份本地文件（queue.json / papers / library / app/data）</footer>
+<div class="bg-decor" aria-hidden="true"><i class="c1"></i><i class="c2"></i><i class="c3"></i></div>
+<div class="shell">
+  <header class="topbar">
+    <div class="brand" id="brand" title="CBCT Daily · 首页">
+      <span class="face" aria-hidden="true"></span>
+      <span>CBCT Daily</span>
+    </div>
+    <nav class="nav-tabs">
+      <button class="cap" data-mode="today">今日</button>
+      <button class="cap" data-mode="library">论文库</button>
+      <button class="cap" data-mode="topics">主题</button>
+      <button class="cap" data-mode="ideas">想法</button>
+    </nav>
+    <div class="spacer"></div>
+    <label class="search-box">
+      <span>🔍</span>
+      <input id="search" placeholder="搜索论文…" type="search">
+    </label>
+    <button class="icon-btn" id="btn-more" title="对比、导入、导出与设置">⋯</button>
+    <button class="icon-btn" id="btn-profile" title="研究画像">👤</button>
+  </header>
+  <main id="main"></main>
+</div>
 <script src="app.js"></script>
 </body>
 </html>
