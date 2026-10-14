@@ -1,7 +1,0 @@
-[
-  {
-    "module" : "results",
-    "seconds" : "138",
-    "status" : "failed: 证据校验未通过，未保存：「表头：列标签为五个数据集：Chest, Jaw, Foot, Abdomen, Aorta；行标签为五个方法：FDK [7], SART [2], ASD-POCS [20], IntraTomo3D [2」的数字 20, 28, 3 未被所附摘录支持"
-  }
-]
