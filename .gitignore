@@ -5,9 +5,7 @@
 /app/config.json
 /app/data/
 /app/node_modules/
-/native/.build/
-/native/.swiftpm/
-/native/boot.log
-/native/layout.log
+/windows/node_modules/
+/windows/dist/
 /library/text/
 /library/*.pdf

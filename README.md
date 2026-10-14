@@ -1,64 +1,80 @@
-# CBCT 论文每日精读助手
+# CBCT 论文每日精读助手（Windows 版）
 
 围绕 CBCT（锥束 CT）重建的每日精读系统：**每天打开就有一篇值得读的论文，还有一个陪你逐步读懂它的向导**。每篇用同一套框架拆解，读过的论文自动形成可横向对比的结构化索引。
 
-## 每天怎么用
+核心纪律是 **evidence-first**：论文事实必须能回到原文页码与逐字摘录，AI 推断、研究建议与个人笔记单独标识，拿不到的信息保持「未报告」，没把握的写「待验证」，数字禁止凭印象写。
 
-macOS：双击 `~/Applications/CBCT每日精读.app`。从源码构建与安装：
+> 本仓库**只包含 Windows 客户端**（Electron + TypeScript）。此前还有一版 macOS 原生应用（SwiftUI + PDFKit），已移除；Windows 版的纯逻辑由它逐条移植而来，本地数据格式与它完全一致。
 
-```bash
-native/build-app.sh
-```
+## 怎么跑
 
-首次使用离线公式 OCR 时，在 macOS 安装本地依赖（首次安装会下载模型）：
+需要 Node.js 18+。
 
 ```bash
-native/scripts/install_formula_ocr.sh
+cd windows
+npm install
+npm start          # 构建并启动
+npm test           # 移植保真度回归
+npm run dist:win   # 打 Windows 安装包（NSIS + 免安装版）
 ```
 
-Windows：安装 Node.js 18+ 后，在 `windows/` 目录运行 `npm install`、`npm start`。
+工作区根目录的解析顺序（`src/core/store.ts`）：
 
-新版工作台包含：
+1. 环境变量 `CBCT_ROOT`
+2. 从可执行文件所在目录向上最多 8 层，找含 `queue.json` 的目录
+3. 当前工作目录
 
-界面遵循 `assets/design/CBCT_Daily_FUN_Kids_4K.svg`：奶油色背景、黑色描边、粉彩卡片与顶部胶囊导航。Today 展示真实论文、阅读记录与关联 Idea；Library、Topics、Notebook 分别连接论文库、主题筛选和研究想法。研究画像在右上角头像，对比、导入、导出与 AI 设置在「更多」菜单。
+也可以从菜单「文件 → 切换工作区…」直接选包含 `queue.json` 的目录。
 
-对齐重设计已在 [Figma 可编辑文件](https://www.figma.com/design/vwOFX2jzCM2mewpmsSdrjO?node-id=5-12) 中建立，并同步到桌面：12 列网格按 5/3/4 分配、24px 列间距、三列共享 520px 高度、插画对齐知识卡片、40px 导航/操作控件。实际测量与截图见 [对齐复审](native/acceptance/2026-10-02/UI-DESIGN.md)。Figma Starter 插件额度用尽，手机稿最后的画布裁切修正仍待同步；实际手机页面已修正并验证。
+> 工作区数据（`queue.json` / `papers/` / `library/` / `app/data/*.json`）默认保存在本机，不进源码仓库。全文缓存 `library/text/<key>-v3.txt` 由应用生成；全新克隆缺少该缓存时，依赖它的 1 项端到端测试会失败，其余测试不受影响。
 
-- **今日发现**：每天打开时抓取 arXiv / PubMed 最近论文，按研究画像和阅读反馈排序，给出具体匹配理由；可精读、收藏、稍后读或忽略。
-- **论文库**：搜索与筛选已保存论文，修改状态、标签、笔记和 AI 纠错；笔记自动保存；支持本地 PDF 导入和研究资产 JSON 导出。
-- **研究想法（Ideas）**：记录研究问题、观察、假设、方法草图、验证实验与状态；附着可核对的原文摘录，或带来源标签的 AI 解释/研究建议；支持搜索、编辑、删除和 Markdown 导出。
-- **迁移到我的研究**：精读室顶部进入，结合画像给出可复用、需适配、潜在冲突和待验证建议；每条包含原文依据与验证实验，可转成 Idea。
-- **复现准备**：精读室顶部或「留笔记」进入；分析资源、环境、成本、关键缺失与风险。论文事实附逐字摘录，未知保持未知，AI 推断与核对行动单列；人工核对记录按分析版本保存，支持清单导出与转成待实验 Idea。
-- **研究画像**：设置主题权重、数据集、方法、指标和算力；保存后推荐排序立即更新。
-- **论文对比**：从论文库选择 2–8 篇，比较结构或实验协议，导出 Markdown / CSV；未知参数不会补造，历史笔记字段保留核对提示。
-- **结果分析**：精读室「② 读原文」进入，抽取主表、消融、稳定性、泛化与效率证据；选择同表同列的两个方法计算差值，保留输入与页码。PSNR/dB 不计算百分比提升，作者统计措辞独立标识。
-- **论文与代码**：精读室「② 读原文」进入，读取公开 GitHub 仓库中的 README/config/model/dataset/loss/train/infer 文件，固定 commit 与行号；映射同时验证论文摘录和代码片段。映射标为 AI 推测，人工核对另存说明；不会执行仓库代码。
+## 界面
 
-精读室保留四步向导，增加 **TL;DR / 5 分钟 / Critical View / 方法与公式 / 实验抽取**。实验抽取增加基线类别。点击带摘录的 `Page N` 可以跳到 PDF 相应物理页并高亮证据；选中左侧原文或笔记，点「这里没懂」提问。Chat 支持范围与解释方式切换。
+奶油色背景、黑色描边、粉彩卡片，遵循 `assets/design/CBCT_Daily_FUN_Kids_4K.svg`。顶部导航六页：
 
-AI 助教使用 `app/config.json` 的兼容 API，保存配置即生效。没有可用原文时会停止事实分析；实验和迁移抽取会校验原文摘录、页码及事实字段中的数字，并最多自动修正两次。重新生成保留旧解析，个人笔记独立保存。
+- **今日论文** —— arXiv / PubMed 抓取、单源故障降级、首见日期追踪、今日新增计数、按研究画像排序的推荐理由
+- **论文库** —— 搜索、状态切换、收藏、标签、笔记自动保存（500ms 防抖）、系统标签、回收站（标记删除，可恢复）、PDF 导入
+- **对比** —— 2–8 篇横向对比、**固定列**、跨协议可比性警示、BibTeX / RIS 导出
+- **趋势** —— 系统标签聚合、时间窗口 + 样本数 + 证据集合三要素、样本不足拒下判断、红线措辞自检
+- **想法** —— 问题 / 观察 / 假设 / 方法 / 验证实验、五种状态、证据带来源类型
+- **设置** —— API 地址 / 模型 / Key（Key 只写本地文件，不回显）
 
-论文与笔记默认保存在本机；使用 AI 时会把当前论文证据和相关笔记发送到已配置的 API；迁移分析还会发送研究画像中的约束。Ideas 默认只在本机保存。论文发现优先筛选 MICCAI、CVPR 等期刊会议，arXiv 预印本独立列出；Semantic Scholar 限流时 macOS 端会尝试 Crossref 元数据兜底。PubMed 提供元数据，不保证可下载全文；请从论文库导入有权使用的 PDF。macOS 可用 Vision 识别扫描页，并提供本地公式 OCR。
-
-源码仓库包含应用源码、测试、文档和设计资源。论文 PDF、阅读进度/笔记等本机数据、API 配置与密钥、模型文件、依赖目录和构建产物均保留在本机，不纳入源码仓库。
-
-
-**② 对 ZCode 说（深度加工）**
-
-- `精读 arxiv 2209.14540` 或 `精读 library/xxx.pdf` —— 产出带原文出处的完整精读笔记
-- `NAF 和 <另一篇> 到底差在哪里？` —— 跨论文对比，回溯原文取证
-- `把 xxx 加进待读队列` —— 编辑 queue.json
+精读室从论文库条目进入：原文按页渲染 + 精读笔记六段落 + AI 助教（流式、范围切换、`Page N` 跳转高亮）。复现准备、结果分析、迁移建议、引用导出等入口在相应页面内。
 
 ## 目录
 
-- `native/` 原生 macOS 应用（Swift/SwiftUI 源码 + `build-app.sh` 打包脚本；运行日志 `native/boot.log`）
-- `papers/` 每篇一篇笔记，文件名 `YYYY-短名.md`；`_template.md` 是框架模板
-- `library/` 本机论文 PDF 原文与文本缓存（不纳入源码仓库）
-- `queue.json` 待读队列（`arxiv` 编号条目，或无 arXiv 论文用 `id`+`pdfUrl`+`abstract` 手工条目）
+```
+windows/
+├── src/
+│   ├── core/          纯逻辑（无 Electron 依赖，可单独测试）
+│   │   ├── types.ts           数据模型（字段名与 JSON 一致）
+│   │   ├── evidence.ts        evidence-first 校验链 ★ 核心
+│   │   ├── markdown.ts / markdownTable.ts   块级 / GFM 表格解析
+│   │   ├── notes.ts           精读笔记（papers/*.md）解析
+│   │   ├── paper.ts           论文身份 / 去重 / 推荐排序
+│   │   ├── idea.ts / reproduction.ts / result.ts   结构化校验器
+│   │   ├── trend.ts / systemTags.ts / compare.ts / citation.ts
+│   │   ├── store.ts           路径解析 + 原子写入 + 严格 JSON 读取
+│   │   └── throttle.ts        写盘节流
+│   ├── main/          Electron 主进程
+│   │   ├── main.ts       窗口 + IPC 白名单
+│   │   ├── preload.ts    contextBridge（渲染进程无 Node/fs）
+│   │   ├── ai.ts         OpenAI 兼容流式请求
+│   │   └── discovery.ts  arXiv / PubMed 抓取
+│   ├── renderer/      渲染进程（app.ts + index.html + style.css）
+│   └── tests/         移植保真度与回归测试
+├── fixtures/          测试夹具（真实产物样本）
+└── scripts/copy-static.js
+```
+
+顶层：
+
+- `papers/` 每篇一篇精读笔记，文件名 `YYYY-短名.md`；`_template.md` 是框架模板
+- `queue.json` 待读队列
 - `INDEX.md` 对比索引 + 跨论文观察 + 待验证清单
-- `app/config.example.json` 配置模板；实际 `app/config.json` 与 `app/data/` 中的本机配置和研究数据不纳入源码仓库
-- `windows/` Windows 客户端源码、构建配置及移植一致性测试
-- `assets/design/` 用户提供的 SVG 设计基准与 Figma 组件/布局源脚本、节点记录
+- `app/config.example.json` 配置模板；实际 `app/config.json` 与 `app/data/` 为本机数据，不进仓库
+- `assets/design/` 设计基准 SVG
+- `PRD-路线.md` / `PRD-验收矩阵.md` / `PRD-差距分析.md` / `CODE-REVIEW.md` / `需求清单-*.md` 需求与审查文档（含 macOS 时代记录）
 
 ## 精读框架（每篇一样）
 
@@ -73,42 +89,46 @@ AI 助教使用 `app/config.json` 的兼容 API，保存配置即生效。没有
 - 拿不到的信息写「未报告」，没把握的写「待验证」，数字禁止凭印象写
 - 笔记用中文，专业术语保留英文
 
-## 回归检查
+## 可信度约束（移植时刻意保留）
 
-macOS 回归检查需要 Xcode Command Line Tools：
+这些是产品可信度的一部分，不是实现细节，**不放宽**：
 
-```bash
-native/test.sh                         # 原生离线回归
-CBCT_LIVE_TESTS=1 native/test.sh       # 加上论文源官方 API smoke test
-HF_HUB_OFFLINE=1 CBCT_FORMULA_OCR_SMOKE=1 native/test.sh # 可选：本地公式 OCR 真实 PDF 检查
-```
+- AI 回答必须引用真实存在的页码，否则拒绝保存（`validateEvidence`）
+- 实验抽取的每条事实必须有页码 + 该页逐字摘录；字段里的数字必须被摘录支持
+- 材料超限时如实披露只取了 N/M 页，并禁止据此断言「论文没有该内容」
+- `References` 对任何检索范围都强制排除
+- 方法名中间的数字不算测量值（`IntraTomo3D` 的 `3` 不算证据），型号数字（`RTX3090`、`1.2GB`）保留
+- 流式中断的回答**不保存**——半个回答比没有回答更危险
+- 损坏的 JSON **不静默回退**默认值（否则下次保存会覆盖用户数据）
+- 结果表单元格不仅比对数字集合，还按表头列顺序逐字校验——否则列置换能整体通过
+- 趋势样本数 < 5 时只报计数，不下趋势判断；缺口表述固定为「检索范围内未见」，不构成「首次」声明
+- 可比性警示只在「两个以上不同的**已知**值」时触发；未知值不参与判断
 
-Windows 逻辑与 renderer 回归（Node.js 18+）：
+## 安全基线
+
+- `contextIsolation: true`、`nodeIntegration: false`，渲染进程只能通过 preload 暴露的 IPC 白名单访问能力
+- CSP 限制 `default-src 'none'`、`connect-src 'none'`（渲染进程不发网络请求，抓取与 AI 都在主进程）
+- Markdown 渲染不支持原始 HTML，全部转义后再插入
+- 外链只放行 `http/https`，防止被诱导打开本地可执行文件
+- API Key 不回传渲染进程
+
+## 测试
 
 ```bash
 cd windows
-npm ci
 npm test
 ```
 
-测试使用临时目录，保留正式论文和 API 配置。覆盖队列格式、去重、画像排序、反馈、持久化、证据范围与摘录校验、真实 PDF 以及失败降级。两项都只测「结构/安全是否成立」，真实模型生成质量需要另行使用论文样本验收。
+`npm test` 跑的是**移植保真度回归 + 模块回归**，覆盖表格解析、页码与引用校验、摘录 / 数字支持校验、范围披露、章节范围与 References 排除、论文去重与排序、Idea 生命周期、复现分析版本隔离、结果表列序校验、系统标签八类、趋势证据契约、引用导出等。
 
-## 真实模型验收
+已知：全新克隆缺少 `library/text/2209.14540-v3.txt`（由应用生成、被 gitignore）时，`reproduction` 的 1 项真实缓存端到端测试会失败；该文件存在时全部通过。
 
-本轮使用公开的 NAF 论文和测试画像进行了实际 API 请求，发现并修复表格行列错配、摘录断行和数值证据不足的问题。主结果表的 25 组 PSNR/SSIM 已对照原 PDF 核对。单篇样本不代表模型总体正确率；公式原式仍需回 PDF 核对。
+## 已知限制
 
-显式启用以下命令会向 `app/config.json` 中配置的服务发送公开 NAF 论文，不加载正式笔记、Ideas 或研究画像，也不覆盖正式解析：
-
-```bash
-CBCT_MODEL_TESTS=1 native/model-test.sh
-# 可限定模块，例：CBCT_MODEL_MODULES=experiment,apply
-# 仅复现分析：CBCT_MODEL_MODULES=reproduce CBCT_SKIP_CHAT=1
-```
-
-验收输出与失败记录见 `native/acceptance/2026-10-02/`，结论见 `REPORT.md`。
-
-复现准备的真实模型过程、界面检查和剩余判断错误见 [复现准备验收](native/acceptance/2026-10-02/REPRODUCTION.md)。结构/引用通过不代表分析判断自动正确。
-
-代码映射、结果分析的接受范围与失败记录见 [代码与结果验收](native/acceptance/2026-10-02/CODE-RESULTS.md)。SVG 界面的实际截图和导航检查见 [UI 验收](native/acceptance/2026-10-02/UI-DESIGN.md)。
-
-复现准备分析只读取论文材料，不自动检查仓库或执行训练；未知成本不会按 GPU 型号补造。人工核对记录保存在 `app/data/reproduction/<key>.json`，不会加入 AI 请求。重新分析后，新版本从待核对开始，旧版本记录保留并随研究资产 JSON 导出。
+- **LaTeX 公式不做排版**：按源码转义展示并标注需核对原 PDF，没有行内公式排版
+- **PDF 用系统阅读器打开**：无内置 PDF 面板，`Page N` 跳转是在左侧全文文本面板内滚动定位
+- **OCR 未实现**：扫描版 PDF 依赖 macOS Vision，本版只读 `library/text/` 里已有的缓存
+- **向量检索未移植**：Chat 只有单篇问答，跨论文扩展未实现
+- **未移植的模块**：基线库、论文↔代码映射、方法公式工作流
+- **未设置应用图标**：打包时用 Electron 默认图标
+- **Windows 真机未验证**：产物可打包为真实 Windows 可执行文件，但开发环境为 macOS，双击安装、字体渲染、DPI 缩放等行为未经实机确认
