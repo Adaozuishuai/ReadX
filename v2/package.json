@@ -1,0 +1,23 @@
+{
+  "name": "cbct-reading-v2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "CBCT 精读 v2 — Go 后端 + React 前端 + Electron 壳（npm workspaces）",
+  "workspaces": [
+    "packages/shared",
+    "apps/web",
+    "apps/desktop"
+  ],
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "build": "npm run build -w @cbct/shared && npm run build -w @cbct/web && npm run build -w @cbct/desktop && node scripts/build-server.mjs",
+    "typecheck": "npm run typecheck -w @cbct/shared && npm run typecheck -w @cbct/web && npm run typecheck -w @cbct/desktop",
+    "test:go": "node scripts/go.mjs test ./...",
+    "build:go": "node scripts/build-server.mjs",
+    "test": "npm run test:go && npm run typecheck",
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/dev.mjs --built"
+  }
+}

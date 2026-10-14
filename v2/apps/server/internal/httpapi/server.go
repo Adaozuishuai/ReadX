@@ -1,0 +1,284 @@
+// Package httpapi 提供 v2 server 的 HTTP 层：回环校验、bearer token 鉴权、
+// 健康检查、文档列表与静态前端托管。
+package httpapi
+
+import (
+	"context"
+	"crypto/subtle"
+	"database/sql"
+	"encoding/json"
+	"net"
+	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"cbctv2/server/internal/config"
+	"cbctv2/server/internal/db"
+)
+
+const appVersion = "0.0.0-s0"
+
+// staticCSP 由服务端下发而非写死在 index.html：dev 模式由 Vite 直接提供页面并注入
+// inline 的 HMR 脚本，若把 CSP 塞进 HTML 会让开发态立刻白屏，而生产态才是需要加固的那一份。
+const staticCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; " +
+	"connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; " +
+	"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
+type Server struct {
+	cfg       config.Config
+	handle    *sql.DB
+	startedAt time.Time
+}
+
+func New(cfg config.Config, handle *sql.DB) *Server {
+	return &Server{cfg: cfg, handle: handle, startedAt: time.Now().UTC()}
+}
+
+// Handler 组装完整路由，可直接交给 http.Server 或 httptest。
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.Handle("/v1/meta", s.requireBearer(http.HandlerFunc(s.handleMeta)))
+	mux.Handle("/v1/documents", s.requireBearer(http.HandlerFunc(s.handleDocuments)))
+
+	if s.cfg.StaticDir != "" {
+		mux.HandleFunc("/", s.handleStatic)
+	} else {
+		mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusNotFound, "未知路径")
+		})
+	}
+
+	return s.withCommonHeaders(s.requireLoopbackHost(mux))
+}
+
+// ---- 中间件 ----
+
+// requireLoopbackHost 挡 DNS rebinding：即便本机某个页面把域名指到 127.0.0.1，
+// Host 不是回环名也直接拒绝。
+func (s *Server) requireLoopbackHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !allowedHost(r.Host, s.cfg.Host) {
+			writeError(w, http.StatusForbidden, "拒绝非回环 Host")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func allowedHost(hostHeader string, boundHost string) bool {
+	name := hostHeader
+	if stripped, _, err := net.SplitHostPort(hostHeader); err == nil {
+		name = stripped
+	}
+	name = strings.Trim(name, "[]")
+	if ip := net.ParseIP(name); ip != nil {
+		return ip.IsLoopback()
+	}
+	switch strings.ToLower(strings.TrimSuffix(name, ".")) {
+	case "localhost":
+		return true
+	case "::1":
+		return boundHost == "::1"
+	}
+	return false
+}
+
+// requireBearer 校验 Authorization: Bearer <token>。token 每次启动随机生成，只由父进程
+// （Electron 主进程）经 preload 交给渲染进程，因此同机其他进程无法调用 /v1。
+func (s *Server) requireBearer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provided := bearerToken(r.Header.Get("Authorization"))
+		if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(s.cfg.Token)) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, http.StatusUnauthorized, "缺少或错误的本地 token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func bearerToken(header string) string {
+	const prefix = "Bearer "
+	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(header[len(prefix):])
+}
+
+func (s *Server) withCommonHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		header.Set("X-Content-Type-Options", "nosniff")
+		header.Set("X-Frame-Options", "DENY")
+		header.Set("Referrer-Policy", "no-referrer")
+		if strings.HasPrefix(r.URL.Path, "/v1/") || r.URL.Path == "/healthz" {
+			header.Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ---- 处理函数 ----
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "只允许 GET")
+		return
+	}
+	version, err := db.Version(r.Context(), s.handle)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取迁移版本失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": version > 0, "schemaVersion": version})
+}
+
+func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+	version, err := db.Version(r.Context(), s.handle)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取迁移版本失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"app":            "cbct-reading-v2",
+		"version":        appVersion,
+		"dataRoot":       s.cfg.DataRoot,
+		"dbPath":         s.cfg.DBPath(),
+		"schemaVersion":  version,
+		"startedAt":      s.startedAt.Format(time.RFC3339),
+		"documentsTotal": s.countDocuments(r.Context()),
+	})
+}
+
+// DocumentSummary 与 packages/shared 的 DocumentSummary 一一对应。
+type DocumentSummary struct {
+	ID        string   `json:"id"`
+	Key       string   `json:"key"`
+	Title     string   `json:"title"`
+	Authors   []string `json:"authors"`
+	Year      *int     `json:"year"`
+	Venue     string   `json:"venue"`
+	DOI       string   `json:"doi"`
+	URL       string   `json:"url"`
+	Status    string   `json:"status"`
+	PDFPath   string   `json:"pdfPath"`
+	AddedAt   string   `json:"addedAt"`
+	UpdatedAt string   `json:"updatedAt"`
+}
+
+func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "只允许 GET")
+		return
+	}
+	if r.URL.Query().Get("status") != "" {
+		// 明确拒绝而不是静默忽略，避免前端误以为筛选生效（S1 补筛选）。
+		writeError(w, http.StatusNotImplemented, "status 筛选将在下一阶段提供")
+		return
+	}
+	rows, err := s.handle.QueryContext(r.Context(),
+		`SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at
+		 FROM documents
+		 ORDER BY CASE status WHEN 'reading' THEN 0 WHEN 'done' THEN 2 ELSE 1 END,
+		          added_at DESC, id`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "查询文档失败: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	documents := []DocumentSummary{}
+	for rows.Next() {
+		var item DocumentSummary
+		var authorsJSON string
+		var year sql.NullInt64
+		if err := rows.Scan(&item.ID, &item.Key, &item.Title, &authorsJSON, &year, &item.Venue,
+			&item.DOI, &item.URL, &item.Status, &item.PDFPath, &item.AddedAt, &item.UpdatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "读取文档行失败: "+err.Error())
+			return
+		}
+		if err := json.Unmarshal([]byte(authorsJSON), &item.Authors); err != nil || item.Authors == nil {
+			item.Authors = []string{}
+		}
+		if year.Valid {
+			parsed := int(year.Int64)
+			item.Year = &parsed
+		}
+		documents = append(documents, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "遍历文档失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"documents": documents, "total": len(documents)})
+}
+
+// handleStatic 托管 web 构建产物，并给前端路由做 index.html 兜底。
+func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, http.StatusMethodNotAllowed, "只允许 GET")
+		return
+	}
+	// 先把路径归一化到 "/xxx" 再剥掉前导斜杠：这样 Clean 之后不可能残留 ".."，
+	// 根路径 "/" 变成 index.html 而不是空串。
+	relative := strings.TrimPrefix(path.Clean("/"+strings.TrimPrefix(r.URL.Path, "/")), "/")
+	if relative == "" {
+		relative = "index.html"
+	}
+	candidate := filepath.Join(s.cfg.StaticDir, filepath.FromSlash(relative))
+	inside, err := filepath.Rel(s.cfg.StaticDir, candidate)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) || filepath.IsAbs(inside) {
+		writeError(w, http.StatusForbidden, "非法路径")
+		return
+	}
+	info, err := os.Stat(candidate)
+	serveIndexFallback := err != nil || info.IsDir()
+	if serveIndexFallback {
+		// 带扩展名的资源缺失就真缺失，不伪装成 index.html。
+		if strings.Contains(filepath.Base(relative), ".") {
+			writeError(w, http.StatusNotFound, "资源不存在")
+			return
+		}
+		candidate = filepath.Join(s.cfg.StaticDir, "index.html")
+		if _, err := os.Stat(candidate); err != nil {
+			writeError(w, http.StatusNotFound, "前端尚未构建（npm run build -w @cbct/web）")
+			return
+		}
+	}
+	if strings.EqualFold(filepath.Ext(candidate), ".html") {
+		w.Header().Set("Content-Security-Policy", staticCSP)
+		// 前端每次构建都会换 hash 的资源名，HTML 本身必须回源，否则新版页面进不来。
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	http.ServeFile(w, r, candidate)
+}
+
+// ---- 辅助 ----
+
+func (s *Server) countDocuments(ctx context.Context) int {
+	var count int
+	if err := s.handle.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents`).Scan(&count); err != nil {
+		return 0
+	}
+	return count
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]any{"error": message})
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, `{"error":"序列化失败"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}

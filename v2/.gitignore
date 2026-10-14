@@ -1,0 +1,10 @@
+node_modules/
+dist/
+bin/
+.tmp-smoke/
+apps/server/dev-info.json
+apps/server/dev-info.json.tmp
+*.log
+*.db
+*.db-shm
+*.db-wal
