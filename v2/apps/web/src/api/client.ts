@@ -84,9 +84,108 @@ function query(params: Record<string, string | undefined>): string {
   return rendered ? `?${rendered}` : '';
 }
 
+export interface AIStatus {
+  configured: boolean;
+  model?: string;
+  host?: string;
+  error?: string;
+}
+
+export interface ReadingEntry {
+  value: string;
+  demoted: string[];
+  validationError: string | null;
+  updatedAt: string;
+}
+
+export interface ReadingsResponse {
+  key: string;
+  entries: Record<string, unknown>;
+}
+
+export interface GenerateResponse {
+  saved: boolean;
+  kind: string;
+  pruned: boolean;
+  demoted: string[];
+  validationError: string | null;
+  attempts: number;
+}
+
+export interface ChatChunk {
+  meta?: { included: number; total: number; scope: string };
+  delta?: string;
+  done?: boolean;
+  text?: string;
+  error?: string;
+  partial?: string;
+}
+
+/**
+ * 流式对话：SSE 逐块回调。
+ *
+ * 服务端在流里既会发 delta 也会发 error（例如上游 finish_reason 不是 stop）——
+ * 那种情况下已吐出的半句必须保留在界面上但标明「未保存」，不能假装成功。
+ */
+export async function streamChat(
+  request: { key: string; mode?: string; question: string; scope?: string; history?: Array<{ role: string; text: string }> },
+  onChunk: (chunk: ChatChunk) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { apiBase, token } = bootstrap();
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  const response = await fetch(`${apiBase}/v1/ai/chat`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(request),
+    signal,
+    credentials: 'omit',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let message = `HTTP ${response.status}`;
+    try {
+      const parsed = JSON.parse(text) as ApiFailure;
+      if (isApiFailure(parsed)) message = parsed.error;
+    } catch {
+      if (text) message = text.slice(0, 200);
+    }
+    throw new ApiError(message, response.status);
+  }
+  if (!response.body) throw new ApiError('接口没有返回流式内容。', response.status);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice('data:'.length).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try {
+        onChunk(JSON.parse(payload) as ChatChunk);
+      } catch {
+        // 单块解析失败不影响后续：与旧版一致跳过。
+      }
+    }
+  }
+}
+
 export const api = {
   health: (signal?: AbortSignal) => request<HealthResponse>('/healthz', { signal }),
   meta: (signal?: AbortSignal) => request<MetaResponse>('/v1/meta', { signal }),
+  aiStatus: (signal?: AbortSignal) => request<AIStatus>('/v1/ai/status', { signal }),
+  readings: (key: string, signal?: AbortSignal) => request<ReadingsResponse>(`/v1/readings/${encodeURIComponent(key)}`, { signal }),
+  generate: (key: string, kind: 'experiment' | 'results') =>
+    request<GenerateResponse>('/v1/ai/generate', { method: 'POST', body: { key, kind } }),
   documents: (signal?: AbortSignal, filters?: { status?: string; q?: string }) =>
     request<DocumentsResponse>(`/v1/documents${query(filters ?? {})}`, { signal }),
   document: (key: string, signal?: AbortSignal) => request<DocumentDetail>(`/v1/documents/${encodeURIComponent(key)}`, { signal }),

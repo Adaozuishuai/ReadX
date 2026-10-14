@@ -53,6 +53,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/documents/{key}/pages/{page}", withAuth(s.handlePageGet))
 	mux.Handle("PUT /v1/documents/{key}/pages/{page}", withAuth(s.handlePagePut))
 	mux.Handle("GET /v1/documents/{key}/pdf", withAuth(s.handlePDF))
+	mux.Handle("GET /v1/ai/status", withAuth(s.handleAIStatus))
+	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
+	mux.Handle("POST /v1/ai/generate", withAuth(s.handleAIGenerate))
 	mux.Handle("GET /v1/readings/{key}", withAuth(s.handleReadingGet))
 	mux.Handle("PUT /v1/readings/{key}/{kind}", withAuth(s.handleReadingPut))
 
@@ -248,6 +251,12 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 
 // handleStatic 托管 web 构建产物，并给前端路由做 index.html 兜底。
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/v1/") {
+		// 没匹配上的 /v1 路径绝不能被 SPA 兜底成 index.html：
+		// 那样客户端只会看到「JSON 解析失败」，掩盖真正的路由/方法错误。
+		writeError(w, http.StatusNotFound, "未知的 API 路径或方法")
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		writeError(w, http.StatusMethodNotAllowed, "只允许 GET")
 		return

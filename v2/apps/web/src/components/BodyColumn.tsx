@@ -9,10 +9,12 @@ interface Props {
   phase: WorkspacePhase;
   detail: DocumentPhase;
   selected: DocumentSummary | null;
+  /** 右栏点了 (Page N)：中栏跳到该页并闪一下，让「出处 → 原文」闭环可见。 */
+  focus: { page: number; nonce: number } | null;
 }
 
 /** 中栏：正文容器。S1 先接旧版逐页缓存（文本层），pdf.js 视图在同一块区域继续挂。 */
-export function BodyColumn({ phase, detail, selected }: Props) {
+export function BodyColumn({ phase, detail, selected, focus }: Props) {
   const meta = phase.kind === 'ready' ? phase.meta : null;
   const pages = detail.kind === 'ready' ? detail.detail.pages : [];
   const [page, setPage] = useState<number | null>(null);
@@ -27,6 +29,17 @@ export function BodyColumn({ phase, detail, selected }: Props) {
   }, [pages]);
 
   const body = usePageText(selected?.key ?? null, page);
+  const [flashing, setFlashing] = useState(false);
+
+  // 右栏点 (Page N) / P N 芯片：跳页并闪 1.2s。nonce 让「重复点同一页」也能重新触发。
+  useEffect(() => {
+    if (!focus) return;
+    const available = pages.some((item) => item.page === focus.page);
+    setPage(available ? focus.page : (pages[0]?.page ?? null));
+    setFlashing(true);
+    const timer = setTimeout(() => setFlashing(false), 1200);
+    return () => clearTimeout(timer);
+  }, [focus?.nonce, focus?.page, pages]);
 
   return (
     <section className="flex h-full min-h-0 flex-col gap-3">
@@ -59,7 +72,7 @@ export function BodyColumn({ phase, detail, selected }: Props) {
           onStep={(delta) => setPage((current) => step(pages.map((item) => item.page), current, delta))}
           disabled={!pages.length}
         />
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={`min-h-0 flex-1 overflow-y-auto${flashing ? ' cite-flash' : ''}`}>
           <Body body={body} detail={detail} hasSelection={Boolean(selected)} onPage={(value) => setPage(value)} />
         </div>
       </div>

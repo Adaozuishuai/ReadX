@@ -106,3 +106,17 @@
 .text-pane p:first-of-type {
   text-indent: 0;
 }
+
+/* 出处跳原文：目标页短暂高亮，让「点了引用 → 看到那一页」这条因果被看见。 */
+.cite-flash {
+  animation: cite-flash 1.2s ease-out 1;
+}
+
+@keyframes cite-flash {
+  0% {
+    background: color-mix(in oklab, var(--color-accent) 22%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { BodyColumn } from './components/BodyColumn';
 import { LibraryColumn } from './components/LibraryColumn';
 import { SideColumn } from './components/SideColumn';
@@ -14,6 +14,11 @@ export default function App() {
   const documents = phase.kind === 'ready' ? phase.documents.documents : [];
   const selected = useMemo(() => documents.find((doc) => doc.id === selectedId) ?? null, [documents, selectedId]);
   const detail = useDocument(selected?.key ?? null);
+  const [focus, setFocus] = useState<{ page: number; nonce: number } | null>(null);
+
+  const citePage = useCallback((page: number) => {
+    setFocus((current) => ({ page, nonce: (current?.nonce ?? 0) + 1 }));
+  }, []);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -31,8 +36,8 @@ export default function App() {
             importError={importError}
             runImport={runImport}
           />
-          <BodyColumn phase={phase} detail={detail.phase} selected={selected} />
-          <SideColumn selected={selected} />
+          <BodyColumn phase={phase} detail={detail.phase} selected={selected} focus={focus} />
+          <SideColumn selected={selected} onCite={citePage} />
         </main>
       ) : (
         <SectionPlaceholder section={section} />

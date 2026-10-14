@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"cbctv2/server/internal/config"
 	"cbctv2/server/internal/db"
 	"cbctv2/server/internal/legacy"
 )
@@ -317,3 +318,27 @@ func TestImportFailureReturnsActionableStatus(t *testing.T) {
 }
 
 var _ = time.Second
+
+// 未匹配上的 /v1 路径不得被 SPA 兜底成 index.html：那会让客户端只看到「JSON 解析失败」，
+// 把路由/方法错误伪装成数据问题。
+func TestUnmatchedAPIPathIsJSONNotFoundEvenWithStatic(t *testing.T) {
+	staticDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staticDir, "index.html"), []byte("<html>app</html>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	frontend, _, _ := newTestServer(t, func(cfg *config.Config) { cfg.StaticDir = staticDir })
+
+	for _, path := range []string{"/v1/unknown/route", "/v1/documents/k1/unknown"} {
+		res := do(t, frontend, http.MethodGet, path, testToken)
+		body, _ := io.ReadAll(res.Body)
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s 应 404，实际 %d", path, res.StatusCode)
+		}
+		if strings.Contains(string(body), "<html>") {
+			t.Fatalf("%s 不得返回 HTML：%s", path, body)
+		}
+		if !strings.Contains(string(body), "error") {
+			t.Fatalf("%s 应返回 JSON 错误体：%s", path, body)
+		}
+	}
+}
