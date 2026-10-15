@@ -3,6 +3,7 @@
 !/.gitignore
 !/README.md
 !/v2/
+!/native/
 .DS_Store
 **/__pycache__/
 *.py[cod]
