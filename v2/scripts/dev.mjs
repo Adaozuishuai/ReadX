@@ -31,7 +31,10 @@ try {
 }
 
 async function main() {
-  buildServer();
+  if (built) {
+    const { status } = await import('node:child_process').then(({ spawnSync }) => spawnSync(process.execPath, ['scripts/ensure-built.mjs'], { cwd: v2Paths.root, stdio: 'inherit', windowsHide: true }));
+    if (status !== 0) throw new Error('构建失败');
+  } else buildServer();
 
   if (built) {
     if (!fs.existsSync(path.join(v2Paths.webDist, 'index.html'))) {

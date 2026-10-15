@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"cbctv2/server/internal/config"
@@ -29,9 +30,12 @@ const staticCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 	"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 
 type Server struct {
-	cfg       config.Config
-	handle    *sql.DB
-	startedAt time.Time
+	downloadPublication func(context.Context, string, int64, func(int64, int64)) ([]byte, string, error)
+	settingsMu          sync.Mutex
+	appStateMu          sync.Mutex
+	cfg                 config.Config
+	handle              *sql.DB
+	startedAt           time.Time
 }
 
 func New(cfg config.Config, handle *sql.DB) *Server {
@@ -47,6 +51,14 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/v1/meta", withAuth(s.handleMeta))
 	mux.Handle("GET /v1/documents", withAuth(s.handleDocuments))
 	mux.Handle("POST /v1/import", withAuth(s.handleImport))
+	mux.Handle("POST /v1/import/files", withAuth(s.handlePublicationUpload))
+	mux.Handle("POST /v1/import/url", withAuth(s.handlePublicationURL))
+	mux.Handle("GET /v1/import/search", withAuth(s.handleImportSearch))
+	mux.Handle("GET /v1/documents/{key}/file", withAuth(s.handlePublicationFile))
+	mux.Handle("GET /v1/documents/{key}/sections/{page}", withAuth(s.handleSection))
+	mux.Handle("GET /v1/documents/{key}/resource", withAuth(s.handleEPUBResource))
+	mux.Handle("GET /v1/documents/{key}/location", withAuth(s.handleLocation))
+	mux.Handle("PUT /v1/documents/{key}/location", withAuth(s.handleLocation))
 	mux.Handle("GET /v1/documents/{key}", withAuth(s.handleDocument))
 	mux.Handle("PATCH /v1/documents/{key}/status", withAuth(s.handleStatusPatch))
 	mux.Handle("GET /v1/documents/{key}/pages", withAuth(s.handlePageList))
@@ -54,10 +66,36 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /v1/documents/{key}/pages/{page}", withAuth(s.handlePagePut))
 	mux.Handle("GET /v1/documents/{key}/pdf", withAuth(s.handlePDF))
 	mux.Handle("GET /v1/ai/status", withAuth(s.handleAIStatus))
+	mux.Handle("GET /v1/ai/settings", withAuth(s.handleAISettings))
+	mux.Handle("PUT /v1/ai/settings", withAuth(s.handleAISettings))
+	mux.Handle("POST /v1/ai/test", withAuth(s.handleAIProbe))
 	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
 	mux.Handle("POST /v1/ai/generate", withAuth(s.handleAIGenerate))
 	mux.Handle("GET /v1/readings/{key}", withAuth(s.handleReadingGet))
 	mux.Handle("PUT /v1/readings/{key}/{kind}", withAuth(s.handleReadingPut))
+	mux.Handle("GET /v1/annotations/{key}", withAuth(s.handleAnnotationList))
+	mux.Handle("POST /v1/annotations/{key}", withAuth(s.handleAnnotationCreate))
+	mux.Handle("GET /v1/annotations/{key}/export", withAuth(s.handleAnnotationExport))
+	mux.Handle("PATCH /v1/annotation/{id}", withAuth(s.handleAnnotationPatch))
+	mux.Handle("DELETE /v1/annotation/{id}", withAuth(s.handleAnnotationDelete))
+	mux.Handle("POST /v1/translations/{key}", withAuth(s.handleTranslate))
+	mux.Handle("GET /v1/documents-meta", withAuth(s.handleDocumentMetaList))
+	mux.Handle("PATCH /v1/documents/{key}/meta", withAuth(s.handleDocumentMetaPatch))
+	mux.Handle("POST /v1/trash/empty", withAuth(s.handleTrashEmpty))
+	mux.Handle("GET /v1/tags", withAuth(s.handleTagList))
+	mux.Handle("GET /v1/categories", withAuth(s.handleCategoryList))
+	mux.Handle("POST /v1/categories", withAuth(s.handleCategoryUpsert))
+	mux.Handle("DELETE /v1/category/{name}", withAuth(s.handleCategoryDelete))
+	mux.Handle("GET /v1/trends", withAuth(s.handleTrends))
+	mux.Handle("GET /v1/reproduction/{key}", withAuth(s.handleReproductionGet))
+	mux.Handle("POST /v1/reproduction/{key}/analyze", withAuth(s.handleReproductionAnalyze))
+	mux.Handle("PATCH /v1/reproduction/{key}/task", withAuth(s.handleReproductionTask))
+	mux.Handle("POST /v1/reproduction/repo-checks", withAuth(s.handleRepoChecks))
+	mux.Handle("GET /v1/ideas", withAuth(s.handleIdeaList))
+	mux.Handle("POST /v1/ideas", withAuth(s.handleIdeaCreate))
+	mux.Handle("PATCH /v1/idea/{id}", withAuth(s.handleIdeaPatch))
+	mux.Handle("DELETE /v1/idea/{id}", withAuth(s.handleIdeaDelete))
+	mux.Handle("GET /v1/duplicates", withAuth(s.handleDuplicates))
 
 	if s.cfg.StaticDir != "" {
 		mux.HandleFunc("/", s.handleStatic)
@@ -171,18 +209,20 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 
 // DocumentSummary 与 packages/shared 的 DocumentSummary 一一对应。
 type DocumentSummary struct {
-	ID        string   `json:"id"`
-	Key       string   `json:"key"`
-	Title     string   `json:"title"`
-	Authors   []string `json:"authors"`
-	Year      *int     `json:"year"`
-	Venue     string   `json:"venue"`
-	DOI       string   `json:"doi"`
-	URL       string   `json:"url"`
-	Status    string   `json:"status"`
-	PDFPath   string   `json:"pdfPath"`
-	AddedAt   string   `json:"addedAt"`
-	UpdatedAt string   `json:"updatedAt"`
+	Format          string   `json:"format"`
+	ID              string   `json:"id"`
+	Key             string   `json:"key"`
+	Title           string   `json:"title"`
+	TranslatedTitle string   `json:"translatedTitle"`
+	Authors         []string `json:"authors"`
+	Year            *int     `json:"year"`
+	Venue           string   `json:"venue"`
+	DOI             string   `json:"doi"`
+	URL             string   `json:"url"`
+	Status          string   `json:"status"`
+	PDFPath         string   `json:"pdfPath"`
+	AddedAt         string   `json:"addedAt"`
+	UpdatedAt       string   `json:"updatedAt"`
 }
 
 func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +236,7 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "status 只能是 queue / reading / done / archive")
 		return
 	}
-	query := `SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at
+	query := `SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at, format, translated_title
 		 FROM documents`
 	var where []string
 	var args []any
@@ -207,9 +247,9 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 	if search != "" {
 		// 与旧版一样只做包含匹配（LIKE 大小写不敏感对 ASCII 有效），不做模糊打分——
 		// 宁可少召回也不要给出无法解释的排序。
-		where = append(where, `(lower(title) LIKE ? OR lower(authors) LIKE ? OR lower(venue) LIKE ? OR lower(key) LIKE ?)`)
+		where = append(where, `(lower(title) LIKE ? OR lower(authors) LIKE ? OR lower(venue) LIKE ? OR lower(key) LIKE ? OR translated_title LIKE ?)`)
 		pattern := "%" + search + "%"
-		args = append(args, pattern, pattern, pattern, pattern)
+		args = append(args, pattern, pattern, pattern, pattern, pattern)
 	}
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
@@ -229,7 +269,7 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 		var authorsJSON string
 		var year sql.NullInt64
 		if err := rows.Scan(&item.ID, &item.Key, &item.Title, &authorsJSON, &year, &item.Venue,
-			&item.DOI, &item.URL, &item.Status, &item.PDFPath, &item.AddedAt, &item.UpdatedAt); err != nil {
+			&item.DOI, &item.URL, &item.Status, &item.PDFPath, &item.AddedAt, &item.UpdatedAt, &item.Format, &item.TranslatedTitle); err != nil {
 			writeError(w, http.StatusInternalServerError, "读取文档行失败: "+err.Error())
 			return
 		}

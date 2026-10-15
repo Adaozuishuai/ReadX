@@ -102,7 +102,7 @@ func TestPromptsCoverEveryKind(t *testing.T) {
 			t.Fatalf("system prompt 缺少 %q:\n%s", want, prompt)
 		}
 	}
-	if !JSONKinds["experiment"] || !JSONKinds["results"] || !JSONKinds["apply"] || JSONKinds["method"] {
+	if !JSONKinds["experiment"] || !JSONKinds["results"] || !JSONKinds["apply"] || !JSONKinds["method"] || !JSONKinds["motivation"] || !JSONKinds["reproduction"] {
 		t.Fatal("JSON kind 白名单不符")
 	}
 	repair := RepairInstruction("experiment", "校验错误X", "{\"dataset\":[]}")

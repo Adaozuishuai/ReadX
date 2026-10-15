@@ -3,7 +3,7 @@
  *
  * 语料覆盖每条校验分支：合法、缺摘录、错页、数字不被支持、未知声明放行、引用号剔除、
  * 跨页拼接、配置混入结果、证据页码、结果表合法/列错位/绑定悬空、复现五组/错页引用/空组、
- * idea 的 origin 分流，以及真实保存过的精读记录（用户自己的数据，作为真实世界样本）。
+ * idea 的 origin 分流，以及已冻结在 testdata 中的历史样本。
  *
  * 用法：node v2/scripts/gen-fixtures.mjs
  */
@@ -13,7 +13,6 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const v2 = path.resolve(here, '..');
-const repo = path.resolve(v2, '..');
 const outDir = path.join(v2, 'apps', 'server', 'internal', 'validate', 'testdata');
 
 // 合成全文：第 2 页直接给出「方法: PSNR x, SSIM y」两行，
@@ -256,27 +255,10 @@ fixtures.push(
   },
 );
 
-// 真实世界样本：用户保存过的精读记录 + 对应全文缓存。
-const readingPath = path.join(repo, 'app', 'data', 'readings', '2209.14540.json');
-const cachePath = path.join(repo, 'library', 'text', '2209.14540-v3.txt');
-if (fs.existsSync(readingPath) && fs.existsSync(cachePath)) {
-  const reading = JSON.parse(fs.readFileSync(readingPath, 'utf8'));
-  const realSource = fs.readFileSync(cachePath, 'utf8');
-  const realResults = JSON.parse(reading.resultsJSON);
-  const visualIDs = new Set();
-  for (const group of ['stability', 'ablation', 'generalization', 'efficiency']) {
-    for (const item of realResults[group] ?? []) {
-      if (item.visualID) visualIDs.add(item.visualID);
-    }
-  }
-  fixtures.push(
-    { name: 'real-experiment', kind: 'extraction', expect: { ok: true }, source: realSource, payload: JSON.parse(reading.experimentJSON) },
-    // 旧版保存的 results 里有一条解读 tableID/visualID 全空——它早于「必须绑定表或图」
-    // 这条规则。保留为 expect=false 的真实样本：正是四层兜底里「本地修剪」要修的那类数据。
-    { name: 'real-results-legacy-unbound', kind: 'results', expect: { ok: false }, source: realSource, payload: realResults, visuals: [...visualIDs].map((id) => ({ id, kind: 'figure' })) },
-  );
-} else {
-  console.warn('未找到真实精读记录，跳过 real-* fixture');
+// Historical samples are frozen test fixtures; never read the user's library.
+for (const name of ['real-experiment', 'real-results-legacy-unbound']) {
+  const file = path.join(outDir, name + '.json');
+  if (fs.existsSync(file)) fixtures.push(JSON.parse(fs.readFileSync(file, 'utf8')));
 }
 
 fs.mkdirSync(outDir, { recursive: true });

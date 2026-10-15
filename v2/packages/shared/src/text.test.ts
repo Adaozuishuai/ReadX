@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { collapseInlineWhitespace, isStructuralLine, paragraphizePage, reflowPaperText, splitParagraphs } from './text.js';
+import { collapseInlineWhitespace, isStructuralLine, pageParagraphs, paragraphizePage, reflowPaperText, splitParagraphs } from './text.js';
 
 test('reflow：同段续行合并成一行', () => {
   const input = 'NAF: Neural Attenuation Fields for Sparse-View\nCBCT Reconstruction\n\nAbstract text.';
@@ -129,4 +129,14 @@ test('paragraphize：真实 NAF 第 1 页能分出多段', () => {
   assert.ok(!paragraphs.some((block) => block.includes('Representation 1 Introduction')), '标题不得留在上一段里');
   // 已知局限：段末行若被 URL 填满列宽，「短行 + 句末标点」判据失效，Keywords 仍会挂在上一段。
   // 这也是 S5 段落翻译要按「行宽 + 标点」双判据继续打磨的原因。
+});
+
+test('pageParagraphs：剔除页标记与空段，供译文对照按序对齐', () => {
+  const page = '=== Page 1 ===\nFirst body paragraph here.\nSecond paragraph follows.\n\nThird block after gap.';
+  const paragraphs = pageParagraphs(page);
+  // 页标记不是段落：译文对照里它不该占位，否则索引会整体错开一位。
+  assert.ok(!paragraphs.some((block) => block.includes('=== Page')), '页标记不应出现在段落列表里');
+  assert.equal(paragraphs[0], 'First body paragraph here. Second paragraph follows.');
+  assert.ok(paragraphs.length >= 2);
+  assert.deepEqual(pageParagraphs('=== Page 1 ===\n'), []);
 });

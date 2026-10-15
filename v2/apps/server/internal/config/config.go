@@ -90,7 +90,7 @@ func ResolveDataRoot(explicit, startDir string) (string, error) {
 		}
 		dir = parent
 	}
-	return "", errors.New("未能自动定位数据根目录（需要含 queue.json 或 papers/），请用 --data-root 指定")
+	return "", errors.New("未能自动定位数据根目录，请从 v2 仓库启动或用 --data-root 指定")
 }
 
 func looksLikeDataRoot(dir string) bool {
@@ -100,5 +100,12 @@ func looksLikeDataRoot(dir string) bool {
 	if fi, err := os.Stat(filepath.Join(dir, "papers")); err == nil && fi.IsDir() {
 		return true
 	}
-	return false
+	// A clean v2 checkout has no legacy queue or private library. Its repository
+	// root is the default data root; runtime files are created only when needed.
+	for _, marker := range []string{filepath.Join("v2", "package.json"), filepath.Join("v2", "apps", "server", "go.mod")} {
+		if fi, err := os.Stat(filepath.Join(dir, marker)); err != nil || fi.IsDir() {
+			return false
+		}
+	}
+	return true
 }

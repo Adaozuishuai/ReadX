@@ -1,0 +1,782 @@
+package httpapi
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"cbctv2/server/internal/legacy"
+	"cbctv2/server/internal/publication"
+)
+
+const maxPublicationBytes = 100 << 20
+
+type importResult struct {
+	Document *DocumentSummary `json:"document,omitempty"`
+	Name     string           `json:"name"`
+	Existing bool             `json:"existing"`
+	Error    string           `json:"error,omitempty"`
+}
+
+type publicationMetadataHint struct {
+	Title     string                `json:"title"`
+	Author    string                `json:"author"`
+	DOI       string                `json:"doi"`
+	Arxiv     string                `json:"arxiv"`
+	FirstPage string                `json:"firstPage"`
+	Source    string                `json:"source"`
+	Pages     []publicationPageHint `json:"pages"`
+}
+
+type recognizedPaperMetadata struct {
+	Title           string
+	TranslatedTitle string
+	Pages           []publicationPageHint
+	Translations    []translateSegment
+	Authors         []string
+	DOI             string
+	Venue           string
+	Year            int
+}
+
+func (s *Server) importPublication(ctx context.Context, name, source string, data []byte, metadata ...recognizedPaperMetadata) (importResult, error) {
+	result := importResult{Name: name}
+	format := "pdf"
+	var book publication.Book
+	if !strings.HasPrefix(string(data[:min(len(data), 1024)]), "%PDF-") {
+		format = "epub"
+		var err error
+		book, err = publication.ParseEPUB(data)
+		if err != nil {
+			return result, fmt.Errorf("文件必须是有效的 PDF 或 EPUB: %w", err)
+		}
+	}
+	sum := sha256.Sum256(data)
+	key := "doc-" + hex.EncodeToString(sum[:16])
+	if existing, err := s.loadDocument(ctx, key); err == nil {
+		result.Document = &existing
+		result.Existing = true
+		if len(metadata) == 0 {
+			return result, nil
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return result, err
+	}
+	title := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	authors := []string{}
+	if format == "epub" {
+		if book.Title != "" {
+			title = book.Title
+		}
+		authors = book.Authors
+	}
+	recognized := recognizedPaperMetadata{}
+	if format == "pdf" && len(metadata) > 0 {
+		recognized = metadata[0]
+		if recognized.Title != "" {
+			title = recognized.Title
+		}
+		authors = recognized.Authors
+	}
+	if authors == nil {
+		authors = []string{}
+	}
+	if title == "" {
+		title = "未命名文档"
+	}
+	dir := legacy.NewPaths(s.cfg.DataRoot).LibraryDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return result, err
+	}
+	target := filepath.Join(dir, key+"."+format)
+	f, err := os.CreateTemp(dir, ".import-*")
+	if err != nil {
+		return result, err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return result, err
+	}
+	if err = f.Close(); err != nil {
+		return result, err
+	}
+	if err = os.Rename(tmp, target); err != nil {
+		// A concurrent identical import may already have created the same immutable file.
+		prior, readErr := os.ReadFile(target)
+		if readErr != nil || sha256.Sum256(prior) != sum {
+			return result, err
+		}
+	}
+	tx, err := s.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	authorJSON, _ := json.Marshal(authors)
+	stamp := nowStamp()
+	var year any
+	if recognized.Year > 0 {
+		year = recognized.Year
+	}
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO documents(id,key,title,authors,url,pdf_path,added_at,updated_at,format,doi,venue,year,translated_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, key, key, title, string(authorJSON), source, target, stamp, stamp, format, recognized.DOI, recognized.Venue, year, recognized.TranslatedTitle)
+	if err != nil {
+		return result, err
+	}
+	for _, section := range book.Sections {
+		blocks, _ := json.Marshal(section.Blocks)
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_sections(document_id,ordinal,href,title,blocks_json,text) VALUES(?,?,?,?,?,?)`, key, section.Index, section.Href, section.Title, string(blocks), section.Text); err != nil {
+			return result, err
+		}
+	}
+	if err = saveImportText(ctx, tx, key, stamp, recognized); err != nil {
+		return result, err
+	}
+	if err = tx.Commit(); err != nil {
+		return result, err
+	}
+	doc, err := s.loadDocument(ctx, key)
+	result.Document = &doc
+	return result, err
+}
+
+func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxPublicationBytes+16<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "上传超过 100 MB")
+		} else {
+			writeError(w, http.StatusBadRequest, "multipart 表单无效")
+		}
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 || len(files) > 16 {
+		writeError(w, 400, "每次请选择 1–16 个 PDF / EPUB 文件（合计不超过 100 MB）")
+		return
+	}
+	var hints []publicationMetadataHint
+	if raw := r.MultipartForm.Value["metadata"]; len(raw) > 0 && strings.TrimSpace(raw[0]) != "" {
+		if err := json.Unmarshal([]byte(raw[0]), &hints); err != nil || len(hints) != len(files) {
+			writeError(w, http.StatusBadRequest, "PDF 元数据提示与上传文件数量不匹配")
+			return
+		}
+	}
+	results := []importResult{}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	r = r.WithContext(ctx)
+	report, finish, stop := importEvents(w, r, cancel)
+	defer stop()
+	for index, file := range files {
+		if r.Context().Err() != nil {
+			return
+		}
+		update := func(stage, message string, completed, total int) {
+			report(importProgress{Stage: stage, Message: message, Name: file.Filename, File: index + 1, Files: len(files), Completed: completed, Total: total})
+		}
+		update("received", "上传已接收，正在检查文件", 0, 0)
+		func() {
+			result := importResult{Name: file.Filename}
+			f, err := file.Open()
+			if err != nil {
+				result.Error = err.Error()
+				results = append(results, result)
+				return
+			}
+			defer f.Close()
+			data, err := io.ReadAll(io.LimitReader(f, maxPublicationBytes+1))
+			if err == nil && len(data) > maxPublicationBytes {
+				err = fmt.Errorf("文件超过 100 MB")
+			}
+			if err == nil {
+				if strings.HasSuffix(strings.ToLower(file.Filename), ".pdf") {
+					hint := publicationMetadataHint{}
+					if index < len(hints) {
+						hint = hints[index]
+					}
+					update("metadata", "AI 正在识别题目、作者、期刊/会议、年份并生成中文题名，等待模型返回", 0, 0)
+					metadata, recognizeErr := s.recognizePDFMetadata(r.Context(), file.Filename, hint)
+					if recognizeErr == nil {
+						recognizeErr = s.prepareImportTranslations(r.Context(), data, hint.Pages, &metadata, func(completed, total, start, end, cached int) {
+							message := fmt.Sprintf("全文翻译已完成 %d/%d 段", completed, total)
+							if start > 0 && completed-cached < end {
+								message += fmt.Sprintf("；正在处理待译文本第 %d–%d 段，等待模型返回", start, end)
+							}
+							if cached > 0 {
+								message += fmt.Sprintf("（复用 %d 段已有译文）", cached)
+							}
+							update("translation", message, completed, total)
+						})
+					}
+					if recognizeErr != nil {
+						result.Error = recognizeErr.Error()
+						results = append(results, result)
+						return
+					}
+					name := file.Filename
+					update("saving", "正在保存论文文件、元数据、原文和译文到书库", 0, 0)
+					result, err = s.importPublication(r.Context(), name, hint.Source, data, metadata)
+					if err == nil && result.Document != nil {
+						if err = s.saveRecognizedPDFMetadata(r.Context(), result.Document.ID, strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename)), metadata); err == nil {
+							updated, loadErr := s.loadDocument(r.Context(), result.Document.Key)
+							if loadErr != nil {
+								err = loadErr
+							} else {
+								result.Document = &updated
+							}
+						}
+					}
+				} else {
+					update("saving", "正在解析 EPUB 章节并保存到书库", 0, 0)
+					source := ""
+					if index < len(hints) {
+						source = hints[index].Source
+					}
+					result, err = s.importPublication(r.Context(), file.Filename, source, data)
+				}
+			}
+			if err != nil {
+				result.Error = err.Error()
+			}
+			result.Name = file.Filename
+			results = append(results, result)
+		}()
+		last := results[len(results)-1]
+		if last.Error != "" {
+			update("failed", last.Error, 0, 0)
+		} else {
+			update("done", "该文件已完成导入", 1, 1)
+		}
+	}
+	finish(results)
+}
+
+// Public-only dialing applies again to redirects and DNS results, avoiding a URL import
+// becoming a way to read loopback services or private network files.
+func publicHTTPClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	transport := &http.Transport{ForceAttemptHTTP2: true, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 30 * time.Second, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		for _, addr := range ips {
+			ip := addr.IP
+			if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+				return nil, fmt.Errorf("联网导入只允许公开互联网地址")
+			}
+		}
+		var last error
+		for _, addr := range ips {
+			c, e := dialer.DialContext(ctx, network, net.JoinHostPort(addr.IP.String(), port))
+			if e == nil {
+				return c, nil
+			}
+			last = e
+		}
+		return nil, last
+	}}
+	return &http.Client{Transport: transport, Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) > 5 {
+			return fmt.Errorf("重定向过多")
+		}
+		return validateRemoteURL(req.URL)
+	}}
+}
+func validateRemoteURL(u *url.URL) error {
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
+		return fmt.Errorf("请输入公开的 http/https 地址")
+	}
+	return nil
+}
+func fetchPublic(ctx context.Context, raw string, limit int64) ([]byte, string, error) {
+	return fetchPublicProgress(ctx, raw, limit, nil)
+}
+func fetchPublicProgress(ctx context.Context, raw string, limit int64, progress func(int64, int64)) ([]byte, string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, "", err
+	}
+	if err = validateRemoteURL(u); err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", raw, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("User-Agent", "CBCT-Reader/2 (local document import)")
+	client := publicHTTPClient()
+	if limit > 4<<20 {
+		client.Timeout = 15 * time.Minute
+	}
+	defer client.CloseIdleConnections()
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer res.Body.Close()
+	if res.ContentLength > limit {
+		return nil, "", fmt.Errorf("远程文件超过大小上限")
+	}
+	if res.StatusCode != 200 {
+		return nil, "", fmt.Errorf("下载返回 HTTP %d", res.StatusCode)
+	}
+	b, err := readPublicationDownload(res.Body, limit, res.ContentLength, progress)
+	if int64(len(b)) > limit {
+		return nil, "", fmt.Errorf("远程文件超过大小上限")
+	}
+	return b, res.Request.URL.String(), err
+}
+func readPublicationDownload(reader io.Reader, limit, total int64, progress func(int64, int64)) ([]byte, error) {
+	var data []byte
+	buffer := make([]byte, 64<<10)
+	last := time.Time{}
+	for {
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			if int64(len(data)+n) > limit {
+				return nil, fmt.Errorf("远程文件超过大小上限")
+			}
+			data = append(data, buffer[:n]...)
+			if progress != nil && time.Since(last) > 250*time.Millisecond {
+				progress(int64(len(data)), total)
+				last = time.Now()
+			}
+		}
+		if err == io.EOF {
+			if progress != nil {
+				progress(int64(len(data)), total)
+			}
+			return data, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+var arxivID = regexp.MustCompile(`^(?:\d{4}\.\d{4,5}|[a-zA-Z.-]+/\d{7})(?:v\d+)?$`)
+
+func remotePublicationURL(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "arXiv:")
+	if arxivID.MatchString(value) {
+		return "https://arxiv.org/pdf/" + value, nil
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		return "", err
+	}
+	if strings.EqualFold(u.Hostname(), "arxiv.org") {
+		id := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(u.Path, "/abs/"), "/pdf/"), ".pdf")
+		if arxivID.MatchString(id) {
+			return "https://arxiv.org/pdf/" + id, nil
+		}
+	}
+	if err = validateRemoteURL(u); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+type paperCandidate struct {
+	Title   string   `json:"title"`
+	DOI     string   `json:"doi"`
+	URL     string   `json:"url"`
+	Authors []string `json:"authors"`
+	Venue   string   `json:"venue,omitempty"`
+	Year    int      `json:"year,omitempty"`
+	Arxiv   string   `json:"arxiv,omitempty"`
+}
+
+func lookupOpenAlex(ctx context.Context, q string) ([]paperCandidate, error) {
+	endpoint := "https://api.openalex.org/works?per-page=8&search=" + url.QueryEscape(q)
+	doi := strings.TrimPrefix(strings.TrimPrefix(q, "https://doi.org/"), "doi:")
+	single := strings.HasPrefix(doi, "10.")
+	if single {
+		endpoint = "https://api.openalex.org/works/https://doi.org/" + url.PathEscape(doi)
+	}
+	b, _, err := fetchPublic(ctx, endpoint, 4<<20)
+	if err != nil {
+		return nil, err
+	}
+	type work struct {
+		Title           string `json:"title"`
+		DOI             string `json:"doi"`
+		Year            int    `json:"publication_year"`
+		PrimaryLocation *struct {
+			Source *struct {
+				Name string `json:"display_name"`
+			} `json:"source"`
+		} `json:"primary_location"`
+		HostVenue *struct {
+			Name string `json:"display_name"`
+		} `json:"host_venue"`
+		IDs struct {
+			Arxiv string `json:"arxiv"`
+		} `json:"ids"`
+		OA struct {
+			URL string `json:"oa_url"`
+		} `json:"open_access"`
+		Best *struct {
+			PDF string `json:"pdf_url"`
+		} `json:"best_oa_location"`
+		Authorships []struct {
+			Author struct {
+				Name string `json:"display_name"`
+			} `json:"author"`
+		} `json:"authorships"`
+	}
+	var works []work
+	if single {
+		var item work
+		if err = json.Unmarshal(b, &item); err != nil {
+			return nil, err
+		}
+		works = append(works, item)
+	} else {
+		var response struct {
+			Results []work `json:"results"`
+		}
+		if err = json.Unmarshal(b, &response); err != nil {
+			return nil, err
+		}
+		works = response.Results
+	}
+	out := []paperCandidate{}
+	for _, item := range works {
+		link := ""
+		if item.Best != nil {
+			link = item.Best.PDF
+		}
+		if link == "" {
+			link = item.OA.URL
+		}
+		authors := []string{}
+		for _, a := range item.Authorships {
+			authors = append(authors, a.Author.Name)
+		}
+		venue := ""
+		if item.PrimaryLocation != nil && item.PrimaryLocation.Source != nil {
+			venue = item.PrimaryLocation.Source.Name
+		}
+		if venue == "" && item.HostVenue != nil {
+			venue = item.HostVenue.Name
+		}
+		out = append(out, paperCandidate{Title: item.Title, DOI: item.DOI, URL: link, Authors: authors, Venue: venue, Year: item.Year, Arxiv: item.IDs.Arxiv})
+	}
+	return out, nil
+}
+func (s *Server) handleImportSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" || len(q) > 1000 {
+		writeError(w, 400, "请输入 DOI 或论文标题")
+		return
+	}
+	items, err := lookupPapers(r.Context(), q)
+	if err != nil {
+		writeError(w, 502, "查找论文失败: "+err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"results": items})
+}
+func (s *Server) handlePublicationURL(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Value        string   `json:"value"`
+		DownloadOnly bool     `json:"downloadOnly"`
+		Title        string   `json:"title"`
+		DOI          string   `json:"doi"`
+		Authors      []string `json:"authors"`
+		Venue        string   `json:"venue"`
+		Year         int      `json:"year"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		return
+	}
+	value := strings.TrimSpace(body.Value)
+	if strings.HasPrefix(value, "10.") || strings.HasPrefix(value, "doi:") || strings.Contains(value, "doi.org/") {
+		items, err := lookupPapers(r.Context(), value)
+		if err != nil || len(items) == 0 || items[0].URL == "" {
+			writeError(w, 422, "没有找到公开全文，请选择本地文件")
+			return
+		}
+		value = items[0].URL
+		body.Title = items[0].Title
+		body.DOI = items[0].DOI
+		body.Authors = items[0].Authors
+		body.Venue = items[0].Venue
+		body.Year = items[0].Year
+	}
+	link, err := remotePublicationURL(value)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	stream := !body.DownloadOnly && strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+	emit := func(payload any) {
+		body, _ := json.Marshal(payload)
+		fmt.Fprintf(w, "data: %s\n\n", body)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+	if stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-store")
+		emit(map[string]any{"progress": map[string]int64{"received": 0, "total": 0}})
+	}
+	fail := func(status int, message string) {
+		if stream {
+			emit(map[string]any{"error": message})
+		} else {
+			writeError(w, status, message)
+		}
+	}
+	var progress func(int64, int64)
+	if stream {
+		progress = func(received, total int64) {
+			emit(map[string]any{"progress": map[string]int64{"received": received, "total": total}})
+		}
+	}
+	download := s.downloadPublication
+	if download == nil {
+		download = fetchPublicProgress
+	}
+	data, final, err := download(r.Context(), link, maxPublicationBytes, progress)
+	if err != nil && r.Context().Err() == nil {
+		u, _ := url.Parse(link)
+		if u != nil && u.Hostname() == "arxiv.org" {
+			u.Host = "export.arxiv.org"
+			data, final, err = download(r.Context(), u.String(), maxPublicationBytes, progress)
+		}
+	}
+	if err != nil {
+		fail(502, "下载失败: "+err.Error())
+		return
+	}
+	name := body.Title
+	if name == "" {
+		u, _ := url.Parse(final)
+		name = filepath.Base(u.Path)
+	}
+	if !strings.HasSuffix(strings.ToLower(name), ".pdf") && !strings.HasSuffix(strings.ToLower(name), ".epub") {
+		name += ".pdf"
+	}
+	if body.DownloadOnly {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		w.Header().Set("X-Publication-Name", url.QueryEscape(name))
+		w.Header().Set("X-Publication-Source", url.QueryEscape(final))
+		w.Write(data)
+		return
+	}
+	result, err := s.importPublication(r.Context(), name, final, data)
+	if err != nil {
+		fail(422, "链接未返回可读 PDF/EPUB；可能需要登录或是网页: "+err.Error())
+		return
+	}
+	if !result.Existing && result.Document != nil && result.Document.Format == "pdf" {
+		authors, _ := json.Marshal(body.Authors)
+		if len(body.Authors) == 0 {
+			authors = []byte("[]")
+		}
+		var year any
+		if body.Year > 0 {
+			year = body.Year
+		}
+		if _, err = s.handle.ExecContext(r.Context(), `UPDATE documents SET doi=?,authors=?,venue=?,year=? WHERE id=?`, strings.TrimPrefix(body.DOI, "https://doi.org/"), string(authors), body.Venue, year, result.Document.ID); err != nil {
+			fail(500, "文件已导入，但元数据保存失败")
+			return
+		}
+		doc, err := s.loadDocument(r.Context(), result.Document.Key)
+		if err != nil {
+			fail(500, err.Error())
+			return
+		}
+		result.Document = &doc
+	}
+	if stream {
+		emit(map[string]any{"result": result})
+	} else {
+		writeJSON(w, 200, result)
+	}
+}
+func (s *Server) listSections(ctx context.Context, key string) ([]publication.Section, error) {
+	rows, err := s.handle.QueryContext(ctx, `SELECT ordinal,href,title FROM document_sections WHERE document_id=? ORDER BY ordinal`, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []publication.Section{}
+	for rows.Next() {
+		var item publication.Section
+		if err = rows.Scan(&item.Index, &item.Href, &item.Title); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
+	key, num, ok := pathKeyAndPage(w, r)
+	if !ok {
+		return
+	}
+	var item publication.Section
+	var raw string
+	err := s.handle.QueryRowContext(r.Context(), `SELECT ordinal,href,title,blocks_json,text FROM document_sections WHERE document_id=? AND ordinal=?`, key, num).Scan(&item.Index, &item.Href, &item.Title, &raw, &item.Text)
+	if err != nil {
+		writeError(w, 404, "没有该章节")
+		return
+	}
+	if err = json.Unmarshal([]byte(raw), &item.Blocks); err != nil {
+		writeError(w, 500, "章节内容损坏")
+		return
+	}
+	writeJSON(w, 200, item)
+}
+func (s *Server) handlePublicationFile(w http.ResponseWriter, r *http.Request) {
+	key, ok := pathKey(w, r)
+	if !ok {
+		return
+	}
+	doc, err := s.loadDocument(r.Context(), key)
+	if err != nil {
+		writeError(w, 404, "文档不存在")
+		return
+	}
+	file := doc.PDFPath
+	if doc.Format == "epub" {
+		file = filepath.Join(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), key+".epub")
+	}
+	if doc.Format == "pdf" {
+		var found bool
+		file, found = legacy.NewPaths(s.cfg.DataRoot).PDFFile(key)
+		if !found {
+			writeError(w, 404, "没有原文件")
+			return
+		}
+	}
+	resolved, err := resolveUnderLibrary(legacy.NewPaths(s.cfg.DataRoot), file)
+	if err != nil {
+		writeError(w, 403, err.Error())
+		return
+	}
+	if doc.Format == "pdf" {
+		w.Header().Set("Content-Type", "application/pdf")
+	} else {
+		w.Header().Set("Content-Type", "application/epub+zip")
+	}
+	http.ServeFile(w, r, resolved)
+}
+func (s *Server) handleEPUBResource(w http.ResponseWriter, r *http.Request) {
+	key, ok := pathKey(w, r)
+	if !ok {
+		return
+	}
+	doc, err := s.loadDocument(r.Context(), key)
+	if err != nil || doc.Format != "epub" {
+		writeError(w, 404, "没有该 EPUB")
+		return
+	}
+	file, err := resolveUnderLibrary(legacy.NewPaths(s.cfg.DataRoot), filepath.Join(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), key+".epub"))
+	if err != nil {
+		writeError(w, 403, err.Error())
+		return
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		writeError(w, 404, "原文件不存在")
+		return
+	}
+	z, err := publication.Archive(data)
+	if err != nil {
+		writeError(w, 422, err.Error())
+		return
+	}
+	resource, err := publication.ReadResource(z, r.URL.Query().Get("path"))
+	if err != nil {
+		writeError(w, 404, "资源不存在")
+		return
+	}
+	mime := http.DetectContentType(resource)
+	if mime != "image/png" && mime != "image/jpeg" && mime != "image/gif" && mime != "image/webp" {
+		writeError(w, 415, "仅展示文档内的静态图片")
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Write(resource)
+}
+func (s *Server) handleLocation(w http.ResponseWriter, r *http.Request) {
+	key, ok := pathKey(w, r)
+	if !ok {
+		return
+	}
+	if r.Method == "GET" {
+		var raw string
+		err := s.handle.QueryRowContext(r.Context(), `SELECT location_json FROM reading_locations WHERE document_id=?`, key).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, 200, map[string]any{"location": nil})
+			return
+		}
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"location": json.RawMessage(raw)})
+		return
+	}
+	var body struct {
+		Kind  string `json:"kind"`
+		Page  int    `json:"page,omitempty"`
+		Href  string `json:"href,omitempty"`
+		Index int    `json:"index,omitempty"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		return
+	}
+	doc, err := s.loadDocument(r.Context(), key)
+	if err != nil {
+		writeError(w, 404, "文档不存在")
+		return
+	}
+	if (doc.Format == "pdf" && (body.Kind != "pdf" || body.Page < 1 || body.Page > 5000)) || (doc.Format == "epub" && (body.Kind != "epub" || body.Href == "" || body.Index < 1)) {
+		writeError(w, 400, "阅读位置无效")
+		return
+	}
+	if doc.Format == "epub" {
+		var count int
+		if err = s.handle.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM document_sections WHERE document_id=? AND ordinal=? AND href=?`, key, body.Index, body.Href).Scan(&count); err != nil || count != 1 {
+			writeError(w, 400, "阅读章节不存在")
+			return
+		}
+	}
+	raw, _ := json.Marshal(body)
+	_, err = s.handle.ExecContext(r.Context(), `INSERT INTO reading_locations VALUES(?,?,?) ON CONFLICT(document_id) DO UPDATE SET location_json=excluded.location_json,updated_at=excluded.updated_at`, key, string(raw), nowStamp())
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"saved": true})
+}

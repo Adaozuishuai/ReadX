@@ -1,0 +1,125 @@
+import type { DocumentSummary } from '@cbct/shared';
+import { statusLabel } from '@cbct/shared';
+import type { Category, DocumentMeta } from '../api/client';
+import { categoryDot } from '../categories';
+import { LibraryTrashButton } from './LibraryTrashButton';
+
+/** 封面四色循环：复刻参考实现的 cover-0..3 配色与几何装饰。 */
+function coverIndex(key: string): number {
+  let sum = 0;
+  for (let i = 0; i < key.length; i++) sum = (sum + key.charCodeAt(i)) % 4;
+  return sum;
+}
+
+/**
+ * 书库封面卡：参考实现的书卡布局（大封面 + 标题行 + 状态行 + 进度条）。
+ * 封面不加载真实缩略图——v2 没有封面图管线，用色块 + 标题排印代替，
+ * 保留参考实现的版式与信息层级。
+ */
+export function LibraryCard({
+  doc,
+  meta,
+  categories,
+  selected,
+  onSelect,
+  onOpenReproduction,
+  onToggleTrash,
+}: {
+  doc: DocumentSummary;
+  meta: DocumentMeta | undefined;
+  categories: Category[];
+  selected: boolean;
+  onSelect: () => void;
+  onOpenReproduction: (key: string) => void;
+  onToggleTrash: () => Promise<unknown>;
+}) {
+  const cover = coverIndex(doc.key);
+  const assigned = meta?.categories ?? [];
+  return (
+    <article
+      className="book-card"
+      data-selected={selected ? 'true' : undefined}
+    >
+      <div className="book-cover-container">
+      <button
+        type="button"
+        onClick={onSelect}
+        className={`book-cover cover-${cover}`}
+        title={doc.title || doc.key}
+      >
+        <span className="cover-top">
+          <span>{doc.format === 'epub' ? 'EPUB' : 'PDF'}</span>
+          <span>{doc.year ?? ''}</span>
+        </span>
+        <span className="cover-text">
+          <span className="cover-title">{doc.title || '（无标题）'}</span>
+          {doc.translatedTitle && <span className="cover-translation">{doc.translatedTitle}</span>}
+          <span className="cover-author">
+            {doc.authors[0] ?? '作者未知'}
+            {doc.authors.length > 1 ? ' 等' : ''}
+          </span>
+        </span>
+        <span className="cover-bottom">
+          <span className="cover-decoration" aria-hidden="true" />
+        </span>
+      </button>
+      <LibraryTrashButton title={doc.title || doc.key} deleted={Boolean(meta?.deleted)} onToggle={onToggleTrash} className="book-trash-button" />
+      </div>
+
+      <div className="book-meta">
+        <span className="book-title">{doc.title || '（无标题）'}</span>
+        <span className="flex items-center gap-1">
+          {meta?.favorite ? <span className="text-accent">★</span> : null}
+          <button
+            type="button"
+            onClick={() => onOpenReproduction(doc.key)}
+            className="rounded-md px-1 text-[10px] text-ink-faint transition hover:text-accent"
+            title="复现准备"
+          >
+            复现
+          </button>
+        </span>
+      </div>
+
+      <div className="book-status">
+        <span>{statusLabel(doc.status)}</span>
+        <span>{doc.venue || ''}</span>
+      </div>
+
+      {assigned.length ? (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {assigned.map((name) => {
+            const definition = categories.find((item) => item.name === name);
+            return (
+              <span
+                key={name}
+                className="flex items-center gap-1 rounded-pill bg-surface-sunk px-1.5 py-0.5 text-[10px] text-ink-soft"
+              >
+                <span
+                  className="ann-color-dot"
+                  style={{
+                    background: categoryDot(definition?.color ?? 'slate'),
+                  }}
+                />
+                {name}
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="book-progress">
+        <div
+          style={{
+            width:
+              doc.status === 'done'
+                ? '100%'
+                : doc.status === 'reading'
+                  ? '45%'
+                  : '0%',
+          }}
+        />
+      </div>
+    </article>
+  );
+}

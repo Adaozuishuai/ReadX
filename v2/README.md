@@ -1,54 +1,89 @@
 # CBCT 精读 v2
 
-按 React + Go + Electron 的三件套重建精读应用（决策与阶段见仓库根 `v2-迁移计划.md`）。
-本目录在 S0 阶段只做工程基座：**不读不改旧版任何数据**，`windows/` 仍是当前可用的正式版本。
+React + Go + Electron 的本地阅读与研究工作区。
 
-## 工具链
+## 运行
 
-- Node ≥ 20.19（本机 v24）、Go ≥ 1.27.0（`winget install --id GoLang.Go`）。
-- 依赖管理用 **npm workspaces**：本机 `corepack enable pnpm` 会因 Program Files 权限 EPERM 失败，不引入 pnpm。
-- Go 模块代理必须是 `https://goproxy.cn,direct`：直连 proxy.golang.org 在本机超时。
-  `scripts/go.mjs` 已内置该兜底，并自动定位 `go.exe`（旧终端会话的 PATH 不会包含刚装的 Go）。
-- SQLite 驱动用纯 Go 的 `modernc.org/sqlite`：`CGO_ENABLED=0` 也能编译，不需要本机装 GCC。
+需要 Node.js 20.19+、Go 1.27+；Go 工具链可由 `CBCT_V2_GO` 指定。
 
-## 常用命令（都在 `v2/` 目录执行）
-
-```bash
-npm install            # 一次装齐 web / desktop / shared
-npm run build          # shared → web → desktop → go server
-npm test               # go test ./... + 三个 TS 包的类型检查
-npm run build:go       # 只重新编译 Go server
-npm run dev            # Go server + Vite + Electron 三进程热更新
-npm run dev -- --built # 跑 dist 构建产物（server 由 Electron 壳托管）
+```powershell
+cd v2
+npm install
+npm run build
+npm start
 ```
 
-单独跑后端：`node scripts/go.mjs test ./...`（等价于 `npm run test:go`）。
+开发模式使用 `npm run dev`。双击启动器或 `npm start` 会检查源码指纹，仅在源码变化或构建产物缺失时编译；平时直接启动。PDF 阅读器、AI 设置等模块按需加载。全新克隆可直接启动，不需要旧版代码、队列或论文数据。旧版数据的兼容导入入口仍在书库左下角，原 JSON 文件只读。
 
-## 结构
+工具链脚本会查找本机 Go，并默认使用 `https://goproxy.cn,direct` 模块代理；SQLite 使用纯 Go 驱动，不需要 GCC。单独构建后端使用 `npm run build:go`，单独运行 Go 测试使用 `node scripts/go.mjs test ./...`。
 
+## 新增阅读功能
+
+- **PDF**：PDF.js 原版页面、可选文本层、缩放与适合宽度、原文件目录、页码导航。后台逐页提取正文供问答与翻译使用；没有文本层的页面明确提示，不生成伪 OCR 正文。
+- **论文标题目录**：优先使用完整的原书签；缺少章节目录或只有文章名时，从正文补充数字、罗马数字及常见未编号标题。保留原目录层级，并补充标题位置。点击目录定位到对应页内标题并高亮；过滤作者页眉、图表标签与参考文献条目。识别依据文本层及排版，扫描页需先 OCR。
+- **面板边界**：目录和助读侧栏可拖动边界调整宽度，拖至边缘收起；双击分隔条恢复默认宽度，方向键微调。宽度在本机保存，窗口变小时自动给正文留出空间；原文与译文分隔条也可拖动。
+- **五重奏精读**：阅读页右侧“精读”提供实验动机、方法公式、实验配置、结果分析、代码复现五个步骤。分别生成和保存，每条事实保留页码及原文依据；核验在后台执行，界面不显示核验成功、失败或降级提示。结果分析展示实际表格、消融、泛化、效率及缺失说明。代码复现可生成实施与核对计划、保存为复现任务清单，并通过粘贴源码快照核对依赖和资源。旧版动机、方法与实验/结果 JSON 仍可读取；没有源码时不会冒充已经完成代码映射或实际运行。
+- **EPUB**：按 spine 顺序读取章节，展示标题、段落、列表和文档内静态图片；可调整字号与字体、切换主题。EPUB 批注记录章节资源和字符范围，不冒充 PDF 页码。
+- **位置恢复**：PDF 保存页码，EPUB 保存章节；重新打开文档恢复到上次位置。
+- **选区批注**：鼠标拖选原文后，可添加高亮、下划线或问题批注，填写笔记、颜色与标签；右栏支持修改、筛选、定位和 Markdown 导出。也可将选段带入 AI 提问草稿。
+- **双语阅读**：新导入 PDF 在入库前完成全文翻译；阅读时自动恢复缓存，旧文档可按页触发翻译，EPUB 按章翻译。PDF 译文依据原页文字块坐标布局，保留栏位、标题位置与原页图像，独立公式行与数字保留原页显示。正文使用实际 PDF 字号，统一行距并区分标题、图注；展示时合并被首行缩进拆开的段落片段，沿用既有译文缓存。字号只在小范围内缩小；放不下的段落显示展开按钮，点击以大字号显示完整译文，无需再次调用 AI。译文字号可单独调整为 90%–120%，原文缩放保持独立；窄窗口的工具栏横向滚动，原文和译文页面起点对齐。可切单栏或双栏、调整分隔线和交换左右。复杂混排仍需对照原文核验，译文不参与论文事实校验。
+- **段落操作**：阅读工具栏可开关“段落识别”。PDF 原文与译文支持悬停显示段落边框、点击段落或通过下拉列表选择，再翻译该段或带原文及页码提问；EPUB 可点击原文章节段落。段落翻译复用已有缓存；提问面板保留段落上下文，可输入具体问题，也可直接发送以解释该段。翻页或按 Esc 关闭段落浮窗，拖选文字仍可批注。
+
+## 导入文档
+
+顶部“导入 PDF / EPUB”支持文件选择、多文件导入与拖放。每次最多 16 个文件，合计不超过 100 MB；按文件内容哈希去重，重复导入保留既有批注。
+
+PDF 文件和链接统一先解析全文及排版，再使用 AI 设置中的渠道识别真实题目、作者、期刊/会议、年份、DOI、中文题名，并翻译全文。未知字段留空，不使用文件名冒充题目。识别或翻译失败可重试，不创建未完成的书库条目；取消会中止请求。原文及译文随文档一同保存，重新打开不重复调用模型。请先配置 AI，论文文字将发送给所选渠道。扫描件需先添加文本层；较长论文的导入时间取决于模型速度。
+
+导入面板实时显示当前文件及序号、解析页数、上传字节数、翻译段数和当前批次、保存阶段、总用时及带时间的处理记录。进度条表示当前阶段的实际工作量；AI 识别等无法计量的阶段显示等待动画，服务每两秒发送连接消息，不以等待时间冒充完成百分比。下载公开全文期间显示下载阶段和用时，服务返回文件后显示接收字节进度。可随时取消，已完成导入的论文保留，未完成的当前论文不会生成条目。
+
+联网导入支持公开的 PDF/EPUB 直链、arXiv 编号或链接、DOI，以及按标题检索后选择全文。元数据查找使用 OpenAlex，并以 Crossref 作为备用来源。界面显示下载、排版解析与 AI 处理阶段，可随时取消；arXiv 主地址失败时尝试官方 export 地址。出版方要求登录或未提供全文链接时，可选择本地文件导入。
+
+## AI 接入
+
+在顶部“AI 设置”选择渠道、保存配置，再点击“保存并测试连接”。测试会向所选服务发送一条简短文本请求。
+
+| 渠道 | 配置 |
+| --- | --- |
+| OpenAI 兼容 API | 地址（例如 `https://api.openai.com/v1`）、服务支持的模型名、API Key |
+| Anthropic Messages API | 地址（例如 `https://api.anthropic.com/v1`）、模型名、API Key |
+| Codex CLI | 在 PATH 中安装 `codex`，先在终端运行 `codex login` |
+| Claude Code CLI | 在 PATH 中安装 `claude`，先运行 `claude auth login` |
+| Kimi Code CLI | 使用支持 `--agent-file` 的当前 Kimi Code CLI，先运行 `kimi login` |
+
+CLI 模型可留空以使用其默认值。程序通过官方 CLI 使用已有登录状态，不读取凭据文件，也不实现 OAuth。CLI 在临时目录运行；Codex 使用只读沙箱并关闭 shell，Claude 关闭内置工具和 MCP，Kimi 使用无工具的阅读 Agent。标准输出只提取助手回答，进程失败或取消不作为完整回答处理。
+
+问答、翻译和 PDF 精读生成共用所选渠道。API Key 存放在本机 `app/config.json`，不回传界面；不同渠道和地址分别保留 Key，切换地址不会发送其他地址的 Key。原配置中的其他字段保留。
+
+## 数据与范围
+
+文件保存在数据根的 `library/`，SQLite 位于 `app/data/v2/reader.db`。新增迁移只增加列与表；已有 PDF、精读记录和批注保留。服务仍只绑定回环地址并校验 bearer token，联网导入拒绝私网地址，EPUB 不执行脚本或远程资源。
+
+文章卡片右上角的垃圾桶将条目移入回收站，可恢复；列表和表格也提供同样入口。回收站右上角可“清空回收站”，确认后永久移除条目及关联批注、译文、精读、阅读位置和复现记录。清空保留全部 PDF/EPUB 文件（包括导入副本和旧版原文件），不会释放论文文件占用的磁盘空间；回收站界面显示当前导入副本的实际目录。
+
+当前支持无 DRM 的可重排 EPUB 和可由 PDF.js 打开的 PDF。EPUB 采用安全重排，未保留出版方完整 CSS、固定版式或复杂 SVG 布局；MathML 仅保留文本内容。扫描 PDF 的 OCR、密码输入、浏览器采集扩展和 Zotero 迁移未包含在本次新增功能内。CBCT 实验配置与结果校验仍面向 PDF，EPUB 提供阅读、批注、翻译和基于章节的问答。
+
+## 验证
+
+```powershell
+npm test
+npm run build
 ```
-apps/server     Go：只绑 127.0.0.1，启动时随机 bearer token，SQLite 在 app/data/v2/reader.db
-  cmd/server      进程装配：flag 解析 → 就绪行 → 优雅关闭
-  internal/config 数据根定位（与旧版同一个仓库根）、token、回环校验
-  internal/db     pragma + 内嵌迁移，幂等
-  internal/httpapi /healthz /v1/meta /v1/documents + 静态托管
-apps/web        React 19 + Vite 8 + Tailwind 4：三栏工作区骨架
-apps/desktop    Electron 壳：拉起 server、解析就绪行、把 token 经 preload 注入渲染进程
-packages/shared 前后端 API 契约类型（字段名与 Go JSON tag 一一对应）
-scripts         go.mjs（工具链解析）、build-server.mjs、dev.mjs（编排）
+
+新增测试覆盖 EPUB spine/正文清理、文件导入与去重、原文件鉴权、PDF 选区坐标、EPUB 字符定位、阅读位置、旧库迁移、下载完整性、私网地址拦截、配置与 Key 隔离、Anthropic SSE、Codex/Claude/Kimi 输出解析和异常结束。
+
+迁移一致性测试使用 `testdata/oracle/baseline.json` 中独立捕获的固定期望值，覆盖字段校验、修剪、目录标签、趋势和去重；测试和运行均不再调用 v1 客户端。配置示例见 `config.example.json`，实际配置请在应用中保存，不要将真实 Key 提交到 Git。
+
+可选的真实 Chromium 阅读回归需要自行提供一份带文本层的本地 PDF（论文不随源码发布）：
+
+```powershell
+node_modules/electron/dist/electron.exe scripts/reader-smoke.cjs "C:/papers/example.pdf"
 ```
 
-## 本地服务的安全边界
+该脚本使用临时书库和模拟模型，不修改原 PDF，也不会调用付费模型。完整回归样本需包含多页正文及章节标题。
 
-- 只接受回环 Host（`127.0.0.1` / `localhost` / `[::1]`），非回环 Host 一律 403，挡 DNS rebinding。
-- `/v1/*` 需要 bearer token；token 每次启动随机生成，只经主进程 → preload → 渲染进程，不进 URL、不落盘。
-- 纯浏览器 dev 模式下渲染进程拿不到 token：`/v1` 由 Vite dev proxy 在服务端补 `Authorization`，
-  proxy 配置读取 server 写出的 `apps/server/dev-info.json`（所以 `npm run dev` 必须先起 server 再起 Vite）。
-- HTML 响应由 server 下发 CSP（`script-src 'self'`），Vite 开发态不受影响。
-- Electron 壳：`sandbox: true` + `contextIsolation: true`，拒绝新窗口与跨源跳转。
+## 开发结构
 
-## 就绪协议
+`apps/server` 管理文件、SQLite、导入和 AI；`apps/web` 提供书库与阅读界面；`apps/desktop` 管理 Electron 窗口和服务进程；`packages/shared` 维护 API 类型；`scripts` 管理构建和开发编排。前端构建会从 PDF.js 依赖复制 CMap 与字体资源，生成目录不进入 Git。
 
-server 在 stdout 打印单行 `CBCT_V2_READY {"port":...,"token":"...","dataRoot":"...",...}`，
-Electron 壳与 `scripts/dev.mjs` 都按这个前缀解析；人类可读日志一律走 stderr，避免污染协议。
-server 带 `--exit-on-stdin-eof`：父进程一关管道就优雅退出，不会留下占着 SQLite 与端口的孤儿进程。
+服务 stdout 的 `CBCT_V2_READY ` 前缀用于就绪协议，日志走 stderr。Electron 通过 preload 注入 token；浏览器开发模式由 Vite proxy 补鉴权头。服务使用 `--exit-on-stdin-eof` 随父进程停止；HTML 下发 CSP，Electron 保持 sandbox 与 contextIsolation。

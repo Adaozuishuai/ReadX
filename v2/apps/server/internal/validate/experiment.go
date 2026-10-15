@@ -51,6 +51,14 @@ func DecodeExperiment(text string) (ExperimentExtraction, error) {
 // 与旧版行为保持一致，避免把旧数据挡在门外。
 func ValidateGenerated(kind, value, source string) error {
 	switch kind {
+	case "motivation", "method":
+		return ValidateResearchNotes(value, source)
+	case "reproduction":
+		analysis, err := DecodeReproductionAnalysis(value)
+		if err != nil {
+			return err
+		}
+		return ValidateReproductionAnalysis(analysis, source)
 	case "experiment":
 		extraction, err := DecodeExperiment(value)
 		if err != nil {

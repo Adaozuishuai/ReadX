@@ -1,7 +1,7 @@
 // Package validate 是 evidence-first 校验链的 Go 移植。
 //
 // 移植纪律：windows/src/core 里每一个「刻意不做 X」的注释都是硬约束，这里逐条对应；
-// 判定结果必须与 TS 版完全一致（parity 测试见 parity_test.go，TS 是 oracle）。
+// 迁移判定由 parity_test.go 中的独立固定样本守护，无需旧版运行时。
 package validate
 
 import (

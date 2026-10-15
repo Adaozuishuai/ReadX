@@ -1,0 +1,388 @@
+[
+  {
+    "name": "configuration-results-nonempty",
+    "ok": false,
+    "error": "实验配置不能混入结果数值，results 应为空数组。"
+  },
+  {
+    "name": "evidence-bad-page",
+    "ok": false,
+    "error": "输出缺少有效证据页码，未保存。请重试或核对原文。"
+  },
+  {
+    "name": "evidence-valid",
+    "ok": true,
+    "error": ""
+  },
+  {
+    "name": "extraction-citation-marker",
+    "ok": true,
+    "error": ""
+  },
+  {
+    "name": "extraction-cross-page",
+    "ok": false,
+    "error": "证据校验未通过，未保存：「数据集」缺少对应页的逐字摘录；引用单页不可拼接跨页文字。Page 1 内可匹配的原文片段：We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset.；仅用本页片段支持的事实重新填写 v/excerpt，不能沿用片段未支持的数字或其他事实"
+  },
+  {
+    "name": "extraction-declared-unknown",
+    "ok": true,
+    "error": ""
+  },
+  {
+    "name": "extraction-missing-excerpt",
+    "ok": false,
+    "error": "证据校验未通过，未保存：「数据集」缺少对应页的逐字摘录；引用单页不可拼接跨页文字"
+  },
+  {
+    "name": "extraction-unsupported-number",
+    "ok": false,
+    "error": "证据校验未通过，未保存：「PSNR：99.99 dB」的数字 99.99 未被所附摘录支持"
+  },
+  {
+    "name": "extraction-valid",
+    "ok": true,
+    "error": ""
+  },
+  {
+    "name": "extraction-wrong-page",
+    "ok": false,
+    "error": "证据校验未通过，未保存：「数据集」缺少对应页的逐字摘录；引用单页不可拼接跨页文字"
+  },
+  {
+    "name": "idea-ai-origin-passes",
+    "ok": true,
+    "error": ""
+  },
+  {
+    "name": "idea-paper-origin-bad-excerpt",
+    "ok": false,
+    "error": "原文证据须包含有效页码和该页至少 8 个非空白字符的逐字摘录。"
+  },
+  {
+    "name": "prune-experiment-bad-field",
+    "kind": "prune-experiment",
+    "pruned": {
+      "value": {
+        "dataset": [
+          {
+            "k": "数据集",
+            "v": "Walnut",
+            "page": 1,
+            "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+          },
+          {
+            "k": "视图数",
+            "v": "论文未说明",
+            "page": null,
+            "excerpt": null
+          }
+        ],
+        "acquisition": [],
+        "training": [],
+        "loss": [],
+        "metrics": [],
+        "results": [],
+        "baselines": []
+      },
+      "demoted": [
+        "dataset：「视图数」无法逐字核验，已标为「论文未说明」"
+      ]
+    }
+  },
+  {
+    "name": "prune-experiment-with-results",
+    "kind": "prune-experiment",
+    "pruned": {
+      "value": {
+        "dataset": [
+          {
+            "k": "数据集",
+            "v": "Walnut",
+            "page": 1,
+            "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+          }
+        ],
+        "acquisition": [],
+        "training": [],
+        "loss": [],
+        "metrics": [],
+        "results": [],
+        "baselines": []
+      },
+      "demoted": [
+        "结果数值不属于实验配置（归「结果分析」面板）"
+      ]
+    }
+  },
+  {
+    "name": "prune-results-all-bad",
+    "kind": "prune-results",
+    "pruned": {
+      "value": {
+        "tables": [],
+        "stability": [],
+        "ablation": [],
+        "generalization": [],
+        "efficiency": [],
+        "statistics": [
+          {
+            "k": "结果分析",
+            "v": "论文未说明",
+            "page": null,
+            "excerpt": null
+          }
+        ],
+        "missing": []
+      },
+      "demoted": [
+        "行 bad1 摘录/数字未过核验：该行已剔除",
+        "表格结构无效：表 t1 及其解读已剔除",
+        "全部结果条目均未通过逐字核验，面板保持未知（逐条清单见下）"
+      ]
+    }
+  },
+  {
+    "name": "prune-results-bad-row",
+    "kind": "prune-results",
+    "pruned": {
+      "value": {
+        "tables": [
+          {
+            "id": "t1",
+            "caption": {
+              "k": "表题",
+              "v": "Table 1",
+              "page": 2,
+              "excerpt": "Table 1 compares methods."
+            },
+            "header": {
+              "k": "表头",
+              "v": "method PSNR",
+              "page": 2,
+              "excerpt": "Table 1 compares methods."
+            },
+            "protocol": {
+              "k": "协议",
+              "v": "Walnut 50 views",
+              "page": 1,
+              "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+            },
+            "columns": [
+              {
+                "id": "psnr",
+                "label": "PSNR",
+                "metric": "PSNR",
+                "unit": "dB",
+                "context": {
+                  "k": "列上下文",
+                  "v": "PSNR of 33.05 dB",
+                  "page": 1,
+                  "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+                },
+                "unitEvidence": {
+                  "k": "单位",
+                  "v": "dB",
+                  "page": 1,
+                  "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+                }
+              }
+            ],
+            "rows": [
+              {
+                "id": "naf",
+                "method": "NAF",
+                "evidence": {
+                  "k": "方法行",
+                  "v": "NAF",
+                  "page": 2,
+                  "excerpt": "NAF: PSNR 33.05 dB, SSIM 0.912"
+                },
+                "cells": [
+                  {
+                    "columnID": "psnr",
+                    "valueText": "33.05"
+                  }
+                ]
+              },
+              {
+                "id": "fdk",
+                "method": "FDK",
+                "evidence": {
+                  "k": "方法行",
+                  "v": "FDK",
+                  "page": 2,
+                  "excerpt": "FDK: PSNR 29.10 dB, SSIM 0.845"
+                },
+                "cells": [
+                  {
+                    "columnID": "psnr",
+                    "valueText": "29.10"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "stability": [],
+        "ablation": [],
+        "generalization": [],
+        "efficiency": [],
+        "statistics": [],
+        "missing": []
+      },
+      "demoted": [
+        "行 bad 摘录/数字未过核验：该行已剔除"
+      ]
+    }
+  },
+  {
+    "name": "prune-results-bindings-deferred",
+    "kind": "prune-results",
+    "pruned": {
+      "value": {
+        "tables": [
+          {
+            "id": "t1",
+            "caption": {
+              "k": "表题",
+              "v": "Table 1",
+              "page": 2,
+              "excerpt": "Table 1 compares methods."
+            },
+            "header": {
+              "k": "表头",
+              "v": "method PSNR",
+              "page": 2,
+              "excerpt": "Table 1 compares methods."
+            },
+            "protocol": {
+              "k": "协议",
+              "v": "Walnut 50 views",
+              "page": 1,
+              "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+            },
+            "columns": [
+              {
+                "id": "psnr",
+                "label": "PSNR",
+                "metric": "PSNR",
+                "unit": "dB",
+                "context": {
+                  "k": "列上下文",
+                  "v": "PSNR of 33.05 dB",
+                  "page": 1,
+                  "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+                },
+                "unitEvidence": {
+                  "k": "单位",
+                  "v": "dB",
+                  "page": 1,
+                  "excerpt": "We train using 50 views and report PSNR of 33.05 dB on the Walnut dataset."
+                }
+              }
+            ],
+            "rows": [
+              {
+                "id": "naf",
+                "method": "NAF",
+                "evidence": {
+                  "k": "方法行",
+                  "v": "NAF",
+                  "page": 2,
+                  "excerpt": "NAF: PSNR 33.05 dB, SSIM 0.912"
+                },
+                "cells": [
+                  {
+                    "columnID": "psnr",
+                    "valueText": "33.05"
+                  }
+                ]
+              },
+              {
+                "id": "fdk",
+                "method": "FDK",
+                "evidence": {
+                  "k": "方法行",
+                  "v": "FDK",
+                  "page": 2,
+                  "excerpt": "FDK: PSNR 29.10 dB, SSIM 0.845"
+                },
+                "cells": [
+                  {
+                    "columnID": "psnr",
+                    "valueText": "29.10"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "stability": [
+          {
+            "evidence": {
+              "k": "解读依据",
+              "v": "x",
+              "page": 2,
+              "excerpt": "NAF: PSNR 33.05 dB, SSIM 0.912"
+            },
+            "interpretation": "i",
+            "tableID": null,
+            "visualID": null
+          }
+        ],
+        "ablation": [],
+        "generalization": [],
+        "efficiency": [],
+        "statistics": [],
+        "missing": []
+      },
+      "demoted": []
+    }
+  },
+  {
+    "name": "real-experiment",
+    "ok": true,
+    "error": ""
+  },
+  {
+    "name": "real-results-legacy-unbound",
+    "ok": false,
+    "error": "每条结果解读必须绑定一张实际存在的表或图，不能悬空或同时绑定多个对象。"
+  },
+  {
+    "name": "reproduction-bad-page-ref",
+    "ok": false,
+    "error": "数据可得性：分析或行动引用了不存在的页码"
+  },
+  {
+    "name": "reproduction-empty-group",
+    "ok": false,
+    "error": "风险 · 实现 / 评测协议：须有 1–4 项，未知也须给出核对行动"
+  },
+  {
+    "name": "reproduction-valid",
+    "ok": true,
+    "error": ""
+  },
+  {
+    "name": "results-empty",
+    "ok": false,
+    "error": "没有表格或有依据的结果分析"
+  },
+  {
+    "name": "results-transposed",
+    "ok": false,
+    "error": "单元格数值未按表头列顺序排列，疑似列错位：naf/ssim = 33.05。请对照 PDF 原表逐列核对后再输出。"
+  },
+  {
+    "name": "results-unbound-discussion",
+    "ok": false,
+    "error": "每条结果解读必须绑定一张实际存在的表或图，不能悬空或同时绑定多个对象。"
+  },
+  {
+    "name": "results-valid",
+    "ok": true,
+    "error": ""
+  }
+]

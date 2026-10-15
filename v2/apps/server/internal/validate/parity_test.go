@@ -1,10 +1,8 @@
 package validate
 
 import (
-	"bufio"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -97,7 +95,7 @@ func runGoValidator(f fixture) error {
 func TestFixtureExpectations(t *testing.T) {
 	for _, f := range loadFixtures(t) {
 		if strings.HasPrefix(f.Kind, "prune-") {
-			continue // 修剪层由 TestPruneParityAgainstTSOracle 覆盖
+			continue // 修剪层由 TestPruneBaseline 覆盖
 		}
 		t.Run(f.Name, func(t *testing.T) {
 			err := runGoValidator(f)
@@ -117,44 +115,20 @@ type oracleVerdict struct {
 	Error string `json:"error"`
 }
 
-// TestParityAgainstTSOracle 双跑：同一份 fixture 交给旧版 TS 校验链（oracle）与 Go 移植，
-// 判定与错误文案必须逐字一致——前端把诊断原文回给模型做修复轮，措辞漂移会让修复失效。
-func TestParityAgainstTSOracle(t *testing.T) {
-	if _, err := exec.LookPath("node"); err != nil {
-		t.Skip("未找到 node，跳过 TS oracle 双跑")
-	}
-	script := filepath.Join("..", "..", "..", "..", "scripts", "parity-oracle.cjs")
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("oracle 脚本不存在（%s），跳过", script)
-	}
+// TestValidationBaseline preserves the independently captured migration contract.
+func TestValidationBaseline(t *testing.T) {
 	fixtures := loadFixtures(t)
-	args := []string{script}
-	for _, f := range fixtures {
-		if strings.HasPrefix(f.Kind, "prune-") {
-			continue // 修剪层走单独的 parity 测试
-		}
-		args = append(args, filepath.Join("testdata", f.Name+".json"))
-	}
-	cmd := exec.Command("node", args...)
-	stdout, err := cmd.StdoutPipe()
+	var baseline []oracleVerdict
+	raw, err := os.ReadFile(filepath.Join("testdata", "oracle", "baseline.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("启动 oracle 失败: %v", err)
+	if err := json.Unmarshal(raw, &baseline); err != nil {
+		t.Fatal(err)
 	}
 	verdicts := map[string]oracleVerdict{}
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 1<<20), 8<<20)
-	for scanner.Scan() {
-		var verdict oracleVerdict
-		if err := json.Unmarshal(scanner.Bytes(), &verdict); err != nil {
-			t.Fatalf("oracle 输出不是 JSON: %v (%s)", err, scanner.Text())
-		}
-		verdicts[verdict.Name] = verdict
-	}
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("oracle 退出异常: %v", err)
+	for _, item := range baseline {
+		verdicts[item.Name] = item
 	}
 
 	for _, f := range fixtures {
@@ -191,46 +165,25 @@ type pruneVerdict struct {
 	} `json:"pruned"`
 }
 
-// TestPruneParityAgainstTSOracle 双跑本地修剪层：修剪结果（含降级清单）必须与 TS 完全一致，
-// 否则同一份模型输出在两版会得到不同的「 salvaged 」内容，阅读记录会分叉。
-func TestPruneParityAgainstTSOracle(t *testing.T) {
-	if _, err := exec.LookPath("node"); err != nil {
-		t.Skip("未找到 node，跳过 TS oracle 双跑")
-	}
-	script := filepath.Join("..", "..", "..", "..", "scripts", "parity-oracle.cjs")
+// TestPruneBaseline checks content and demotions without a legacy runtime.
+func TestPruneBaseline(t *testing.T) {
 	fixtures := []fixture{}
 	for _, f := range loadFixtures(t) {
 		if strings.HasPrefix(f.Kind, "prune-") {
 			fixtures = append(fixtures, f)
 		}
 	}
-	if len(fixtures) == 0 {
-		t.Skip("没有 prune fixture")
-	}
-	args := []string{script}
-	for _, f := range fixtures {
-		args = append(args, filepath.Join("testdata", f.Name+".json"))
-	}
-	cmd := exec.Command("node", args...)
-	stdout, err := cmd.StdoutPipe()
+	var baseline []pruneVerdict
+	raw, err := os.ReadFile(filepath.Join("testdata", "oracle", "baseline.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("启动 oracle 失败: %v", err)
+	if err := json.Unmarshal(raw, &baseline); err != nil {
+		t.Fatal(err)
 	}
 	verdicts := map[string]pruneVerdict{}
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 1<<20), 8<<20)
-	for scanner.Scan() {
-		var verdict pruneVerdict
-		if err := json.Unmarshal(scanner.Bytes(), &verdict); err != nil {
-			t.Fatalf("oracle 输出不是 JSON: %v", err)
-		}
-		verdicts[verdict.Name] = verdict
-	}
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("oracle 退出异常: %v", err)
+	for _, item := range baseline {
+		verdicts[item.Name] = item
 	}
 
 	for _, f := range fixtures {

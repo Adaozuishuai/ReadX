@@ -44,9 +44,11 @@ func ReadingTask(kind string) string {
 	case "critical":
 		return "以审稿人视角做 Critical View：claim-evidence 是否对齐、Strengths、Weaknesses、Questions、Missing Experiments 四节；区分模拟与真实数据的边界。" + PageEvidenceRule
 	case "motivation":
-		return "解析论文动机：这篇论文针对什么具体问题、既有方法的局限是什么、作者提出的核心思路。逐条给出原文依据。" + PageEvidenceRule
+		return "解析实验动机：具体问题、既有方法局限、研究假设、贡献及实验为何这样设计。" + researchNotesContract
 	case "method":
-		return "解析方法与公式：按数据流讲清模块（输入→处理→输出）、体积表示、投影约束如何施加、关键公式的符号含义与作用、几何设置（源-探测器-物体、SOD/SDD、角度范围）。公式转写必须标为「转写待核对」，符号不完整时解释作用并指向原 PDF，禁止拼造数学表达。" + PageEvidenceRule
+		return "解析方法公式：按输入→模块→输出讲清数据流、体积表示、投影约束、损失、几何设置。关键公式说明符号、作用与假设。公式转写标为「转写待核对」；符号不完整只解释作用并指向原 PDF，不拼造公式。" + researchNotesContract
+	case "reproduction":
+		return `制定代码复现计划，覆盖 resources（代码/数据/权重）、environment（依赖/特殊算子）、cost（训练时间/显存）、missing（几何/预处理/参数缺失）、risks（实现和评测协议）。只输出 JSON，五组均给出1–4项：{"resources":[{"finding":{"k":"字段","v":"原文事实或论文未说明","page":1,"excerpt":"同页逐字摘录"},"assessment":"有条件的分析，区分事实与推断","action":"可以执行的核对或复现步骤"}],"environment":[],"cost":[],"missing":[],"risks":[]}。未知信息用 v="论文未说明",page=null,excerpt=null，但必须给出核对行动。不可编造代码路径、仓库地址、运行结果；没有仓库源码时只作计划。` + PageEvidenceRule
 	case "experiment":
 		return `抽取实验配置，输出 JSON：{"dataset":[],"acquisition":[],"training":[],"loss":[],"metrics":[],"results":[],"baselines":[]}，每个元素为 {"k":"字段名","v":"摘录支持的事实或论文未说明","page":页码或null,"excerpt":"同页连续逐字摘录或null"}。覆盖数据集、采集几何（views/角度/SOD/SDD/分辨率）、训练（优化器/学习率/迭代/batch）、损失、指标、对比基线。views 与几何必须分开；模拟与真实数据分开；单位保留原记法。注意："results" 数组必须为空（数值结果属于「结果分析」面板，写进实验配置会被校验拒绝）。硬性要求：一条事实一个字段，不得把多个数字/设置合并进同一条；v 里出现的每个数字都必须原样出现在该条 excerpt 中；excerpt 必须是对应页的连续逐字原文，不得改写、翻译或跨页拼接；读不到就写「论文未说明」且 page/excerpt 置 null；七个数组字段即使为空也必须输出空数组。只输出 JSON。`
 	case "results":
@@ -60,7 +62,9 @@ func ReadingTask(kind string) string {
 }
 
 // JSONKinds 是需要 JSON 输出并做结构校验的 kind（其余按文本处理）。
-var JSONKinds = map[string]bool{"experiment": true, "results": true, "apply": true}
+var JSONKinds = map[string]bool{"motivation": true, "method": true, "experiment": true, "results": true, "reproduction": true, "apply": true}
+
+const researchNotesContract = `只输出 JSON：{"sections":[{"title":"章节标题","fields":[{"k":"事实或概念","v":"说明","page":1,"excerpt":"同页连续逐字原文"}]}]}。每节含1–6个条目；一项一条事实，v中数字必须在excerpt中出现；每项有真实物理页码及同页逐字摘录，不得跨页拼接。未知用v="论文未说明",page=null,excerpt=null。不得把推断作为论文事实。`
 
 // ReadingSystemPrompt 对应旧版 readingSystemPrompt。
 func ReadingSystemPrompt(kind, material string) string {

@@ -5,6 +5,8 @@
   "type": "module",
   "description": "v2 前端：三栏精读工作区（React + Vite + Tailwind）",
   "scripts": {
+    "predev": "node ../../scripts/prepare-pdf.mjs",
+    "prebuild": "node ../../scripts/prepare-pdf.mjs",
     "dev": "vite",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",

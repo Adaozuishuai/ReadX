@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,6 +17,8 @@ import (
 // aiConfig 每次请求现读 app/config.json：旧版就是「改完保存即生效」，不重启也一致。
 // Key 只在本进程内使用，响应里只回脱敏状态。
 func (s *Server) aiConfig() (ai.Config, error) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
 	return ai.LoadConfig(legacy.NewPaths(s.cfg.DataRoot).ConfigFile())
 }
 
@@ -68,14 +72,13 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "还没配置 AI 助教的 API Key：编辑 app/config.json 填入 Key，保存即生效。")
 		return
 	}
-	source, err := s.sourceText(r.Context(), key)
+	system, included, total, unit, err := s.chatContext(r.Context(), key, body.Question, body.Scope, body.Mode)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	material, included, total, err := ai.PrepareMaterial(source, body.Question, body.Scope)
-	if err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "没有这篇文档")
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
@@ -83,7 +86,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	for _, item := range body.History {
 		history = append(history, ai.Message{Role: item.Role, Content: item.Text})
 	}
-	messages := append([]ai.Message{{Role: "system", Content: ai.ChatSystemPrompt(material, body.Mode)}},
+	messages := append([]ai.Message{{Role: "system", Content: system}},
 		ai.TrimHistory(history, 8)...)
 	messages = append(messages, ai.Message{Role: "user", Content: chatUserMessage(body)})
 
@@ -101,7 +104,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-	emit(map[string]any{"meta": map[string]any{"included": included, "total": total, "scope": body.Scope}})
+	emit(map[string]any{"meta": map[string]any{"included": included, "total": total, "scope": body.Scope, "unit": unit}})
 
 	client := ai.NewClient(config)
 	text, streamErr := client.Stream(r.Context(), messages, 0.2, func(delta string) {
@@ -139,7 +142,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !readingKinds[body.Kind] {
-		writeError(w, http.StatusBadRequest, "本接口只负责 experiment / results 的结构化生成")
+		writeError(w, http.StatusBadRequest, "不支持的精读生成类型")
 		return
 	}
 	key, err := safeKey(body.Key, "论文键")

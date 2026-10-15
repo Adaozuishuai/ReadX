@@ -238,3 +238,20 @@ func TestPathsLayoutMatchesLegacy(t *testing.T) {
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
 }
+
+func TestSafeFileStem(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"2209.14540", "2209.14540"},
+		{"intratomo-2021", "intratomo-2021"},
+		{"a b/c\\d", "a_b_c_d"},
+		{"论文 2026", "2026"},
+		{"...", "annotation"},
+		{"", "annotation"},
+		{strings.Repeat("a", 200), strings.Repeat("a", 80)},
+	}
+	for _, c := range cases {
+		if got := SafeFileStem(c.in); got != c.want {
+			t.Fatalf("SafeFileStem(%q) = %q，期望 %q", c.in, got, c.want)
+		}
+	}
+}

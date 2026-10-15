@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { GenerateResponse, ReadingEntry } from '../api/client';
 import { api } from '../api/client';
 
-export type ReadingKind = 'experiment' | 'results';
+export type ReadingKind = 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
 
 export interface ReadingState {
   entries: Partial<Record<ReadingKind, ReadingEntry>>;
@@ -25,8 +25,12 @@ export function useReadings(key: string | null) {
     try {
       const response = await api.readings(key);
       const entries: ReadingState['entries'] = {};
-      for (const kind of ['experiment', 'results'] as ReadingKind[]) {
-        const raw = response.entries[kind];
+      for (const kind of ['motivation', 'method', 'experiment', 'results', 'reproduction'] as ReadingKind[]) {
+        const legacyKey = kind === 'experiment' ? 'experimentJSON' : kind === 'results' ? 'resultsJSON' : kind;
+        const raw = response.entries[kind] ?? response.entries[legacyKey];
+        if (typeof raw === 'string' && raw.trim()) {
+          entries[kind] = { value: raw, demoted: [], validationError: '旧版记录，尚未按当前规则重新核验', updatedAt: '' };
+        }
         if (raw && typeof raw === 'object' && 'value' in (raw as Record<string, unknown>)) {
           entries[kind] = raw as ReadingEntry;
         }

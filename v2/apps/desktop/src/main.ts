@@ -135,7 +135,11 @@ function waitForReady(child: ChildProcessWithoutNullStreams): Promise<ReadyInfo>
     const lines = readline.createInterface({ input: stdout, crlfDelay: Infinity });
     const timer = setTimeout(() => {
       lines.close();
-      reject(new Error(`等待就绪超时（${READY_TIMEOUT_MS / 1000}s）：检查 ${serverBinary()} 是否能独立运行`));
+      void (async () => {
+        child.kill();
+        await waitForExit(child, SHUTDOWN_GRACE_MS);
+        reject(new Error(`等待就绪超时（${READY_TIMEOUT_MS / 1000}s）：检查 ${serverBinary()} 是否能独立运行`));
+      })();
     }, READY_TIMEOUT_MS);
 
     const onClose = () => {
@@ -200,6 +204,9 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#f6f2ea',
     title: 'CBCT 精读 v2',
+    // 应用图标（书页 + 锥束射线母题）：dist/main.js 的 __dirname 是 apps/desktop/dist，
+    // ico 放在 apps/desktop/ 下，源码运行与打包后都按这个相对位置解析。
+    icon: path.join(__dirname, '..', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

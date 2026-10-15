@@ -8,3 +8,12 @@ apps/server/dev-info.json.tmp
 *.db
 *.db-shm
 *.db-wal
+apps/web/public/pdfjs/
+.build-fingerprint
+.env
+.env.*
+!.env.example
+config.json
+!config.example.json
+*.bak
+*.lnk

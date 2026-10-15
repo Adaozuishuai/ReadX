@@ -66,6 +66,17 @@ export function collapseInlineWhitespace(text: string): string {
 }
 
 /**
+ * 一页正文的段落列表——中栏渲染与译文对照共用同一份切分，顺序与数量必须一致，
+ * 否则译文会贴错位置。页标记（Page N）不是段落，这里已剔除。
+ */
+export function pageParagraphs(text: string): string[] {
+  return splitParagraphs(paragraphizePage(text))
+    .filter((block) => block.kind === 'paragraph')
+    .map((block) => collapseInlineWhitespace(block.text.trim()))
+    .filter((paragraph) => paragraph.length > 0);
+}
+
+/**
  * 段落还原。
  *
  * PDF 文本层只给「一行一换行」，段与段之间通常没有空行——直接合并整页会变成一块墙字，

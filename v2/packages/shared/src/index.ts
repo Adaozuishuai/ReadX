@@ -9,6 +9,7 @@
 export const READY_PREFIX = 'CBCT_V2_READY ';
 
 export * from './text.js';
+export * from './annotate.js';
 
 /** dev 模式下 server 写出的就绪文件，Vite proxy 靠它注入本地 token。 */
 export const DEV_INFO_FILE = 'apps/server/dev-info.json';
@@ -19,9 +20,11 @@ export type DocumentStatus = 'queue' | 'reading' | 'done' | 'archive';
 export type WireStatus = DocumentStatus | (string & {});
 
 export interface DocumentSummary {
+  format?: 'pdf' | 'epub';
   id: string;
   key: string;
   title: string;
+  translatedTitle?: string;
   authors: string[];
   year: number | null;
   venue: string;
@@ -115,6 +118,7 @@ export interface PageListResponse {
 
 /** 详情：documents 表的一行 + 逐页索引 + 已存精读产物（未解析时为 null）。 */
 export interface DocumentDetail {
+  sections?: { index: number; href: string; title: string }[];
   document: DocumentSummary;
   pages: PageSummary[];
   reading: Record<string, unknown> | null;
@@ -143,3 +147,8 @@ declare global {
     __CBCT_V2__?: BootstrapInfo;
   }
 }
+
+export * from './pdfLayout.js';
+export * from './pdfTypesetting.js';
+
+export * from './outline.js';

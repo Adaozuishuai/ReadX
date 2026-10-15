@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,8 +45,9 @@ type chatChunk struct {
 
 // Client 是 OpenAI 兼容接口的最小客户端。
 type Client struct {
-	cfg  Config
-	http *http.Client
+	command cliCommandFactory
+	cfg     Config
+	http    *http.Client
 }
 
 func NewClient(cfg Config) *Client {
@@ -69,7 +71,8 @@ func (c *Client) post(ctx context.Context, payload chatRequest) (*http.Response,
 	request.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	response, err := c.http.Do(request)
 	if err != nil {
-		if ctx.Err() != nil || strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "canceled") {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return nil, fmt.Errorf("请求超时（180 秒），未保存，请重试。")
 		}
 		return nil, fmt.Errorf("请求失败：%s", err.Error())
@@ -78,6 +81,9 @@ func (c *Client) post(ctx context.Context, payload chatRequest) (*http.Response,
 		defer response.Body.Close()
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		text := string(detail)
+		if c.cfg.APIKey != "" {
+			text = strings.ReplaceAll(text, c.cfg.APIKey, "[redacted]")
+		}
 		if len([]rune(text)) > 200 {
 			text = string([]rune(text)[:200])
 		}
@@ -92,6 +98,9 @@ func (c *Client) post(ctx context.Context, payload chatRequest) (*http.Response,
 
 // Generate 是非流式生成：结构化精读要整段 JSON，流式拼接无收益。
 func (c *Client) Generate(ctx context.Context, system, user string, temperature float64) (string, error) {
+	if c.cfg.ProviderName() != "openai" {
+		return c.Stream(ctx, []Message{{Role: "system", Content: system}, {Role: "user", Content: user}}, temperature, nil)
+	}
 	payload := chatRequest{
 		Model: c.cfg.ModelName(),
 		Messages: []Message{
@@ -106,6 +115,13 @@ func (c *Client) Generate(ctx context.Context, system, user string, temperature 
 	}
 	defer response.Body.Close()
 
+	body, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
+	if err != nil {
+		return "", fmt.Errorf("读取接口响应失败: %w", err)
+	}
+	if len(body) > 8<<20 {
+		return "", fmt.Errorf("接口响应超过 8 MiB 上限")
+	}
 	var decoded struct {
 		Choices []struct {
 			Message struct {
@@ -113,7 +129,7 @@ func (c *Client) Generate(ctx context.Context, system, user string, temperature 
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+	if err := json.Unmarshal(body, &decoded); err != nil {
 		return "", fmt.Errorf("接口返回不是合法 JSON: %w", err)
 	}
 	if len(decoded.Choices) == 0 || strings.TrimSpace(decoded.Choices[0].Message.Content) == "" {
@@ -127,6 +143,14 @@ func (c *Client) Generate(ctx context.Context, system, user string, temperature 
 // 与旧版一致的两条硬约束：finish_reason 不是 stop 视为失败；流中断时不返回成功——
 // 半个回答比没有回答更危险。
 func (c *Client) Stream(ctx context.Context, messages []Message, temperature float64, onDelta func(string)) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
+	defer cancel()
+	if c.cfg.IsCLI() {
+		return c.streamCLI(ctx, messages, onDelta)
+	}
+	if c.cfg.ProviderName() == "anthropic" {
+		return c.streamAnthropic(ctx, messages, temperature, onDelta)
+	}
 	response, err := c.post(ctx, chatRequest{
 		Model:       c.cfg.ModelName(),
 		Messages:    messages,

@@ -1,0 +1,9 @@
+{
+  "name": "systemtags-naf",
+  "kind": "systemtags",
+  "fields": [
+    "NAF: Neural Attenuation Fields for Sparse-View CBCT Reconstruction",
+    "We use self-supervised implicit neural fields on the Walnut dataset, reporting PSNR and SSIM.",
+    "ECCV"
+  ]
+}

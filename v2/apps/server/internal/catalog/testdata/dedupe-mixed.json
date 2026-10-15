@@ -1,0 +1,11 @@
+{"name":"dedupe-mixed","kind":"dedupe","dedupe":[
+  {"id":"a1","arxiv":"2209.14540v1","title":"NAF: Neural Attenuation Fields","authors":["Ruyi Zha"]},
+  {"id":"a2","arxiv":"2209.14540","title":"NAF (version 2)","authors":["Ruyi Zha"]},
+  {"id":"d1","doi":"doi:10.1000/xyz","title":"Unique Paper One","authors":["Alice"]},
+  {"id":"d2","doi":"https://doi.org/10.1000/xyz","title":"Unique Paper One Copy","authors":["Alice"]},
+  {"id":"t1","title":"A Very Long Shared Title For Testing","authors":["Bob"]},
+  {"id":"t2","title":"A Very Long Shared Title For Testing!","authors":["Bob","Carol"]},
+  {"id":"t3","title":"A Very Long Shared Title For Testing","authors":["Dan"]},
+  {"id":"s1","title":"Short","authors":["Zed"]},
+  {"id":"s2","title":"Short","authors":["Zed"]}
+]}

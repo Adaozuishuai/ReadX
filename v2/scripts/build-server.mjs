@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { runGo, v2Paths } from './go.mjs';
 
 const rebuild = process.argv.includes('--force');
@@ -23,15 +24,14 @@ if (result.status !== 0) {
 console.log(`构建完成：${v2Paths.serverBin}（${result.go.version}）`);
 
 function listGoSources() {
-  const out = runGo(['list', '-f', '{{.Dir}}', './...'], { stdio: 'pipe' });
-  if (out.status !== 0) return [];
-  const dirs = String(out.stdout).split(/\r?\n/).filter(Boolean);
   const files = [];
-  for (const dir of dirs) {
+  const visit = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.go')) files.push(`${dir}/${entry.name}`);
-      if (entry.isFile() && entry.name.endsWith('.sql')) files.push(`${dir}/${entry.name}`);
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory() && entry.name !== 'bin') visit(file);
+      else if (entry.isFile() && /\.(go|sql|mod|sum)$/.test(entry.name)) files.push(file);
     }
-  }
+  };
+  visit(v2Paths.serverDir);
   return files;
 }

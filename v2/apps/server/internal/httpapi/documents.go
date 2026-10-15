@@ -19,6 +19,7 @@ import (
 
 	"cbctv2/server/internal/importer"
 	"cbctv2/server/internal/legacy"
+	"cbctv2/server/internal/publication"
 	"cbctv2/server/internal/safekey"
 )
 
@@ -35,12 +36,13 @@ type pageText struct {
 }
 
 type documentDetail struct {
-	Document DocumentSummary  `json:"document"`
-	Pages    []pageSummary    `json:"pages"`
-	Reading  *json.RawMessage `json:"reading"`
-	HasPDF   bool             `json:"hasPdf"`
-	HasText  bool             `json:"hasText"`
-	FromOCR  bool             `json:"fromOcr"`
+	Sections []publication.Section `json:"sections"`
+	Document DocumentSummary       `json:"document"`
+	Pages    []pageSummary         `json:"pages"`
+	Reading  *json.RawMessage      `json:"reading"`
+	HasPDF   bool                  `json:"hasPdf"`
+	HasText  bool                  `json:"hasText"`
+	FromOCR  bool                  `json:"fromOcr"`
 }
 
 type pageSummary struct {
@@ -89,6 +91,14 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail := documentDetail{Document: document, Pages: pages, HasText: len(pages) > 0}
+	detail.Sections, err = s.listSections(r.Context(), key)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if len(detail.Sections) > 0 {
+		detail.HasText = true
+	}
 	if raw, found, err := s.loadReading(r.Context(), key); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -275,10 +285,10 @@ func (s *Server) loadDocument(ctx context.Context, key string) (DocumentSummary,
 	var authorsJSON string
 	var year sql.NullInt64
 	err := s.handle.QueryRowContext(ctx,
-		`SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at
+		`SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at, format, translated_title
 		 FROM documents WHERE id = ?`, key).
 		Scan(&item.ID, &item.Key, &item.Title, &authorsJSON, &year, &item.Venue, &item.DOI,
-			&item.URL, &item.Status, &item.PDFPath, &item.AddedAt, &item.UpdatedAt)
+			&item.URL, &item.Status, &item.PDFPath, &item.AddedAt, &item.UpdatedAt, &item.Format, &item.TranslatedTitle)
 	if err != nil {
 		return DocumentSummary{}, err
 	}
@@ -294,7 +304,7 @@ func (s *Server) loadDocument(ctx context.Context, key string) (DocumentSummary,
 
 func (s *Server) listPages(ctx context.Context, key string) ([]pageSummary, error) {
 	rows, err := s.handle.QueryContext(ctx,
-		`SELECT page, text, hash, updated_at FROM document_pages WHERE document_id = ? ORDER BY page`, key)
+		`SELECT page, length(text), hash, updated_at FROM document_pages WHERE document_id = ? ORDER BY page`, key)
 	if err != nil {
 		return nil, fmt.Errorf("读取页列表失败: %w", err)
 	}
@@ -303,11 +313,12 @@ func (s *Server) listPages(ctx context.Context, key string) ([]pageSummary, erro
 	out := []pageSummary{}
 	for rows.Next() {
 		var item pageSummary
-		var text, updatedAt sql.NullString
-		if err := rows.Scan(&item.Page, &text, &item.Hash, &updatedAt); err != nil {
+		var chars sql.NullInt64
+		var updatedAt sql.NullString
+		if err := rows.Scan(&item.Page, &chars, &item.Hash, &updatedAt); err != nil {
 			return nil, fmt.Errorf("解析页列表失败: %w", err)
 		}
-		item.Chars = len([]rune(text.String))
+		item.Chars = int(chars.Int64)
 		item.UpdatedAt = updatedAt.String
 		out = append(out, item)
 	}

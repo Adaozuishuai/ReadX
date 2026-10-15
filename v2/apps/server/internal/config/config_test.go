@@ -40,6 +40,28 @@ func TestResolveDataRootAcceptsPapersDirOnly(t *testing.T) {
 	}
 }
 
+func TestResolveDataRootInCleanV2Checkout(t *testing.T) {
+	root := t.TempDir()
+	serverDir := filepath.Join(root, "v2", "apps", "server")
+	if err := os.MkdirAll(serverDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{filepath.Join(root, "v2", "package.json"), filepath.Join(serverDir, "go.mod")} {
+		if err := os.WriteFile(marker, []byte("test marker"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := ResolveDataRoot("", serverDir)
+	if err != nil || filepath.Clean(got) != filepath.Clean(root) {
+		t.Fatalf("clean checkout root: got=%q err=%v", got, err)
+	}
+	for _, name := range []string{"queue.json", "papers", "library", "app"} {
+		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Fatalf("root detection created private data: %s", name)
+		}
+	}
+}
+
 func TestResolveDataRootRejectsUnrelatedDir(t *testing.T) {
 	isolated := t.TempDir()
 	// 用显式空 startDir 之外，还要保证 TempDir 自身向上不会命中真实仓库根：

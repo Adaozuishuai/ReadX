@@ -1,0 +1,6 @@
+{
+  "name": "systemtags-acquisition",
+  "kind": "systemtags",
+  "fields": ["Limited-angle real patient data with TIGRE simulated projections; a U-Net with attention; LPIPS and RMSE metrics; MICCAI"],
+  "expectNote": "cross-category derivation"
+}

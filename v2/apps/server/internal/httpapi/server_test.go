@@ -93,7 +93,7 @@ func TestHealthzNeedsNoToken(t *testing.T) {
 		t.Fatalf("healthz 应公开可访问，实际 %d", res.StatusCode)
 	}
 	payload := decode(t, res)
-	if payload["ok"] != true || payload["schemaVersion"] != float64(1) {
+	if payload["ok"] != true || payload["schemaVersion"] != float64(4) {
 		t.Fatalf("healthz 内容异常: %v", payload)
 	}
 }
@@ -137,7 +137,7 @@ func TestMetaWithToken(t *testing.T) {
 	if payload["dbPath"] != cfg.DBPath() {
 		t.Fatalf("meta.dbPath 异常: %v", payload["dbPath"])
 	}
-	if payload["schemaVersion"] != float64(1) || payload["documentsTotal"] != float64(0) {
+	if payload["schemaVersion"] != float64(4) || payload["documentsTotal"] != float64(0) {
 		t.Fatalf("meta 计数异常: %v", payload)
 	}
 	if started, _ := payload["startedAt"].(string); started == "" {

@@ -53,7 +53,7 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 	var o options
 	set.StringVar(&o.host, "host", "127.0.0.1", "监听地址，只允许回环")
 	set.IntVar(&o.port, "port", 0, "监听端口，0 表示让系统分配")
-	set.StringVar(&o.dataRoot, "data-root", "", "数据根目录（默认从当前目录向上找 queue.json / papers/）")
+	set.StringVar(&o.dataRoot, "data-root", "", "数据根目录（默认使用 v2 仓库根目录，兼容已有 queue.json / papers/）")
 	set.StringVar(&o.token, "token", "", "本地 bearer token，留空则随机生成")
 	set.StringVar(&o.staticDir, "static", "", "前端构建产物目录（apps/web/dist），留空则只提供 API")
 	set.StringVar(&o.devInfoPath, "dev-info", "", "把就绪信息写入该 JSON 文件，供 Vite dev proxy 读取")
@@ -170,14 +170,17 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 		"dbPath":   cfg.DBPath(),
 		"pid":      os.Getpid(),
 	}
+	// The launcher starts Vite as soon as it reads READY. Its credentials file
+	// must already exist at that point, even on a slow Windows filesystem.
+	if cfg.DevInfoPath != "" {
+		if err := writeDevInfo(cfg.DevInfoPath, ready); err != nil {
+			_ = httpServer.Close()
+			return fmt.Errorf("写 dev-info 失败: %w", err)
+		}
+	}
 	if err := emitReady(stdout, ready); err != nil {
 		_ = httpServer.Shutdown(context.Background())
 		return err
-	}
-	if cfg.DevInfoPath != "" {
-		if err := writeDevInfo(cfg.DevInfoPath, ready); err != nil {
-			log.Printf("写 dev-info 失败（不影响服务）: %v", err)
-		}
 	}
 	log.Printf("就绪：http://%s:%d（数据根 %s）", host, tcpAddr.Port, root)
 

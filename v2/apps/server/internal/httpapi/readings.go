@@ -14,7 +14,7 @@ import (
 
 // readingKinds 是允许写入的精读产物类型；白名单而不是自由字符串，
 // 避免把任意键写进 readings 表（旧版 main.ts 也是 kind 白名单）。
-var readingKinds = map[string]bool{"experiment": true, "results": true}
+var readingKinds = map[string]bool{"motivation": true, "method": true, "experiment": true, "results": true, "reproduction": true}
 
 // ReadingEntry 是一次生成物的保存形态：原文、降级清单、未核验原因。
 // 三者一起存，界面才能如实标注「哪些字段被降级」「哪份是未核验的」。
@@ -42,7 +42,7 @@ func (s *Server) handleReadingPut(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := r.PathValue("kind")
 	if !readingKinds[kind] {
-		writeError(w, http.StatusBadRequest, "不支持的精读类型，只接受 experiment / results")
+		writeError(w, http.StatusBadRequest, "不支持的精读类型，只接受 motivation / method / experiment / results / reproduction")
 		return
 	}
 	var body struct {

@@ -1,11 +1,8 @@
+# Publish only v2 source and repository entry documents.
+/*
+!/.gitignore
+!/README.md
+!/v2/
 .DS_Store
-.workbuddy/
 **/__pycache__/
 *.py[cod]
-/app/config.json
-/app/data/
-/app/node_modules/
-/windows/node_modules/
-/windows/dist/
-/library/text/
-/library/*.pdf

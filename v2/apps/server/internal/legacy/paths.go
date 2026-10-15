@@ -28,6 +28,29 @@ func (p Paths) ReadingsDir() string      { return filepath.Join(p.DataDir(), "re
 func (p Paths) V2Dir() string            { return filepath.Join(p.DataDir(), "v2") }
 
 // TextCacheFile 与旧版 store.pdfTextPath 同名同格式（v3 是按页带标记的抽取文本）。
+// SafeFileStem 把论文键压成可放进下载文件名的片段。键本身已过 safekey 校验，
+// 但导出文件名要再挡一次控制字符与超长名，避免 Content-Disposition 被塞进奇怪内容。
+func SafeFileStem(key string) string {
+	stem := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == '-' || r == '_' || r == '.':
+			return r
+		default:
+			return '_'
+		}
+	}, key)
+	stem = strings.Trim(stem, "._")
+	if stem == "" {
+		stem = "annotation"
+	}
+	if len(stem) > 80 {
+		stem = stem[:80]
+	}
+	return stem
+}
+
 func (p Paths) TextCacheFile(key string) string {
 	return filepath.Join(p.TextDir(), key+"-v3.txt")
 }
