@@ -154,9 +154,9 @@ func TestTranslateCallsModelAndPersists(t *testing.T) {
 func TestTranslateRejectsMismatchedSegmentCount(t *testing.T) {
 	bundle, _ := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
-	// 模型只回 1 段，请求要 2 段：必须整体失败，绝不能错位对齐。
+	// 模型持续返回空数组；缩小到单段后仍缺失，交互翻译必须失败且不能错位落库。
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
-		return `{"items":[{"i":0,"t":"只有一段"}]}`, http.StatusOK
+		return `{"items":[]}`, http.StatusOK
 	})
 	writeAIConfig(t, bundle, upstream.URL)
 

@@ -9,12 +9,15 @@
 | F4 | Apply Times New Roman to v2 app digit glyphs | `npm run build` | MUST | ✅ |
 | F5 | Hide obsolete readiness/formula status labels and trim figure crops to their content band | `npm run build` | MUST | ✅ |
 | F6 | Show live generation stage and progress events in the reading panel | `npm run build` | MUST | ✅ |
+| F7 | Recover malformed translation batches and keep the paper importable | `go test ./...` | MUST | ✅ |
+| F8 | Translate bounded batches concurrently while preserving paragraph order | `go test ./...` | MUST | ✅ |
 
 ## Run record
 
 - `npm run build` — exit 0 after the initial feature implementation and again after widening caption-based crop bounds and correcting the Times New Roman fallback declaration. Shared, web (TypeScript + production Vite bundle), desktop TypeScript, and Go server build checks passed.
 - Follow-up `npm run build` — exit 0 after adding SSE generation progress and caption-adjacent crop trimming.
 - `go test ./...` from `v2/apps/server` — exit 0, including updated quintet-generation SSE integration coverage.
+- Follow-up `go test ./...` from `v2/apps/server` — exit 0, including bounded-concurrency ordering, malformed-paragraph isolation, import-without-translation, and concurrent import-progress coverage.
 - Tests were not run.
 
 ## Deferred

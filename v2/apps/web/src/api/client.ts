@@ -404,6 +404,7 @@ export interface ImportedDocument {
   name: string;
   existing: boolean;
   error?: string;
+  warning?: string;
 }
 export interface ImportProgress {
   stage: string;

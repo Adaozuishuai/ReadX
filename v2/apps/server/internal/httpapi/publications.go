@@ -29,6 +29,7 @@ type importResult struct {
 	Name     string           `json:"name"`
 	Existing bool             `json:"existing"`
 	Error    string           `json:"error,omitempty"`
+	Warning  string           `json:"warning,omitempty"`
 }
 
 type publicationMetadataHint struct {
@@ -46,6 +47,7 @@ type recognizedPaperMetadata struct {
 	TranslatedTitle string
 	Pages           []publicationPageHint
 	Translations    []translateSegment
+	Untranslated    int
 	Authors         []string
 	DOI             string
 	Venue           string
@@ -151,6 +153,9 @@ func (s *Server) importPublication(ctx context.Context, name, source string, dat
 	}
 	doc, err := s.loadDocument(ctx, key)
 	result.Document = &doc
+	if recognized.Untranslated > 0 {
+		result.Warning = fmt.Sprintf("%d 段文本暂未获得有效译文；论文原文已入库，可稍后重试翻译", recognized.Untranslated)
+	}
 	return result, err
 }
 
@@ -214,13 +219,18 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 					update("metadata", "AI 正在识别题目、作者、期刊/会议、年份并生成中文题名，等待模型返回", 0, 0)
 					metadata, recognizeErr := s.recognizePDFMetadata(r.Context(), file.Filename, hint)
 					if recognizeErr == nil {
-						recognizeErr = s.prepareImportTranslations(r.Context(), data, hint.Pages, &metadata, func(completed, total, start, end, cached int) {
+						recognizeErr = s.prepareImportTranslations(r.Context(), data, hint.Pages, &metadata, func(completed, total, start, end, cached, untranslated int) {
 							message := fmt.Sprintf("全文翻译已完成 %d/%d 段", completed, total)
-							if start > 0 && completed-cached < end {
-								message += fmt.Sprintf("；正在处理待译文本第 %d–%d 段，等待模型返回", start, end)
+							if start > 0 && completed == cached {
+								message += fmt.Sprintf("；已提交第 %d–%d 段批次，并行处理中", start, end)
+							} else if start > 0 && completed < total {
+								message += fmt.Sprintf("；最近返回第 %d–%d 段，其他批次继续并行处理", start, end)
 							}
 							if cached > 0 {
 								message += fmt.Sprintf("（复用 %d 段已有译文）", cached)
+							}
+							if untranslated > 0 {
+								message += fmt.Sprintf("；%d 段文本暂未获得有效译文，论文仍会入库，可稍后重译", untranslated)
 							}
 							update("translation", message, completed, total)
 						})
@@ -231,7 +241,11 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 						return
 					}
 					name := file.Filename
-					update("saving", "正在保存论文文件、元数据、原文和译文到书库", 0, 0)
+					savingMessage := "正在保存论文文件、元数据、原文和译文到书库"
+					if metadata.Untranslated > 0 {
+						savingMessage += fmt.Sprintf("；%d 段译文未完成，保留原文", metadata.Untranslated)
+					}
+					update("saving", savingMessage, 0, 0)
 					result, err = s.importPublication(r.Context(), name, hint.Source, data, metadata)
 					if err == nil && result.Document != nil {
 						if err = s.saveRecognizedPDFMetadata(r.Context(), result.Document.ID, strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename)), metadata); err == nil {

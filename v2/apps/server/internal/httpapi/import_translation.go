@@ -18,9 +18,9 @@ type publicationPageHint struct {
 	Segments []string `json:"segments"`
 }
 
-// All model calls finish before the library transaction begins. A failed/cancelled
-// translation cannot leave an entry that looks completely imported.
-func (s *Server) prepareImportTranslations(ctx context.Context, data []byte, pages []publicationPageHint, metadata *recognizedPaperMetadata, progress ...func(completed, total, start, end, cached int)) error {
+// Text and best-effort translations are prepared before the library transaction begins.
+// Provider failures still abort the import; malformed model JSON is isolated per paragraph.
+func (s *Server) prepareImportTranslations(ctx context.Context, data []byte, pages []publicationPageHint, metadata *recognizedPaperMetadata, progress ...func(completed, total, start, end, cached, untranslated int)) error {
 	if len(pages) == 0 {
 		return nil
 	}
@@ -67,32 +67,40 @@ func (s *Server) prepareImportTranslations(ctx context.Context, data []byte, pag
 		}
 	}
 	cachedCount := len(sources) - len(missing)
-	report := func(completed, total, start, end int) {
+	report := func(completed, total, start, end, untranslated int) {
 		for _, callback := range progress {
 			if callback != nil {
-				callback(completed+cachedCount, len(sources), start, end, cachedCount)
+				callback(completed+cachedCount, len(sources), start, end, cachedCount, untranslated)
 			}
 		}
 	}
-	report(0, len(missing), 0, 0)
+	report(0, len(missing), 0, 0, 0)
 	if len(missing) > 0 {
 		cfg, err := s.aiConfig()
 		if err != nil {
 			return err
 		}
 		translationCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-		targets, err := ai.TranslateParagraphs(translationCtx, ai.NewClient(cfg), missing, report)
+		targets, untranslated, err := ai.TranslateParagraphsBestEffort(translationCtx, ai.NewClient(cfg), missing, func(completed, total, start, end int) {
+			report(completed, total, start, end, 0)
+		})
 		cancel()
 		if err != nil {
 			return fmt.Errorf("全文翻译失败，尚未导入：%w", err)
 		}
 		for i, source := range missing {
-			cached[paraHash(source)] = targets[i]
+			if targets[i] != "" {
+				cached[paraHash(source)] = targets[i]
+			}
 		}
+		metadata.Untranslated = len(untranslated)
+		report(len(missing), len(missing), 0, 0, len(untranslated))
 	}
 	metadata.Pages = pages
 	for i, hash := range hashes {
-		metadata.Translations = append(metadata.Translations, translateSegment{Hash: hash, Source: sources[i], Target: cached[hash]})
+		if target := cached[hash]; target != "" {
+			metadata.Translations = append(metadata.Translations, translateSegment{Hash: hash, Source: sources[i], Target: target})
+		}
 	}
 	return nil
 }
@@ -105,6 +113,9 @@ func saveImportText(ctx context.Context, tx *sql.Tx, key, stamp string, metadata
 		}
 	}
 	for _, segment := range metadata.Translations {
+		if segment.Target == "" {
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO translations(document_id,para_hash,source,target,updated_at) VALUES(?,?,?,?,?)`, key, segment.Hash, segment.Source, segment.Target, stamp); err != nil {
 			return err
 		}

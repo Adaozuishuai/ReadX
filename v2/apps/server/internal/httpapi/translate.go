@@ -192,6 +192,9 @@ func (s *Server) cachedTranslations(ctx context.Context, key string, hashes []st
 		if err != nil {
 			return nil, fmt.Errorf("读取译文失败: %w", err)
 		}
+		if strings.TrimSpace(target) == "" {
+			continue
+		}
 		out[hash] = target
 	}
 	return out, nil

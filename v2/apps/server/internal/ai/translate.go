@@ -3,8 +3,10 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // TranslateInstruction 是段落翻译的任务词。
@@ -23,9 +25,19 @@ const TranslateInstruction = `你是 CBCT（锥束 CT）论文的翻译助手。
 
 // 单批上限：沿用参考实现的「按阅读顺序累计约 1 万字符切分，绝不截断段落」。
 const (
-	translateBatchChars = 10000
-	translateBatchParas = 24
+	translateBatchChars  = 10000
+	translateBatchParas  = 24
+	translateConcurrency = 3
 )
+
+type translationFormatError struct{ err error }
+
+func (e *translationFormatError) Error() string { return e.err.Error() }
+func (e *translationFormatError) Unwrap() error { return e.err }
+
+func formatError(format string, args ...any) error {
+	return &translationFormatError{err: fmt.Errorf(format, args...)}
+}
 
 // TranslateBatch 是一次翻译请求的输入/输出单元。
 type TranslateBatch struct {
@@ -39,11 +51,26 @@ type translateReply struct {
 	} `json:"items"`
 }
 
-// TranslateParagraphs 逐段翻译，按字符数与段数切批，串行调用（并发留给上层控制）。
-//
-// 任何一批只要段数对不上就整批报错——返回部分结果会让调用方误以为「这段没译文是模型没翻」，
-// 实际是错位。宁可真报错、让用户重试。
+// TranslateParagraphs translates bounded batches concurrently and preserves input ordering.
 func TranslateParagraphs(ctx context.Context, client *Client, sources []string, progress ...func(completed, total, start, end int)) ([]string, error) {
+	translations, _, err := translateParagraphs(ctx, client, sources, false, progress...)
+	return translations, err
+}
+
+// TranslateParagraphsBestEffort keeps an import usable when a model persistently returns malformed
+// JSON for an individual paragraph. Such paragraphs remain untranslated and can be translated later.
+func TranslateParagraphsBestEffort(ctx context.Context, client *Client, sources []string, progress ...func(completed, total, start, end int)) ([]string, []int, error) {
+	return translateParagraphs(ctx, client, sources, true, progress...)
+}
+
+type translationBatchRange struct{ start, end int }
+type translationBatchResult struct {
+	batch   translationBatchRange
+	targets []string
+	err     error
+}
+
+func translateParagraphs(ctx context.Context, client *Client, sources []string, bestEffort bool, progress ...func(completed, total, start, end int)) ([]string, []int, error) {
 	report := func(completed, start, end int) {
 		for _, callback := range progress {
 			if callback != nil {
@@ -52,6 +79,7 @@ func TranslateParagraphs(ctx context.Context, client *Client, sources []string, 
 		}
 	}
 	out := make([]string, len(sources))
+	batches := make([]translationBatchRange, 0, (len(sources)+translateBatchParas-1)/translateBatchParas)
 	for start := 0; start < len(sources); {
 		end := start
 		chars := 0
@@ -63,21 +91,108 @@ func TranslateParagraphs(ctx context.Context, client *Client, sources []string, 
 			chars += length
 			end++
 		}
-		batch := sources[start:end]
-		report(start, start+1, end)
-		targets, err := translateBatch(ctx, client, batch)
-		if err != nil {
-			return nil, fmt.Errorf("第 %d–%d 段翻译失败: %w", start+1, end, err)
-		}
-		copy(out[start:end], targets)
-		report(end, start+1, end)
+		batches = append(batches, translationBatchRange{start: start, end: end})
 		start = end
 	}
-	return out, nil
+	if len(batches) == 0 {
+		return out, nil, nil
+	}
+	for _, batch := range batches {
+		report(0, batch.start+1, batch.end)
+	}
+	workerCount := min(translateConcurrency, len(batches))
+	jobs := make(chan translationBatchRange, len(batches))
+	results := make(chan translationBatchResult, len(batches))
+	for _, batch := range batches {
+		jobs <- batch
+	}
+	close(jobs)
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var workers sync.WaitGroup
+	for worker := 0; worker < workerCount; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for batch := range jobs {
+				segmentTargets, err := translateBatchRecover(workerCtx, client, sources[batch.start:batch.end], bestEffort)
+				results <- translationBatchResult{batch: batch, targets: segmentTargets, err: err}
+			}
+		}()
+	}
+	go func() { workers.Wait(); close(results) }()
+	completed := 0
+	failed := []int{}
+	var firstErr error
+	for result := range results {
+		batch := result.batch
+		if result.err != nil {
+			var invalid *translationFormatError
+			if bestEffort && errors.As(result.err, &invalid) {
+				for index := batch.start; index < batch.end; index++ {
+					failed = append(failed, index)
+				}
+			} else if firstErr == nil {
+				firstErr = fmt.Errorf("第 %d–%d 段翻译失败: %w", batch.start+1, batch.end, result.err)
+				cancel()
+			}
+		} else {
+			copy(out[batch.start:batch.end], result.targets)
+			for index, target := range result.targets {
+				if target == "" {
+					failed = append(failed, batch.start+index)
+				}
+			}
+		}
+		completed += batch.end - batch.start
+		report(completed, batch.start+1, batch.end)
+	}
+	if firstErr != nil {
+		return nil, nil, firstErr
+	}
+	return out, failed, nil
 }
 
-func translateBatch(ctx context.Context, client *Client, sources []string) ([]string, error) {
+func translateBatchRecover(ctx context.Context, client *Client, sources []string, bestEffort bool) ([]string, error) {
+	targets, err := translateBatch(ctx, client, sources, false)
+	if err == nil {
+		return targets, nil
+	}
+	var invalid *translationFormatError
+	if !errors.As(err, &invalid) {
+		return nil, err
+	}
+	// Retry once with an explicit JSON-only repair instruction before splitting the batch.
+	targets, err = translateBatch(ctx, client, sources, true)
+	if err == nil {
+		return targets, nil
+	}
+	if !errors.As(err, &invalid) {
+		return nil, err
+	}
+	if len(sources) == 1 {
+		if bestEffort {
+			return []string{""}, nil
+		}
+		return nil, err
+	}
+	middle := len(sources) / 2
+	left, leftErr := translateBatchRecover(ctx, client, sources[:middle], bestEffort)
+	if leftErr != nil {
+		return nil, leftErr
+	}
+	right, rightErr := translateBatchRecover(ctx, client, sources[middle:], bestEffort)
+	if rightErr != nil {
+		return nil, rightErr
+	}
+	return append(left, right...), nil
+}
+
+func translateBatch(ctx context.Context, client *Client, sources []string, repair bool) ([]string, error) {
 	var user strings.Builder
+	if repair {
+		user.WriteString("上次输出格式不合法。请严格输出一个 JSON 对象，不要代码围栏或解释文字；保证每个 i 唯一且完整。\n\n")
+	}
 	user.WriteString("请逐段翻译以下 ")
 	fmt.Fprintf(&user, "%d", len(sources))
 	user.WriteString(" 段，返回等长的 items 数组：\n\n")
@@ -91,26 +206,29 @@ func translateBatch(ctx context.Context, client *Client, sources []string) ([]st
 	payload := extractJSONObject(raw)
 	var decoded translateReply
 	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
-		return nil, fmt.Errorf("译文不是合法 JSON: %w", err)
+		return nil, formatError("译文不是合法 JSON: %w", err)
 	}
 	if len(decoded.Items) != len(sources) {
-		return nil, fmt.Errorf("译文段数不符（期望 %d，实际 %d），已放弃本批以免错位", len(sources), len(decoded.Items))
+		return nil, formatError("译文段数不符（期望 %d，实际 %d），已放弃本批以免错位", len(sources), len(decoded.Items))
 	}
 	out := make([]string, len(sources))
 	seen := make([]bool, len(sources))
 	for _, item := range decoded.Items {
 		if item.Index < 0 || item.Index >= len(sources) {
-			return nil, fmt.Errorf("译文返回了越界序号 %d", item.Index)
+			return nil, formatError("译文返回了越界序号 %d", item.Index)
 		}
 		if seen[item.Index] {
-			return nil, fmt.Errorf("译文序号 %d 重复", item.Index)
+			return nil, formatError("译文序号 %d 重复", item.Index)
 		}
 		seen[item.Index] = true
 		out[item.Index] = strings.TrimSpace(item.Target)
+		if out[item.Index] == "" {
+			return nil, formatError("第 %d 段译文为空", item.Index+1)
+		}
 	}
 	for index, ok := range seen {
 		if !ok {
-			return nil, fmt.Errorf("译文缺少第 %d 段", index+1)
+			return nil, formatError("译文缺少第 %d 段", index+1)
 		}
 	}
 	return out, nil

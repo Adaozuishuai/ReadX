@@ -127,7 +127,7 @@ func TestImportProgressStreamsDuringModelWaitAndCountsValidatedBatches(t *testin
 	}
 	sawPartial := false
 	for i, value := range completed {
-		if value == 24 {
+		if value > 0 && value < 35 {
 			sawPartial = true
 		}
 		if i > 0 && value < completed[i-1] {

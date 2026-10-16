@@ -49,7 +49,7 @@ func TestFullTranslationIsCommittedWithImportAndRestoredWithoutModel(t *testing.
 	}
 }
 
-func TestFailedFullTranslationLeavesLibraryEmpty(t *testing.T) {
+func TestMalformedFullTranslationDoesNotBlockPaperImport(t *testing.T) {
 	front, handle, cfg := newTestServer(t, nil)
 	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
@@ -62,15 +62,29 @@ func TestFailedFullTranslationLeavesLibraryEmpty(t *testing.T) {
 	result := uploadPublication(t, bundle, "filename.pdf", []byte("%PDF-1.4\nfailed-full"), publicationMetadataHint{
 		FirstPage: "Real paper title", Pages: []publicationPageHint{{Page: 1, Text: "Original paragraph.", Segments: []string{"Original paragraph."}}},
 	})
-	if result["error"] == nil {
-		t.Fatal("missing translation error")
+	if result["error"] != nil {
+		t.Fatalf("格式异常的段落不能中止论文导入：%v", result["error"])
+	}
+	if warning, _ := result["warning"].(string); !strings.Contains(warning, "1 段文本") {
+		t.Fatalf("应提示有译文未完成：%v", result["warning"])
 	}
 	var count int
 	if err := handle.QueryRow(`SELECT count(*) FROM documents`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatal("partial import committed")
+	if count != 1 {
+		t.Fatalf("论文应完整入库，实际文档数 %d", count)
+	}
+	var pageCount, translationCount int
+	key := result["document"].(map[string]any)["key"].(string)
+	if err := handle.QueryRow(`SELECT count(*) FROM document_pages WHERE document_id=?`, key).Scan(&pageCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := handle.QueryRow(`SELECT count(*) FROM translations WHERE document_id=?`, key).Scan(&translationCount); err != nil {
+		t.Fatal(err)
+	}
+	if pageCount != 1 || translationCount != 0 {
+		t.Fatalf("应保留原文页且不保存无效译文：pages=%d translations=%d", pageCount, translationCount)
 	}
 }
 

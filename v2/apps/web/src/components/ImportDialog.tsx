@@ -216,6 +216,7 @@ export function ImportDialog({
         <p className={result.error ? 'text-bad' : 'text-good'} key={index}>
           {result.document?.title ?? result.name}：
           {result.error ?? (result.existing ? '书库已有此文件' : '已导入')}
+          {result.warning && <small className="block text-amber-700">{result.warning}</small>}
           {result.document && <small className="block">{[result.document.translatedTitle, result.document.authors.join(' · '), result.document.venue, result.document.year].filter(Boolean).join(' / ')}</small>}
         </p>
       ))}
