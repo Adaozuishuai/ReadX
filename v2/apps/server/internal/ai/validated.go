@@ -28,6 +28,10 @@ func GenerateValidatedWithProgress(ctx context.Context, client *Client, kind, sy
 	outcome := ValidatedOutcome{}
 	value := ""
 	validationError := ""
+	requestTimeout := RequestTimeout
+	if kind == "results" {
+		requestTimeout = ResultsRequestTimeout
+	}
 
 	for attempt := 0; attempt <= maxRepairs; attempt++ {
 		outcome.Attempts = attempt + 1
@@ -42,7 +46,7 @@ func GenerateValidatedWithProgress(ctx context.Context, client *Client, kind, sy
 		if attempt > 0 {
 			userMessage = RepairInstruction(kind, validationError, value)
 		}
-		generated, err := client.Generate(ctx, system, userMessage, 0.2)
+		generated, err := client.GenerateWithTimeout(ctx, system, userMessage, 0.2, requestTimeout)
 		if err != nil {
 			return outcome, err
 		}
@@ -69,7 +73,7 @@ func GenerateValidatedWithProgress(ctx context.Context, client *Client, kind, sy
 		if progress != nil {
 			progress("downgrading", outcome.Attempts, maxRepairs+2)
 		}
-		generated, err := client.Generate(ctx, system, DowngradeInstruction(validationError), 0.2)
+		generated, err := client.GenerateWithTimeout(ctx, system, DowngradeInstruction(validationError), 0.2, requestTimeout)
 		if err != nil {
 			return outcome, err
 		}

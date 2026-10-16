@@ -16,6 +16,10 @@ import (
 // RequestTimeout 与旧版一致：出站请求必须有超时，否则网络挂起会让界面永远停在「生成中」。
 const RequestTimeout = 180 * time.Second
 
+// ResultsRequestTimeout gives table-heavy results analysis more time to produce
+// its structured output without extending the deadline for other AI actions.
+const ResultsRequestTimeout = 8 * time.Minute
+
 // Message 是一条对话消息；Role 用 OpenAI 的 system/user/assistant。
 type Message struct {
 	Role    string `json:"role"`
@@ -51,10 +55,12 @@ type Client struct {
 }
 
 func NewClient(cfg Config) *Client {
-	return &Client{cfg: cfg, http: &http.Client{Timeout: RequestTimeout + 15*time.Second}}
+	// Request deadlines are applied per operation. A fixed http.Client timeout
+	// would silently cap longer operations such as results analysis.
+	return &Client{cfg: cfg, http: &http.Client{}}
 }
 
-func (c *Client) post(ctx context.Context, payload chatRequest) (*http.Response, error) {
+func (c *Client) post(ctx context.Context, payload chatRequest, timeout time.Duration) (*http.Response, error) {
 	endpoint, err := c.cfg.Endpoint()
 	if err != nil {
 		return nil, err
@@ -73,7 +79,7 @@ func (c *Client) post(ctx context.Context, payload chatRequest) (*http.Response,
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) ||
 			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return nil, fmt.Errorf("请求超时（180 秒），未保存，请重试。")
+			return nil, fmt.Errorf("请求超时（%s），未保存，请重试。", timeout.Round(time.Second))
 		}
 		return nil, fmt.Errorf("请求失败：%s", err.Error())
 	}
@@ -98,8 +104,19 @@ func (c *Client) post(ctx context.Context, payload chatRequest) (*http.Response,
 
 // Generate 是非流式生成：结构化精读要整段 JSON，流式拼接无收益。
 func (c *Client) Generate(ctx context.Context, system, user string, temperature float64) (string, error) {
+	return c.GenerateWithTimeout(ctx, system, user, temperature, RequestTimeout)
+}
+
+// GenerateWithTimeout is the non-streaming JSON generation path with a
+// per-operation deadline.
+func (c *Client) GenerateWithTimeout(ctx context.Context, system, user string, temperature float64, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = RequestTimeout
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	if c.cfg.ProviderName() != "openai" {
-		return c.Stream(ctx, []Message{{Role: "system", Content: system}, {Role: "user", Content: user}}, temperature, nil)
+		return c.StreamWithTimeout(requestCtx, []Message{{Role: "system", Content: system}, {Role: "user", Content: user}}, temperature, nil, timeout)
 	}
 	payload := chatRequest{
 		Model: c.cfg.ModelName(),
@@ -109,7 +126,7 @@ func (c *Client) Generate(ctx context.Context, system, user string, temperature 
 		},
 		Temperature: temperature,
 	}
-	response, err := c.post(ctx, payload)
+	response, err := c.post(requestCtx, payload, timeout)
 	if err != nil {
 		return "", err
 	}
@@ -143,7 +160,16 @@ func (c *Client) Generate(ctx context.Context, system, user string, temperature 
 // 与旧版一致的两条硬约束：finish_reason 不是 stop 视为失败；流中断时不返回成功——
 // 半个回答比没有回答更危险。
 func (c *Client) Stream(ctx context.Context, messages []Message, temperature float64, onDelta func(string)) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
+	return c.StreamWithTimeout(ctx, messages, temperature, onDelta, RequestTimeout)
+}
+
+// StreamWithTimeout allows callers to set a larger bound for long-running
+// structured generation while preserving the standard chat timeout.
+func (c *Client) StreamWithTimeout(ctx context.Context, messages []Message, temperature float64, onDelta func(string), timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = RequestTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if c.cfg.IsCLI() {
 		return c.streamCLI(ctx, messages, onDelta)
@@ -156,7 +182,7 @@ func (c *Client) Stream(ctx context.Context, messages []Message, temperature flo
 		Messages:    messages,
 		Stream:      true,
 		Temperature: temperature,
-	})
+	}, timeout)
 	if err != nil {
 		return "", err
 	}
