@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { collapseInlineWhitespace, isStructuralLine, pageParagraphs, paragraphizePage, reflowPaperText, splitParagraphs } from './text.js';
+import { collapseInlineWhitespace, isStructuralLine, joinLineContinuation, pageParagraphs, paragraphizePage, reflowPaperText, splitParagraphs } from './text.js';
 
 test('reflow：同段续行合并成一行', () => {
   const input = 'NAF: Neural Attenuation Fields for Sparse-View\nCBCT Reconstruction\n\nAbstract text.';
@@ -139,4 +139,26 @@ test('pageParagraphs：剔除页标记与空段，供译文对照按序对齐', 
   assert.equal(paragraphs[0], 'First body paragraph here. Second paragraph follows.');
   assert.ok(paragraphs.length >= 2);
   assert.deepEqual(pageParagraphs('=== Page 1 ===\n'), []);
+});
+
+test('joinLineContinuation：断词拼回、真实连字符保留、中文不插空格', () => {
+  assert.equal(joinLineContinuation('attenu-', 'ation is hard'), 'attenuation is hard');
+  // 续行以数字/大写开头说明连字符是原文的一部分，不能粘成 "IEEE2026"。
+  assert.equal(joinLineContinuation('IEEE-', '2026'), 'IEEE-2026');
+  assert.equal(joinLineContinuation('中文第一行', '中文第二行'), '中文第一行中文第二行');
+  // 行内小间隙（同一行的两个词块）不插空格，只有跨行才插。
+  assert.equal(joinLineContinuation('word', 'next', false), 'wordnext');
+  assert.equal(joinLineContinuation('word', 'next'), 'word next');
+});
+
+test('reflow：中文续行之间不插入空格', () => {
+  assert.equal(reflowPaperText('本文提出一种隐式神经表示\n方法用于稀疏视角重建。'), '本文提出一种隐式神经表示方法用于稀疏视角重建。');
+});
+
+test('paragraphize：中文句末标点同样能闭合段落', () => {
+  const wide = '中'.repeat(60);
+  const page = [`${wide.slice(0, 59)}。`, '短句结束。', `${wide.slice(0, 59)}。`].join('\n');
+  const paragraphs = paragraphizePage(page).split('\n\n');
+  assert.equal(paragraphs.length, 2, '中文短行以「。」收尾时也应闭合上一段');
+  assert.equal(paragraphs[1], `${wide.slice(0, 59)}。`);
 });
