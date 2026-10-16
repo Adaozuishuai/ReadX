@@ -406,6 +406,19 @@ export interface ImportedDocument {
   error?: string;
   warning?: string;
 }
+export interface DailyRecommendation {
+  id: string;
+  title: string;
+  authors: string[];
+  venue: string;
+  venueTier: number;
+  year: number;
+  published: string;
+  doi: string;
+  url: string;
+  pdfUrl: string;
+  abstract: string;
+}
 export interface ImportProgress {
   stage: string;
   message: string;
@@ -537,7 +550,7 @@ export interface NewAnnotation {
 async function importRemotePublication(
   value: string,
   title?: string,
-  metadata?: { doi: string; authors: string[] },
+  metadata?: { doi: string; authors: string[]; venue?: string; year?: number },
   signal?: AbortSignal,
   onProgress?: (received: number, total: number) => void,
 ): Promise<ImportedDocument> {
@@ -602,6 +615,7 @@ export const api = {
     }),
   upload: uploadPublications,
   importURL: importRemotePublication,
+  dailyRecommendations: (signal?: AbortSignal) => request<{ papers: DailyRecommendation[]; fetchedAt: string }>('/v1/discovery/daily', { signal }),
   downloadPublication: async (value: string, title: string | undefined, signal?: AbortSignal, onProgress?: (received: number, total: number) => void) => {
     const response = await authenticatedFetch('/v1/import/url', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -10,6 +10,7 @@ import { CATEGORY_COLORS, categoryDot, categoryLabel } from '../categories';
 import { LibraryCard } from './LibraryCard';
 import { LibraryTrashButton } from './LibraryTrashButton';
 import { EmptyTrashDialog } from './EmptyTrashDialog';
+import { DailyRecommendations } from './DailyRecommendations';
 
 type Layout = 'grid' | 'list' | 'table';
 type SortKey = 'title' | 'year' | 'status';
@@ -39,7 +40,7 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 /** 左侧导航的视图项（复刻参考实现：全部文档 / 收藏 / 回收站）。 */
-type ViewId = 'all' | 'favorite' | 'trash' | 'reproduction' | 'trends';
+type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'reproduction' | 'trends';
 
 interface Props {
   phase: WorkspacePhase;
@@ -119,6 +120,7 @@ export function LibraryScreen({
   const rawDocuments = phase.kind === 'ready' ? phase.documents.documents : [];
   const total = phase.kind === 'ready' ? phase.meta.documentsTotal : 0;
   const trashCount = rawDocuments.filter((doc) => meta.items[doc.key]?.deleted).length;
+  const activeDocuments = rawDocuments.filter((doc) => !meta.items[doc.key]?.deleted);
   const favoriteCount = rawDocuments.filter((doc) => meta.items[doc.key]?.favorite && !meta.items[doc.key]?.deleted).length;
   const toggleTrash = (key: string) => meta.patch(key, { deleted: !meta.items[key]?.deleted });
   const missingPDFs = useMemo(() => rawDocuments.filter((doc) =>
@@ -198,6 +200,7 @@ export function LibraryScreen({
 
   const VIEWS: { id: ViewId; label: string; count?: number }[] = [
     { id: 'all', label: '全部文档', count: total - trashCount },
+    { id: 'shelves', label: '书架', count: activeDocuments.length },
     { id: 'favorite', label: '收藏', count: favoriteCount },
     { id: 'trash', label: '回收站', count: trashCount },
     { id: 'trends', label: '趋势与想法' },
@@ -217,7 +220,10 @@ export function LibraryScreen({
             <button
               key={item.id}
               type="button"
-              onClick={() => onViewChange(item.id)}
+              onClick={() => {
+                if (item.id === 'shelves') { setCategoryFilter(''); setTagFilter(''); }
+                onViewChange(item.id);
+              }}
               aria-current={view === item.id ? 'page' : undefined}
               className={`nav-item${view === item.id ? ' active' : ''}`}
             >
@@ -229,12 +235,12 @@ export function LibraryScreen({
 
         {meta.categories.length || managingCategories ? (
           <div className="flex flex-col gap-1 px-1">
-            <span className="px-2 text-[10px] uppercase tracking-wide text-ink-faint">分类</span>
+              <span className="px-2 text-[10px] uppercase tracking-wide text-ink-faint">我的书架</span>
             {meta.categories.map((item) => (
               <button
                 key={item.name}
                 type="button"
-                onClick={() => setCategoryFilter(categoryFilter === item.name ? '' : item.name)}
+              onClick={() => { setCategoryFilter(categoryFilter === item.name ? '' : item.name); onViewChange('all'); }}
                 className={`nav-item${categoryFilter === item.name ? ' active' : ''}`}
                 style={{ minHeight: 32 }}
               >
@@ -247,7 +253,7 @@ export function LibraryScreen({
               onClick={() => setManagingCategories((value) => !value)}
               className="px-2 py-1 text-left text-[11px] text-ink-faint hover:text-accent"
             >
-              {managingCategories ? '收起管理' : '+ 管理分类'}
+              {managingCategories ? '收起书架管理' : '+ 管理书架'}
             </button>
           </div>
         ) : (
@@ -256,7 +262,7 @@ export function LibraryScreen({
             onClick={() => setManagingCategories(true)}
             className="px-3 py-1 text-left text-[11px] text-ink-faint hover:text-accent"
           >
-            + 新建彩色分类
+            + 新建书架
           </button>
         )}
 
@@ -287,7 +293,7 @@ export function LibraryScreen({
               {collapsed ? '»' : '«'}
             </button>
             <h1 className="truncate text-[15px] font-medium">
-              {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'trends' ? '趋势与想法' : '复现准备'}
+              {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'shelves' ? '我的书架' : view === 'trends' ? '趋势与想法' : '复现准备'}
             </h1>
             <span className="text-[11px] text-ink-faint">{documents.length} 份文档</span>
           </div>
@@ -320,6 +326,7 @@ export function LibraryScreen({
         <div className="library-content">
           {arxivProgress ? <p role="status" className="mb-2 rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">{arxivProgress}</p> : null}
           {arxivSummary ? <p role="status" className="mb-2 rounded-md bg-surface-sunk px-3 py-2 text-xs text-ink-soft">{arxivSummary}</p> : null}
+          {view === 'all' ? <DailyRecommendations documents={rawDocuments} onReload={onReload} /> : null}
           {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空仅移除书库条目和关联阅读数据，所有 PDF / EPUB 文件均保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
           <div className="library-controls">
             <label className="search-field">
@@ -378,14 +385,27 @@ export function LibraryScreen({
               ) : (
                 <>
                   <h2>没有符合条件的文档</h2>
-                  <p>调整搜索或清空分类/标签筛选后再看。</p>
+                  <p>调整搜索或清空书架/标签筛选后再看。</p>
                 </>
               )}
               {importError ? <p className="text-[12px] text-bad">{importError}</p> : null}
             </div>
           ) : null}
 
-          {phase.kind === 'ready' && documents.length > 0 && layout === 'grid' ? (
+          {view === 'shelves' && phase.kind === 'ready' ? (
+            <ShelfOverview
+              documents={documents}
+              categories={meta.categories}
+              meta={meta.items}
+              selectedId={selectedId}
+              onSelect={onOpenDocument}
+              onOpenReproduction={onOpenReproduction}
+              onToggleTrash={toggleTrash}
+              onSetShelves={(key, categories) => meta.patch(key, { categories })}
+            />
+          ) : null}
+
+          {view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'grid' ? (
             <div className="book-grid">
               {documents.map((doc) => (
                 <LibraryCard
@@ -397,12 +417,13 @@ export function LibraryScreen({
                   onSelect={() => onOpenDocument(doc.id)}
                   onOpenReproduction={onOpenReproduction}
                   onToggleTrash={() => toggleTrash(doc.key)}
+                  onSetShelves={(categories) => meta.patch(doc.key, { categories })}
                 />
               ))}
             </div>
           ) : null}
 
-          {phase.kind === 'ready' && documents.length > 0 && layout === 'list' ? (
+          {view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'list' ? (
             <ul className="flex flex-col gap-1.5">
               {documents.map((doc) => (
                 <ListRow
@@ -420,7 +441,7 @@ export function LibraryScreen({
             </ul>
           ) : null}
 
-          {phase.kind === 'ready' && documents.length > 0 && layout === 'table' ? (
+          {view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'table' ? (
             <DocumentTable
               documents={documents}
               meta={meta.items}
@@ -441,6 +462,59 @@ export function LibraryScreen({
         </div>
       </section>
       {emptyTrashKeys ? <EmptyTrashDialog keysToDelete={emptyTrashKeys} onClose={() => setEmptyTrashKeys(null)} onCleared={async () => { setEmptyTrashKeys(null); onTrashEmptied(); await meta.reload(); }} /> : null}
+    </div>
+  );
+}
+
+function ShelfOverview({
+  documents, categories, meta, selectedId, onSelect, onOpenReproduction, onToggleTrash, onSetShelves,
+}: {
+  documents: DocumentSummary[];
+  categories: Category[];
+  meta: Record<string, DocumentMeta>;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onOpenReproduction: (key: string) => void;
+  onToggleTrash: (key: string) => Promise<unknown>;
+  onSetShelves: (key: string, categories: string[]) => Promise<unknown>;
+}) {
+  const groups = categories.map((shelf) => ({
+    name: shelf.name,
+    color: shelf.color,
+    docs: documents.filter((doc) => (meta[doc.key]?.categories ?? []).includes(shelf.name)),
+  }));
+  const unassigned = documents.filter((doc) => !(meta[doc.key]?.categories ?? []).some((name) => categories.some((shelf) => shelf.name === name)));
+  if (unassigned.length || !groups.length) groups.push({ name: '未归入书架', color: 'slate', docs: unassigned });
+  const visibleGroups = groups.filter((group) => group.docs.length > 0 || group.name !== '未归入书架');
+
+  if (!documents.length) return <div className="empty-state"><h2>书架里还没有论文</h2><p>在全部文档中给论文选择所属书架，按研究领域整理阅读。</p></div>;
+
+  return (
+    <div className="space-y-5">
+      {!categories.length ? <p className="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-ink-soft">先在左侧点击「+ 新建书架」，再用论文卡片上的「归入书架」整理同领域论文。</p> : null}
+      {visibleGroups.map((shelf) => (
+        <section key={shelf.name} className="rounded-xl border border-line bg-surface p-3">
+          <header className="mb-3 flex items-center gap-2">
+            <span className="ann-color-dot" style={{ background: categoryDot(shelf.color) }} />
+            <h2 className="text-sm font-semibold text-ink">{shelf.name}</h2>
+            <span className="rounded-pill bg-surface-sunk px-2 py-0.5 text-[10px] text-ink-soft">{shelf.docs.length} 篇</span>
+            {shelf.name === '未归入书架' ? <span className="text-[10px] text-ink-faint">可从卡片快速归类</span> : null}
+          </header>
+          {shelf.docs.length ? <div className="book-grid">
+            {shelf.docs.map((doc) => <LibraryCard
+              key={`${shelf.name}-${doc.id}`}
+              doc={doc}
+              meta={meta[doc.key]}
+              categories={categories}
+              selected={doc.id === selectedId}
+              onSelect={() => onSelect(doc.id)}
+              onOpenReproduction={onOpenReproduction}
+              onToggleTrash={() => onToggleTrash(doc.key)}
+              onSetShelves={(names) => onSetShelves(doc.key, names)}
+            />)}
+          </div> : <p className="text-xs text-ink-faint">这个书架还没有论文，可以在全部文档卡片上选择该书架。</p>}
+        </section>
+      ))}
     </div>
   );
 }
@@ -531,7 +605,7 @@ function DocumentTable({
           <th className="px-2 py-2 font-medium">作者</th>
           <th className="cursor-pointer px-2 py-2 font-medium hover:text-ink" onClick={() => onSort('year')}>年份{arrow('year')}</th>
           <th className="cursor-pointer px-2 py-2 font-medium hover:text-ink" onClick={() => onSort('status')}>状态{arrow('status')}</th>
-          <th className="px-2 py-2 font-medium">分类</th>
+          <th className="px-2 py-2 font-medium">书架</th>
           <th className="px-2 py-2 font-medium" />
         </tr>
       </thead>
@@ -617,7 +691,7 @@ function CategoryManager({ meta, onDone }: { meta: ReturnType<typeof useLibraryM
           onKeyDown={(event) => {
             if (event.key === 'Enter') void create();
           }}
-          placeholder="分类名"
+          placeholder="领域书架名称（如：图像重建）"
           className="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1 text-[12px] focus:border-accent focus:outline-none"
         />
         <button

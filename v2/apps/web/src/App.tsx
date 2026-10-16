@@ -38,7 +38,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [libraryView, setLibraryView] = useState<'all' | 'favorite' | 'trash'>(
+  const [libraryView, setLibraryView] = useState<'all' | 'favorite' | 'trash' | 'shelves'>(
     'all',
   );
 
@@ -162,7 +162,7 @@ export default function App() {
           meta={libraryMeta}
           view={libraryView}
           onViewChange={(view) => {
-            if (view === 'all' || view === 'favorite' || view === 'trash')
+            if (view === 'all' || view === 'favorite' || view === 'trash' || view === 'shelves')
               setLibraryView(view);
             setScreen(
               view === 'trends'

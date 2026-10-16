@@ -54,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/import/files", withAuth(s.handlePublicationUpload))
 	mux.Handle("POST /v1/import/url", withAuth(s.handlePublicationURL))
 	mux.Handle("GET /v1/import/search", withAuth(s.handleImportSearch))
+	mux.Handle("GET /v1/discovery/daily", withAuth(s.handleDailyRecommendations))
 	mux.Handle("POST /v1/documents/{key}/arxiv-pdf", withAuth(s.handleDocumentArxivPDF))
 	mux.Handle("GET /v1/documents/{key}/file", withAuth(s.handlePublicationFile))
 	mux.Handle("GET /v1/documents/{key}/sections/{page}", withAuth(s.handleSection))

@@ -24,6 +24,7 @@ export function LibraryCard({
   onSelect,
   onOpenReproduction,
   onToggleTrash,
+  onSetShelves,
 }: {
   doc: DocumentSummary;
   meta: DocumentMeta | undefined;
@@ -32,6 +33,7 @@ export function LibraryCard({
   onSelect: () => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: () => Promise<unknown>;
+  onSetShelves: (categories: string[]) => Promise<unknown>;
 }) {
   const cover = coverIndex(doc.key);
   const assigned = meta?.categories ?? [];
@@ -106,6 +108,28 @@ export function LibraryCard({
             );
           })}
         </div>
+      ) : null}
+
+      {categories.length ? (
+        <details className="relative mt-1.5">
+          <summary className="w-fit cursor-pointer list-none rounded-md border border-line px-2 py-1 text-[10px] text-ink-faint hover:text-accent">＋ 归入书架</summary>
+          <div className="absolute left-0 top-full z-20 mt-1 min-w-40 rounded-lg border border-line bg-surface p-2 shadow-lg">
+            {categories.map((shelf) => (
+              <label key={shelf.name} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] text-ink hover:bg-surface-sunk">
+                <input
+                  type="checkbox"
+                  checked={assigned.includes(shelf.name)}
+                  onChange={(event) => {
+                    const next = event.target.checked ? [...assigned, shelf.name] : assigned.filter((name) => name !== shelf.name);
+                    void onSetShelves(next);
+                  }}
+                />
+                <span className="ann-color-dot" style={{ background: categoryDot(shelf.color) }} />
+                {shelf.name}
+              </label>
+            ))}
+          </div>
+        </details>
       ) : null}
 
       <div className="book-progress">
