@@ -1,0 +1,365 @@
+// Package httpapi 提供 v2 server 的 HTTP 层：回环校验、bearer token 鉴权、
+// 健康检查、文档列表与静态前端托管。
+package httpapi
+
+import (
+	"context"
+	"crypto/subtle"
+	"database/sql"
+	"encoding/json"
+	"net"
+	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"cbctv2/server/internal/config"
+	"cbctv2/server/internal/db"
+)
+
+const appVersion = "0.0.0-s0"
+
+// staticCSP 由服务端下发而非写死在 index.html：dev 模式由 Vite 直接提供页面并注入
+// inline 的 HMR 脚本，若把 CSP 塞进 HTML 会让开发态立刻白屏，而生产态才是需要加固的那一份。
+const staticCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; " +
+	"connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; " +
+	"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
+type Server struct {
+	downloadPublication func(context.Context, string, int64, func(int64, int64)) ([]byte, string, error)
+	settingsMu          sync.Mutex
+	appStateMu          sync.Mutex
+	cfg                 config.Config
+	handle              *sql.DB
+	startedAt           time.Time
+}
+
+func New(cfg config.Config, handle *sql.DB) *Server {
+	return &Server{cfg: cfg, handle: handle, startedAt: time.Now().UTC()}
+}
+
+// Handler 组装完整路由，可直接交给 http.Server 或 httptest。
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.handleHealth)
+
+	withAuth := func(h http.HandlerFunc) http.Handler { return s.requireBearer(h) }
+	mux.Handle("/v1/meta", withAuth(s.handleMeta))
+	mux.Handle("GET /v1/documents", withAuth(s.handleDocuments))
+	mux.Handle("POST /v1/import", withAuth(s.handleImport))
+	mux.Handle("POST /v1/import/files", withAuth(s.handlePublicationUpload))
+	mux.Handle("POST /v1/import/url", withAuth(s.handlePublicationURL))
+	mux.Handle("GET /v1/import/search", withAuth(s.handleImportSearch))
+	mux.Handle("GET /v1/discovery/daily", withAuth(s.handleDailyRecommendations))
+	mux.Handle("POST /v1/documents/{key}/arxiv-pdf", withAuth(s.handleDocumentArxivPDF))
+	mux.Handle("GET /v1/documents/{key}/file", withAuth(s.handlePublicationFile))
+	mux.Handle("GET /v1/documents/{key}/sections/{page}", withAuth(s.handleSection))
+	mux.Handle("GET /v1/documents/{key}/resource", withAuth(s.handleEPUBResource))
+	mux.Handle("GET /v1/documents/{key}/location", withAuth(s.handleLocation))
+	mux.Handle("PUT /v1/documents/{key}/location", withAuth(s.handleLocation))
+	mux.Handle("GET /v1/documents/{key}", withAuth(s.handleDocument))
+	mux.Handle("PATCH /v1/documents/{key}/status", withAuth(s.handleStatusPatch))
+	mux.Handle("GET /v1/documents/{key}/pages", withAuth(s.handlePageList))
+	mux.Handle("GET /v1/documents/{key}/pages/{page}", withAuth(s.handlePageGet))
+	mux.Handle("PUT /v1/documents/{key}/pages/{page}", withAuth(s.handlePagePut))
+	mux.Handle("GET /v1/documents/{key}/pdf", withAuth(s.handlePDF))
+	mux.Handle("GET /v1/ai/status", withAuth(s.handleAIStatus))
+	mux.Handle("GET /v1/ai/settings", withAuth(s.handleAISettings))
+	mux.Handle("PUT /v1/ai/settings", withAuth(s.handleAISettings))
+	mux.Handle("POST /v1/ai/test", withAuth(s.handleAIProbe))
+	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
+	mux.Handle("POST /v1/ai/generate", withAuth(s.handleAIGenerate))
+	mux.Handle("GET /v1/readings/{key}", withAuth(s.handleReadingGet))
+	mux.Handle("PUT /v1/readings/{key}/{kind}", withAuth(s.handleReadingPut))
+	mux.Handle("GET /v1/annotations/{key}", withAuth(s.handleAnnotationList))
+	mux.Handle("POST /v1/annotations/{key}", withAuth(s.handleAnnotationCreate))
+	mux.Handle("GET /v1/annotations/{key}/export", withAuth(s.handleAnnotationExport))
+	mux.Handle("PATCH /v1/annotation/{id}", withAuth(s.handleAnnotationPatch))
+	mux.Handle("DELETE /v1/annotation/{id}", withAuth(s.handleAnnotationDelete))
+	mux.Handle("POST /v1/translations/{key}", withAuth(s.handleTranslate))
+	mux.Handle("GET /v1/documents-meta", withAuth(s.handleDocumentMetaList))
+	mux.Handle("PATCH /v1/documents/{key}/meta", withAuth(s.handleDocumentMetaPatch))
+	mux.Handle("POST /v1/trash/empty", withAuth(s.handleTrashEmpty))
+	mux.Handle("GET /v1/tags", withAuth(s.handleTagList))
+	mux.Handle("GET /v1/categories", withAuth(s.handleCategoryList))
+	mux.Handle("POST /v1/categories", withAuth(s.handleCategoryUpsert))
+	mux.Handle("DELETE /v1/category/{name}", withAuth(s.handleCategoryDelete))
+	mux.Handle("GET /v1/trends", withAuth(s.handleTrends))
+	mux.Handle("GET /v1/reproduction/{key}", withAuth(s.handleReproductionGet))
+	mux.Handle("POST /v1/reproduction/{key}/analyze", withAuth(s.handleReproductionAnalyze))
+	mux.Handle("PATCH /v1/reproduction/{key}/task", withAuth(s.handleReproductionTask))
+	mux.Handle("POST /v1/reproduction/repo-checks", withAuth(s.handleRepoChecks))
+	mux.Handle("GET /v1/ideas", withAuth(s.handleIdeaList))
+	mux.Handle("POST /v1/ideas", withAuth(s.handleIdeaCreate))
+	mux.Handle("PATCH /v1/idea/{id}", withAuth(s.handleIdeaPatch))
+	mux.Handle("DELETE /v1/idea/{id}", withAuth(s.handleIdeaDelete))
+	mux.Handle("GET /v1/duplicates", withAuth(s.handleDuplicates))
+
+	if s.cfg.StaticDir != "" {
+		mux.HandleFunc("/", s.handleStatic)
+	} else {
+		mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusNotFound, "未知路径")
+		})
+	}
+
+	return s.withCommonHeaders(s.requireLoopbackHost(mux))
+}
+
+// ---- 中间件 ----
+
+// requireLoopbackHost 挡 DNS rebinding：即便本机某个页面把域名指到 127.0.0.1，
+// Host 不是回环名也直接拒绝。
+func (s *Server) requireLoopbackHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !allowedHost(r.Host, s.cfg.Host) {
+			writeError(w, http.StatusForbidden, "拒绝非回环 Host")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func allowedHost(hostHeader string, boundHost string) bool {
+	name := hostHeader
+	if stripped, _, err := net.SplitHostPort(hostHeader); err == nil {
+		name = stripped
+	}
+	name = strings.Trim(name, "[]")
+	if ip := net.ParseIP(name); ip != nil {
+		return ip.IsLoopback()
+	}
+	switch strings.ToLower(strings.TrimSuffix(name, ".")) {
+	case "localhost":
+		return true
+	case "::1":
+		return boundHost == "::1"
+	}
+	return false
+}
+
+// requireBearer 校验 Authorization: Bearer <token>。token 每次启动随机生成，只由父进程
+// （Electron 主进程）经 preload 交给渲染进程，因此同机其他进程无法调用 /v1。
+func (s *Server) requireBearer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provided := bearerToken(r.Header.Get("Authorization"))
+		if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(s.cfg.Token)) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, http.StatusUnauthorized, "缺少或错误的本地 token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func bearerToken(header string) string {
+	const prefix = "Bearer "
+	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(header[len(prefix):])
+}
+
+func (s *Server) withCommonHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		header.Set("X-Content-Type-Options", "nosniff")
+		header.Set("X-Frame-Options", "DENY")
+		header.Set("Referrer-Policy", "no-referrer")
+		if strings.HasPrefix(r.URL.Path, "/v1/") || r.URL.Path == "/healthz" {
+			header.Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ---- 处理函数 ----
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "只允许 GET")
+		return
+	}
+	version, err := db.Version(r.Context(), s.handle)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取迁移版本失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": version > 0, "schemaVersion": version})
+}
+
+func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+	version, err := db.Version(r.Context(), s.handle)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取迁移版本失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"app":            "cbct-reading-v2",
+		"version":        appVersion,
+		"dataRoot":       s.cfg.DataRoot,
+		"dbPath":         s.cfg.DBPath(),
+		"schemaVersion":  version,
+		"startedAt":      s.startedAt.Format(time.RFC3339),
+		"documentsTotal": s.countDocuments(r.Context()),
+	})
+}
+
+// DocumentSummary 与 packages/shared 的 DocumentSummary 一一对应。
+type DocumentSummary struct {
+	Format          string   `json:"format"`
+	HasPDF          bool     `json:"hasPdf"`
+	ID              string   `json:"id"`
+	Key             string   `json:"key"`
+	Title           string   `json:"title"`
+	TranslatedTitle string   `json:"translatedTitle"`
+	Authors         []string `json:"authors"`
+	Year            *int     `json:"year"`
+	Venue           string   `json:"venue"`
+	DOI             string   `json:"doi"`
+	URL             string   `json:"url"`
+	Status          string   `json:"status"`
+	PDFPath         string   `json:"pdfPath"`
+	AddedAt         string   `json:"addedAt"`
+	UpdatedAt       string   `json:"updatedAt"`
+}
+
+func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "只允许 GET")
+		return
+	}
+	status := r.URL.Query().Get("status")
+	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	if status != "" && !knownStatus(status) {
+		writeError(w, http.StatusBadRequest, "status 只能是 queue / reading / done / archive")
+		return
+	}
+	query := `SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at, format, translated_title
+		 FROM documents`
+	var where []string
+	var args []any
+	if status != "" {
+		where = append(where, `status = ?`)
+		args = append(args, status)
+	}
+	if search != "" {
+		// 与旧版一样只做包含匹配（LIKE 大小写不敏感对 ASCII 有效），不做模糊打分——
+		// 宁可少召回也不要给出无法解释的排序。
+		where = append(where, `(lower(title) LIKE ? OR lower(authors) LIKE ? OR lower(venue) LIKE ? OR lower(key) LIKE ? OR translated_title LIKE ?)`)
+		pattern := "%" + search + "%"
+		args = append(args, pattern, pattern, pattern, pattern, pattern)
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += ` ORDER BY CASE status WHEN 'reading' THEN 0 WHEN 'done' THEN 2 ELSE 1 END, added_at DESC, id`
+
+	rows, err := s.handle.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "查询文档失败: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	documents := []DocumentSummary{}
+	for rows.Next() {
+		var item DocumentSummary
+		var authorsJSON string
+		var year sql.NullInt64
+		if err := rows.Scan(&item.ID, &item.Key, &item.Title, &authorsJSON, &year, &item.Venue,
+			&item.DOI, &item.URL, &item.Status, &item.PDFPath, &item.AddedAt, &item.UpdatedAt, &item.Format, &item.TranslatedTitle); err != nil {
+			writeError(w, http.StatusInternalServerError, "读取文档行失败: "+err.Error())
+			return
+		}
+		if err := json.Unmarshal([]byte(authorsJSON), &item.Authors); err != nil || item.Authors == nil {
+			item.Authors = []string{}
+		}
+		if year.Valid {
+			parsed := int(year.Int64)
+			item.Year = &parsed
+		}
+		item.HasPDF = s.documentHasPDF(item.Key)
+		documents = append(documents, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "遍历文档失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"documents": documents, "total": len(documents)})
+}
+
+// handleStatic 托管 web 构建产物，并给前端路由做 index.html 兜底。
+func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/v1/") {
+		// 没匹配上的 /v1 路径绝不能被 SPA 兜底成 index.html：
+		// 那样客户端只会看到「JSON 解析失败」，掩盖真正的路由/方法错误。
+		writeError(w, http.StatusNotFound, "未知的 API 路径或方法")
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, http.StatusMethodNotAllowed, "只允许 GET")
+		return
+	}
+	// 先把路径归一化到 "/xxx" 再剥掉前导斜杠：这样 Clean 之后不可能残留 ".."，
+	// 根路径 "/" 变成 index.html 而不是空串。
+	relative := strings.TrimPrefix(path.Clean("/"+strings.TrimPrefix(r.URL.Path, "/")), "/")
+	if relative == "" {
+		relative = "index.html"
+	}
+	candidate := filepath.Join(s.cfg.StaticDir, filepath.FromSlash(relative))
+	inside, err := filepath.Rel(s.cfg.StaticDir, candidate)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) || filepath.IsAbs(inside) {
+		writeError(w, http.StatusForbidden, "非法路径")
+		return
+	}
+	info, err := os.Stat(candidate)
+	serveIndexFallback := err != nil || info.IsDir()
+	if serveIndexFallback {
+		// 带扩展名的资源缺失就真缺失，不伪装成 index.html。
+		if strings.Contains(filepath.Base(relative), ".") {
+			writeError(w, http.StatusNotFound, "资源不存在")
+			return
+		}
+		candidate = filepath.Join(s.cfg.StaticDir, "index.html")
+		if _, err := os.Stat(candidate); err != nil {
+			writeError(w, http.StatusNotFound, "前端尚未构建（npm run build -w @cbct/web）")
+			return
+		}
+	}
+	if strings.EqualFold(filepath.Ext(candidate), ".html") {
+		w.Header().Set("Content-Security-Policy", staticCSP)
+		// 前端每次构建都会换 hash 的资源名，HTML 本身必须回源，否则新版页面进不来。
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	http.ServeFile(w, r, candidate)
+}
+
+// ---- 辅助 ----
+
+func (s *Server) countDocuments(ctx context.Context) int {
+	var count int
+	if err := s.handle.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents`).Scan(&count); err != nil {
+		return 0
+	}
+	return count
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]any{"error": message})
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, `{"error":"序列化失败"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}

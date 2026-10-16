@@ -1,0 +1,335 @@
+[
+  {
+    "name": "dedupe-mixed",
+    "kind": "dedupe",
+    "result": {
+      "keys": [
+        "2209.14540",
+        "d1",
+        "t1",
+        "t3",
+        "s1",
+        "s2"
+      ]
+    }
+  },
+  {
+    "name": "gap-example",
+    "kind": "gap",
+    "result": {
+      "statement": "在 2020–2026 的 6 篇检索范围内，未发现针对「sparse-view 4D 重建」的直接工作。这是检索范围内的缺口，不等于该方向无人研究，也不构成「首次」声明。"
+    }
+  },
+  {
+    "name": "identity-doi",
+    "kind": "identity",
+    "result": {
+      "arxiv": "doi:10.1007/978-3-031-19803-8",
+      "doi": " 10.1007/978-3-031-19803-8",
+      "title": "doi1010079783031198038"
+    }
+  },
+  {
+    "name": "identity-keys",
+    "kind": "identity",
+    "result": {
+      "arxiv": "2209.14540",
+      "doi": "https://arxiv.org/abs/2209.14540v2",
+      "title": "httpsarxivorgabs220914540v2"
+    }
+  },
+  {
+    "name": "identity-title",
+    "kind": "identity",
+    "result": {
+      "arxiv": "naf:neuralattenuationfields(2022)",
+      "doi": "naf: neural attenuation fields (2022)",
+      "title": "nafneuralattenuationfields2022"
+    }
+  },
+  {
+    "name": "redline-mixed",
+    "kind": "redline",
+    "result": {
+      "violates": true
+    }
+  },
+  {
+    "name": "redline-negated",
+    "kind": "redline",
+    "result": {
+      "violates": false
+    }
+  },
+  {
+    "name": "redline-violation",
+    "kind": "redline",
+    "result": {
+      "violates": true
+    }
+  },
+  {
+    "name": "repoaudit-mixed",
+    "kind": "repoaudit",
+    "result": {
+      "checks": [
+        {
+          "path": "requirements.txt",
+          "kind": "依赖",
+          "detail": "发现依赖声明文件，需与论文环境声明核对并实际安装验证。",
+          "line": null,
+          "id": "依赖|requirements.txt"
+        },
+        {
+          "path": "src/train.py",
+          "kind": "数据",
+          "detail": "疑似数据集下载指引：# download data from https://drive.google.com/xyz",
+          "line": 1,
+          "id": "数据|src/train.py:1"
+        },
+        {
+          "path": "src/train.py",
+          "kind": "权重",
+          "detail": "疑似权重/检查点下载指引：ckpt = download('https://example.com/pretrained.pth')",
+          "line": 2,
+          "id": "权重|src/train.py:2"
+        }
+      ]
+    }
+  },
+  {
+    "name": "systemtags-acquisition",
+    "kind": "systemtags",
+    "result": {
+      "tags": [
+        {
+          "category": "Task",
+          "value": "Sparse-view",
+          "evidence": "limited-angle"
+        },
+        {
+          "category": "Acquisition",
+          "value": "Limited-angle",
+          "evidence": "limited-angle"
+        },
+        {
+          "category": "Acquisition",
+          "value": "Real scan",
+          "evidence": "patient"
+        },
+        {
+          "category": "Acquisition",
+          "value": "Simulated",
+          "evidence": "simulated"
+        },
+        {
+          "category": "Architecture",
+          "value": "CNN",
+          "evidence": "u-net"
+        },
+        {
+          "category": "Architecture",
+          "value": "Transformer",
+          "evidence": "attention"
+        },
+        {
+          "category": "Dataset",
+          "value": "TIGRE",
+          "evidence": "tigre"
+        },
+        {
+          "category": "Metric",
+          "value": "LPIPS",
+          "evidence": "lpips"
+        },
+        {
+          "category": "Metric",
+          "value": "RMSE",
+          "evidence": "rmse"
+        },
+        {
+          "category": "Venue",
+          "value": "MICCAI",
+          "evidence": "miccai"
+        }
+      ],
+      "coverage": [
+        [
+          "Task",
+          1
+        ],
+        [
+          "Domain",
+          0
+        ],
+        [
+          "Acquisition",
+          3
+        ],
+        [
+          "Architecture",
+          2
+        ],
+        [
+          "Learning Paradigm",
+          0
+        ],
+        [
+          "Dataset",
+          1
+        ],
+        [
+          "Metric",
+          2
+        ],
+        [
+          "Venue",
+          1
+        ]
+      ]
+    }
+  },
+  {
+    "name": "systemtags-empty",
+    "kind": "systemtags",
+    "result": {
+      "tags": [],
+      "coverage": [
+        [
+          "Task",
+          0
+        ],
+        [
+          "Domain",
+          0
+        ],
+        [
+          "Acquisition",
+          0
+        ],
+        [
+          "Architecture",
+          0
+        ],
+        [
+          "Learning Paradigm",
+          0
+        ],
+        [
+          "Dataset",
+          0
+        ],
+        [
+          "Metric",
+          0
+        ],
+        [
+          "Venue",
+          0
+        ]
+      ]
+    }
+  },
+  {
+    "name": "systemtags-naf",
+    "kind": "systemtags",
+    "result": {
+      "tags": [
+        {
+          "category": "Task",
+          "value": "Sparse-view",
+          "evidence": "sparse-view"
+        },
+        {
+          "category": "Domain",
+          "value": "Implicit 3D",
+          "evidence": "implicit"
+        },
+        {
+          "category": "Learning Paradigm",
+          "value": "Self-supervised",
+          "evidence": "self-supervised"
+        },
+        {
+          "category": "Learning Paradigm",
+          "value": "Supervised",
+          "evidence": "supervised"
+        },
+        {
+          "category": "Dataset",
+          "value": "Walnut",
+          "evidence": "walnut"
+        },
+        {
+          "category": "Metric",
+          "value": "PSNR",
+          "evidence": "psnr"
+        },
+        {
+          "category": "Metric",
+          "value": "SSIM",
+          "evidence": "ssim"
+        },
+        {
+          "category": "Venue",
+          "value": "ECCV",
+          "evidence": "eccv"
+        }
+      ],
+      "coverage": [
+        [
+          "Task",
+          1
+        ],
+        [
+          "Domain",
+          1
+        ],
+        [
+          "Acquisition",
+          0
+        ],
+        [
+          "Architecture",
+          0
+        ],
+        [
+          "Learning Paradigm",
+          2
+        ],
+        [
+          "Dataset",
+          1
+        ],
+        [
+          "Metric",
+          2
+        ],
+        [
+          "Venue",
+          1
+        ]
+      ]
+    }
+  },
+  {
+    "name": "window-mixed",
+    "kind": "window",
+    "result": {
+      "window": [
+        "2020",
+        "2026"
+      ]
+    }
+  },
+  {
+    "name": "window-none",
+    "kind": "window",
+    "result": {
+      "window": [
+        null,
+        null
+      ]
+    }
+  }
+]

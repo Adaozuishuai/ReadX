@@ -1,0 +1,155 @@
+{
+  "name": "real-experiment",
+  "kind": "extraction",
+  "expect": {
+    "ok": true
+  },
+  "source": "=== Page 1 ===\nNAF: Neural Attenuation Fields for Sparse-View\nCBCT Reconstruction\n( B )\nRuyi Zha , Yanhao Zhang, and Hongdong Li\nAustralian National University, Canberra, Australia\nruyi.zha@anu.edu.au\nAbstract. This paper proposes a novel and fast self-supervised solu-\ntion for sparse-view CBCT reconstruction (Cone Beam Computed To-\nmography) that requires no external training data. Specifically, the de-\nsired attenuation coefficients are represented as a continuous function\nof 3D spatial coordinates, parameterized by a fully-connected deep neu-\nral network. We synthesize projections discretely and train the network\nby minimizing the error between real and synthesized projections. A\nlearning-based encoder entailing hash coding is adopted to help the net-\nwork capture high-frequency details. This encoder outperforms the com-\nmonly used frequency-domain encoder in terms of having higher perfor-\nmance and efficiency, because it exploits the smoothness and sparsity of\nhuman organs. Experiments have been conducted on both human organ\nand phantom datasets. The proposed method achieves state-of-the-art\naccuracy and spends reasonably short computation time. Code available\nat https://github.com/Ruyi-Zha/naf_cbct .\nKeywords: CBCT · Sparse View · Implicit Neural Representation\n1 Introduction\nCone Beam Computed Tomography (CBCT) is an emerging medical imaging\ntechnique to examine the internal structure of a subject noninvasively. A CBCT\nscanner emits cone-shaped X-ray beams and captures 2D projections at equal an-\ngular intervals. Compared with the conventional Fan Beam CT (FBCT), CBCT\nenjoys the benefits of high spatial resolution and fast scanning speed [19]. Recent\nyears have witnessed the blossoming of low dose CT, which delivers a significantly\nlower radiation dose during the scanning process. There are two ways to reduce\narXiv:2209.14540v1 [eess.IV] 29 Sep 2022 the dose: decreasing source intensity or projection views [8]. This paper focuses\non the latter, i.e. , sparse-view CBCT reconstruction.\nSparse-view CBCT reconstruction aims to retrieve a volumetric attenuation\ncoefficient field from dozens of projections. It is a challenging task in two respects.\nFirst, insufficient views lead to notable artifacts. As a comparison, the traditional\nCBCT obtains hundreds of images. The inputs of sparse-view CBCT are 10 ×\nfewer. Second, the spatial and computational complexity of CBCT reconstruc-\ntion is much higher than that of FBCT reconstruction due to the dimensional\nincrease of inputs. CBCT relies on 2D projections to build a 3D model, while\n\n=== Page 2 ===\n2 R. Zha et al.\nFBCT simplifies the process by stacking 2D slides restored from 1D projections\n(but in the sacrifice of time and dose).\nExisting CBCT approaches can be divided into three categories: analytical,\niterative and learning-based methods. Analytical methods estimate attenuation\ncoefficients by solving the Radon transform and its inverse. A typical example is\nthe FDK algorithm [7]. It produces good results in an ideal scenario but copes\npoorly with ill-posed problems such as sparse views. The second family, iterative\nmethods, formulates reconstruction as a minimization process. These approaches\nutilize an optimization framework combined with regularization modules. While\niterative methods perform well in ill-posed problems [2,20], they require sub-\nstantial computation time and memory. Recently, learning-based methods have\nbecome popular with the rise of AI. They use deep neural networks to 1) predict\nand extrapolate projections [3,22,24,28], 2) regress attenuation coefficients with\nsimilar data [11,27], and 3) make optimization process differentiable [1,6,10].\nMost of these methods [3,11,22,27] need extensive datasets for network train-\ning. Moreover, they rely on neural networks to remember what a CT looks like.\nTherefore it is difficult to apply a trained model of one application to another.\nWhile there are self-supervised methods [1,28], they operate under FBCT set-\ntings considering network capacity and memory consumption. Their performance\nand efficiency drop when applied to the CBCT scenario.\nApart from the aforementioned work designated for CT reconstruction, ef-\nforts have been made to deal with other ill-posed problems, such as 3D recon-\nstruction in the computer vision field. Similar to CT reconstruction, 3D recon-\nstruction uses RGB images to estimate 3D shapes, which are usually represented\nas discrete point clouds or meshes. Recent studies propose [13,16] Implicit Neu-\nral Representation (INR) as an alternative to those discrete representations.\nINR parameterizes a bounded scene as a neural network that maps spatial co-\nordinates to metrics such as occupancy and color. With the help of position\nencoder [14,21], INR is capable to learn high-frequency details.\nThis paper proposes Neural Attenuation Fields (NAF), a fast self-supervised\nsolution for sparse-view CBCT reconstruction. Here we use ‘self-supervised’ to\nhighlight that NAF requires no external CT scans but the X-ray projections of\nthe interested object. Inspired by 3D reconstruction work [13,16], we parameter-\nize the attenuation coefficient field as an INR and imitates the X-ray attenuation\nprocess with a self-supervised network pipeline. Specifically, we train a Multi-\nLayer Perceptron (MLP), whose input is an encoded spatial coordinate ( x, y, z )\nand whose output is the attenuation coefficient μ at that location. Instead of\nusing a common frequency-domain encoding, we adopt hash encoding [14], a\nlearning-based position encoder, to help the network quickly learn high-frequency\ndetails. Projections are synthesized by predicting the attenuation coefficients of\nsampled points along ray trajectories and attenuating incident beams accord-\ningly. The network is optimized with gradient descent by minimizing the error\nbetween real and synthesized projections. We demonstrate that NAF quanti-\ntatively and qualitatively outperforms existing solutions on both human organ\nand phantom datasets. While most INR approaches take hours for training, our\n\n=== Page 3 ===\nNAF: Neural Attenuation Fields for Sparse-View CBCT Reconstruction 3\nmethod can reconstruct a detailed CT model within 10-40 minutes, which is\ncomparable to iterative methods.\nIn summary, the main contributions of this work are:\n– We propose a novel and fast self-supervised method for sparse-view CBCT\nreconstruction. Neither external datasets nor structural prior is needed ex-\ncept projections of a subject.\n– The proposed method achieves state-of-the-art accuracy and spends rela-\ntively short computation time. The performance and efficiency of our method\nmake it feasible for clinical CT applications.\n– The code will be publicly available for investigation purposes.\n2 Method\n2.1 Pipeline\nThe pipeline of NAF is shown in Fig. 1. During a CBCT scanning, an X-ray\nsource rotates around the object and emits cone-shaped X-ray beams. A 2D panel\ndetects X-ray projections at equal angular intervals. NAF then uses the scanner\ngeometry to imitate the attenuation process discretely. It learns CT shapes by\ncomparing real and synthesized projections. After the model optimization, the\nfinal CT image is generated by querying corresponding voxels.\nNAF consists of four modules: ray sampling, position encoding, attenuation\ncoefficient prediction, and projection synthesis. First, we uniformly sample points\nCBCT scanning Model optimization Reconstruction results\nNAF - MLP( )\nLoss\n(a) Ray sampling (b) Position e ncoding (c) Attenuation coefficient prediction (d) Attenuation synthesis\n𝜇\n( 𝑥 , 𝑦 , 𝑧 )\nMLP\nFig. 1: NAF pipeline. Gray block: The CBCT scanner captures X-ray projections\nfrom different views. Blue block: NAF simulates projections. Orange block: NAF\nis optimized by comparing real and synthesized projections. Green block: NAF\ngenerates a CT model by querying corresponding voxels.\n\n=== Page 4 ===\n4 R. Zha et al.\nalong X-ray paths based on the scanner geometry. A position encoder network\nthen encodes their spatial coordinates to extract valuable features. After that,\nan MLP network consumes the encoded information and predicts attenuation\ncoefficients. The last step of NAF is to synthesize projections by attenuating\nincident X-rays according to the predicted attenuation coefficients on their paths.\n2.2 Neural attenuation fields\nRay sampling Each pixel value of a projection image results from an X-ray\npassing through a cubical space and getting attenuated by the media inside.\nWe sample N points at the parts where rays intersect the cube. A stratified\nsampling method [13] is adopted, where we divide a ray into N evenly spaced\nbins and uniformly sample one point at each bin. Setting N greater than the\ndesired CT size ensures that at least one sample is assigned to every grid cell\nthat an X-ray traverses. The coordinates of sampled points are then sent to the\nposition encoding module.\nPosition encoding A simple MLP can theoretically approximate any func-\ntion [9]. Recent studies [18,21], however, reveal that a neural network prefers to\nlearn low-frequency details due to “spectral bias”. To this end, a position encoder\nis introduced to map 3D spatial coordinates to a higher dimensional space.\nA common choice is the frequency encoder proposed by Mildenhall et al. [13].\n3\nIt decomposes a spatial coordinate p ∈ R into L sets of sinusoidal components\nat different frequencies. While frequency encoder eases the difficulty of training\nnetworks, it is considered quite cumbersome. In medical imaging practise [26,28],\nthe size of encoder output is set to 256 or greater. The following network must\nbe wider and deeper to cope with the inflated inputs. As a result, it takes hours\nto train millions of network parameters, which is not acceptable for fast CT\nreconstruction.\nFrequency-domain encoding is a dense encoder because it utilizes the entire\nfrequency spectrum. However, dense encoding is redundant for CBCT recon-\nstruction for two main reasons. First, a human body usually consists of several\nhomogeneous media, such as muscles and bones. Attenuation coefficients remain\napproximately uniform inside one medium but vary between different media.\nHigh-frequency features are not necessary unless for points near edges. Second,\nnatural objects favor smoothness. Many organs have simple shapes, such as spin-\ndle (muscle) or cylinder (bone). Their smooth surfaces can be easily learned with\nlow-dimensional features.\nTo exploit the aforementioned characteristics of the scanned objects, we use\nthe hash encoder [14], a learning-based sparse encoding solution. The equation\nof hash encoder M H is:\n⊕\nT\nM H ( p ; Θ ) = [ I ( H 1 ) , · · · , I ( H L )] , H = { c | h ( c ) = ( c j π j ) mod T } . (1)\nHash encoder describes a bounded space by L multiresolution voxel grids. A\ntrainable feature lookup table Θ with size T is assigned to each voxel grid. At\n\n=== Page 5 ===\nNAF: Neural Attenuation Fields for Sparse-View CBCT Reconstruction 5\neach resolution level, we 1) detect neighbouring corners c (cubes with different\ncolors in Fig. 1(b)) of the queried point p , 2) look up their corresponding features\nH in a hash function fashion h [23], and 3) generate a feature vector with linear\ninterpolation I . The output of a hash encoder is the concatenation of feature\nvectors at all resolution levels. More details of hash function and its symbols can\nbe found in [14].\nCompared with frequency encoder, hash encoder produces much smaller out-\nputs ( 32 in our setting) with competitive feature quality for two reasons. On the\none hand, the many-to-one property of hash function conforms to the sparsity\nnature of human organs. On the other hand, a trainable encoder can learn to\nfocus on relevant details and select suitable frequency spectrum [14]. Thanks to\nhash encoder, the subsequent network is more compact.\nAttenuation coefficient prediction We represent the bounded field with\na simple MLP Φ , which takes the encoded spatial coordinates as inputs and\noutputs the attenuation coefficients μ at that position. As illustrated in Fig. 1(c),\nthe network is composed of 4 fully-connected layers. The first three layers are 32-\nchannel wide and have ReLU activation functions in between, while the last layer\nhas one neuron followed by a sigmoid activation. A skip connection is included\nto concatenate the network input to the second layer’s activation. By contrast,\nZang et al. [28] use a 6-layer 256-channel MLP to learn features from a frequency\nencoder. Our network is 10 × smaller.\nAttenuation synthesis According to Beer’s Law, the intensity of an X-ray\ntraversing matter is reduced by the exponential integration of attenuation coef-\nficients on its path. We numerically synthesize the attenuation process with:\n∑ N\nI = I 0 exp( − μ i δ i ) , (2)\ni =1\nwhere I 0 is the initial intensity and δ i = ‖ p i +1 − p i ‖ is the distance between\nadjacent points.\n2.3 Model optimization and output\nNAF is updated by minimizing the L2 loss between real and synthesized projec-\ntions. The loss function L is defined as:\n∑\n2\nL ( Θ , Φ ) = ‖ I r ( r ) − I s ( r ) ‖ , (3)\nr ∈ B\nwhere B is a ray batch, and I r and I s are real and synthesized projections for\nray r respectively. We update both hash encoder Θ and attenuation coefficient\nnetwork Φ during the training process.\nThe final output is formulated as a discrete 3D matrix. We build a voxel\ngrid with the desired size and pass the voxel coordinates to the trained MLP to\npredict the corresponding attenuation coefficients. A CT model thus is restored.\n\n=== Page 6 ===\n6 R. Zha et al.\n3 Experiments\n3.1 Experimental settings\nData We conduct experiments on five datasets containing human organ and\nphantom data. Details are listed in Table 1.\nHuman organ : We evaluate our method using public datasets of human or-\ngan CTs [4,12], including chest, jaw, foot and abdomen. The chest data are\nfrom LIDC-IDRI dataset [4], and the rest are from Open Scientific Visualization\nDatasets [12]. Since these datasets only provide volumetric CT scans, we gener-\nate projections by a tomographic toolbox TIGRE [5]. In TIGRE [5], we capture\n◦\n50 projections with 3% noise in the range of 180 . We train our model with these\nprojections and evaluate its performance with the raw volumetric CT data.\nPhantom : We collect a phantom dataset by scanning a silicon aortic phantom\nwith GE C-arm Medical System. This system captures 582 500 × 500 fluoroscopy\n◦ ◦\nprojections with position primary angle from -103 to 93 and position secondary\n◦\nangle of 0 . A 512 × 512 × 510 CT image is also generated with inbuilt algorithms\nas the ground truth. We only use 50 projections for experiments.\nBaselines We compare our approach with four baseline techniques. FDK [7]\nis firstly chosen as a representative of analytical methods. The second method\nSART [2] is a robust iterative reconstruction algorithm. ASD-POCS [20] is an-\nother iterative method with a total-variation regularizer. We implement a CBCT\nvariant of IntraTomo [28], named IntraTomo3D , as an example of frequency-\nencoding deep learning methods.\nImplementation details Our proposed method is implemented in PyTorch [17].\n− 3\nWe use Adam optimizer with a learning rate that starts at 1 × 10 and steps\n− 4\ndown to 1 × 10 . The batch size is 2048 rays at each iteration. The sampling\nquantity of each ray depends on the size of CT data. For example, we sample 192\npoints along each ray for the 128 × 128 × 128 chest CT. We use the same hyper-\nparameter setting for hash encoder as [14]. More details of hyper-parameters\ncan be found in the supplementary material. All experiments are conducted on\na single RTX 3090 GPU. We evaluate five methods quantitatively in terms of\npeak signal-to-noise ratio (PNSR) and structural similarity (SSIM) [25]. PSNR\n(dB) statistically assesses the artifact suppression performance, while SSIM mea-\nsures the perceptual difference between two signals. Higher PNSR/SSIM values\nrepresent the accurate reconstruction and vice versa.\nTable 1: Details of CT datasets used in the experiments.\nScanning Scanning Number of Detector\nDataset name CT dimension\nmethod range projections resolution\n◦ ◦\nChest [4] 128 × 128 × 128 TIGRE [5] 0 ∼ 180 50 256 × 256\n◦ ◦\nJaw [12] 256 × 256 × 256 TIGRE [5] 0 ∼ 180 50 512 × 512\n◦ ◦\nFoot [12] 256 × 256 × 256 TIGRE [5] 0 ∼ 180 50 512 × 512\n◦ ◦\nAbdomen [12] 512 × 512 × 463 TIGRE [5] 0 ∼ 180 50 1024 × 1024\n◦ ◦\nAorta 512 × 512 × 510 GE C-arm − 103 ∼ 93 50 (582) 500 × 500\n\n=== Page 7 ===\nNAF: Neural Attenuation Fields for Sparse-View CBCT Reconstruction 7\n3.2 Results\nPerformance Our method produces quantitatively best results in both human\norgan and phantom datasets as listed in Table 2. Both PSNR and SSIM values\nare significantly higher than other methods. For example, the PSNR value of our\nmethod in the abdomen dataset is 3.07 dB higher than that of the second-best\nmethod SART .\nWe also provide visualization results of different methods in Fig. 2. FDK\nrestores low-quality models with notable artifacts, as analytical methods de-\nmand large amounts of projections. Iterative method SART suppresses noise\nTable 2: PSNR/SSIM measurements of five methods on five datasets.\nChest Jaw Foot Abdomen Aorta\nFDK [7] 22.89/.78 28.59/.78 23.92/.58 22.39/.59 12.11/.21\nSART [2] 32.12/.95 32.67/.93 30.13/.93 31.38/.92 27.31/.77\nASD-POCS [20] 29.78/.92 32.78/.93 28.67/.89 30.34/.91 27.30/.76\nIntraTomo3D [28] 31.94/.95 31.95/.91 31.43/.91 30.43/.90 29.38/.82\nNAF (Ours) 33.05 / .96 34.14 / .94 31.63 / .94 34.45 / .95 30.34 / .88\nProjection FDK SART ASD - POCS IntraTomo3D NAF (Ours) GT\nChest\nJaw\nFoot\nAbdomen\nAorta\nFig. 2: Qualitative results of five methods. From left to right: examples of X-\nray projections, slices of 3D CT models reconstructed by five methods, and the\nground truth CT slices.\n\n=== Page 8 ===\n8 R. Zha et al.\nFig. 3: Slice-wise performance of iter- Fig. 4: Performance under different\native and learning-based methods on number of views on the abdomen\nthe abdomen dataset. dataset.\nin the sacrifice of losing certain details. The reconstruction results of ASD-\nPOCS are heavily smeared because total-variation regularization encourages\nremoving high-frequency details, including unwanted noise and expected tiny\nstructures. IntraTomo3D produces clean results. However, edges between me-\ndia are slightly blurred, which shows that the frequency encoder fails to teach\nthe network to focus on edges. With the help of hash encoding, results of the\nproposed NAF have the most details, clearest edges and fewest artifacts. Fig. 3\nindicates that NAF outperforms other methods in all slices of the reconstructed\nCT volume.\nFigure 4 shows the performance of iterative methods and learning-based\nmethods under different number of views. It is clear that the performance in-\ncreases with the rise of input views. Our methods achieves better results than\nothers under most circumstances.\nTime We record the running time of iterative and learning-based methods as\nshown in Fig. 5. All methods use CUDA [15] to accelerate the computation\nprocess. Overall, the methods spend less time on datasets with small projections\n(chest, jaw and foot) and increasingly more time on big datasets (abdomen\nand aorta). IntraTomo3D requires more than one hour to train the network.\nBenefiting from the compact network design, NAF spends similar running time\nto iterative methods and is 3 × faster than the frequency-encoding deep learning\nmethod IntraTomo3D .\n4 Conclusion\nThis paper proposes NAF, a fast self-supervised learning-based solution for\nsparse-view CBCT reconstruction. Our method trains a fully-connected deep\nneural network that consumes a 3D spatial coordinate and outputs the atten-\nuation coefficient at that location. NAF synthesizes projections by attenuating\nincident X-rays based on the predicted attenuation coefficients. The network is\nupdated by minimizing the projection error. We show that frequency encoding\nis not computationally efficient for tomographic reconstruction tasks. As an al-\nternative, a learning-based encoder entitled hash encoding is adopted to extract\n\n=== Page 9 ===\nNAF: Neural Attenuation Fields for Sparse-View CBCT Reconstruction 9\nFig. 5: Running time that iterative and learn-based methods take to converge to\nstable results.\nvaluable features. Experimental results on human organ and phantom datasets\nindicate that the proposed method achieves significantly better results than other\nbaselines and spends reasonably short computation time.\nReferences\n1. Adler, J., Öktem, O.: Learned primal-dual reconstruction. IEEE transactions on\nmedical imaging 37 (6), 1322–1332 (2018)\n2. Andersen, A.H., Kak, A.C.: Simultaneous algebraic reconstruction technique (sart):\na superior implementation of the art algorithm. Ultrasonic imaging 6 (1), 81–94\n(1984)\n3. Anirudh, R., Kim, H., Thiagarajan, J.J., Mohan, K.A., Champley, K., Bremer,\nT.: Lose the views: Limited angle ct reconstruction via implicit sinogram comple-\ntion. In: Proceedings of the IEEE Conference on Computer Vision and Pattern\nRecognition. pp. 6343–6352 (2018)\n4. Armato III, S.G., McLennan, G., Bidaut, L., McNitt-Gray, M.F., Meyer, C.R.,\nReeves, A.P., Zhao, B., Aberle, D.R., Henschke, C.I., Hoffman, E.A., et al.: The\nlung image database consortium (lidc) and image database resource initiative (idri):\na completed reference database of lung nodules on ct scans. Medical physics 38 (2),\n915–931 (2011)\n5. Biguri, A., Dosanjh, M., Hancock, S., Soleimani, M.: Tigre: a matlab-gpu toolbox\nfor cbct image reconstruction. Biomedical Physics & Engineering Express 2 (5),\n055010 (2016)\n6. Chen, H., Zhang, Y., Zhang, W., Sun, H., Liao, P., He, K., Zhou, J., Wang, G.:\nLearned experts’ assessment-based reconstruction network (” learn”) for sparse-\ndata ct,”. arXiv preprint arXiv:1707.09636 (2017)\n7. Feldkamp, L.A., Davis, L.C., Kress, J.W.: Practical cone-beam algorithm. Josa a\n1 (6), 612–619 (1984)\n8. Gao, Y., Bian, Z., Huang, J., Zhang, Y., Niu, S., Feng, Q., Chen, W., Liang, Z., Ma,\nJ.: Low-dose x-ray computed tomography image reconstruction with a combined\nlow-mas and sparse-view protocol. Optics express 22 (12), 15190–15210 (2014)\n9. Hornik, K., Stinchcombe, M., White, H.: Multilayer feedforward networks are uni-\nversal approximators. Neural networks 2 (5), 359–366 (1989)\n\n=== Page 10 ===\n10 R. Zha et al.\n10. Kang, E., Chang, W., Yoo, J., Ye, J.C.: Deep convolutional framelet denosing for\nlow-dose ct via wavelet residual network. IEEE transactions on medical imaging\n37 (6), 1358–1369 (2018)\n11. Kasten, Y., Doktofsky, D., Kovler, I.: End-to-end convolutional neural network\nfor 3d reconstruction of knee bones from bi-planar x-ray images. In: International\nWorkshop on Machine Learning for Medical Image Reconstruction. pp. 123–133.\nSpringer (2020)\n12. Klacansky, P.: Open scientific visualization datasets (2022), https://klacansky.\ncom/open-scivis-datasets/\n13. Mildenhall, B., Srinivasan, P.P., Tancik, M., Barron, J.T., Ramamoorthi, R., Ng,\nR.: Nerf: Representing scenes as neural radiance fields for view synthesis. In: Eu-\nropean conference on computer vision. pp. 405–421. Springer (2020)\n14. Müller, T., Evans, A., Schied, C., Keller, A.: Instant neural graphics primitives\nwith a multiresolution hash encoding. arXiv:2201.05989 (Jan 2022)\n15. NVIDIA, Vingelmann, P., Fitzek, F.H.: Cuda, release: 10.2.89 (2020), https://\ndeveloper.nvidia.com/cuda-toolkit\n16. Park, J.J., Florence, P., Straub, J., Newcombe, R., Lovegrove, S.: Deepsdf: Learning\ncontinuous signed distance functions for shape representation. In: Proceedings of\nthe IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 165–\n174 (2019)\n17. Paszke, A., Gross, S., Massa, F., Lerer, A., Bradbury, J., Chanan, G., Killeen,\nT., Lin, Z., Gimelshein, N., Antiga, L., Desmaison, A., Kopf, A., Yang, E.,\nDeVito, Z., Raison, M., Tejani, A., Chilamkurthy, S., Steiner, B., Fang, L., Bai,\nJ., Chintala, S.: Pytorch: An imperative style, high-performance deep learning\nlibrary. In: Wallach, H., Larochelle, H., Beygelzimer, A., d ' Alché-Buc, F., Fox, E.,\nGarnett, R. (eds.) Advances in Neural Information Processing Systems 32, pp.\n8024–8035. Curran Associates, Inc. (2019), http://papers.neurips.cc/paper/\n9015-pytorch-an-imperative-style-high-performance-deep-learning-library.\npdf\n18. Rahaman, N., Baratin, A., Arpit, D., Draxler, F., Lin, M., Hamprecht, F., Ben-\ngio, Y., Courville, A.: On the spectral bias of neural networks. In: International\nConference on Machine Learning. pp. 5301–5310. PMLR (2019)\n19. Scarfe, W.C., Farman, A.G., Sukovic, P., et al.: Clinical applications of cone-beam\ncomputed tomography in dental practice. Journal-Canadian Dental Association\n72 (1), 75 (2006)\n20. Sidky, E.Y., Pan, X.: Image reconstruction in circular cone-beam computed tomog-\nraphy by constrained, total-variation minimization. Physics in Medicine & Biology\n53 (17), 4777 (2008)\n21. Tancik, M., Srinivasan, P., Mildenhall, B., Fridovich-Keil, S., Raghavan, N., Sing-\nhal, U., Ramamoorthi, R., Barron, J., Ng, R.: Fourier features let networks learn\nhigh frequency functions in low dimensional domains. Advances in Neural Infor-\nmation Processing Systems 33 , 7537–7547 (2020)\n22. Tang, C., Zhang, W., Li, Z., Cai, A., Wang, L., Li, L., Liang, N., Yan, B.: Projection\nsuper-resolution based on convolutional neural network for computed tomography.\nIn: 15th International Meeting on Fully Three-Dimensional Image Reconstruction\nin Radiology and Nuclear Medicine. vol. 11072, p. 1107233. International Society\nfor Optics and Photonics (2019)\n23. Teschner, M., Heidelberger, B., Müller, M., Pomerantes, D., Gross, M.H.: Opti-\nmized spatial hashing for collision detection of deformable objects. In: Vmv. vol. 3,\npp. 47–54 (2003)\n\n=== Page 11 ===\nNAF: Neural Attenuation Fields for Sparse-View CBCT Reconstruction 11\n24. Wang, C., Zhang, H., Li, Q., Shang, K., Lyu, Y., Dong, B., Zhou, S.K.: Improving\ngeneralizability in limited-angle ct reconstruction with sinogram extrapolation. In:\nInternational Conference on Medical Image Computing and Computer-Assisted\nIntervention. pp. 86–96. Springer (2021)\n25. Wang, Z., Bovik, A.C., Sheikh, H.R., Simoncelli, E.P.: Image quality assessment:\nfrom error visibility to structural similarity. IEEE transactions on image processing\n13 (4), 600–612 (2004)\n26. Wu, Q., Li, Y., Xu, L., Feng, R., Wei, H., Yang, Q., Yu, B., Liu, X., Yu, J., Zhang,\nY.: Irem: High-resolution magnetic resonance image reconstruction via implicit\nneural representation. In: International Conference on Medical Image Computing\nand Computer-Assisted Intervention. pp. 65–74. Springer (2021)\n27. Ying, X., Guo, H., Ma, K., Wu, J., Weng, Z., Zheng, Y.: X2ct-gan: reconstructing\nct from biplanar x-rays with generative adversarial networks. In: Proceedings of the\nIEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 10619–\n10628 (2019)\n28. Zang, G., Idoughi, R., Li, R., Wonka, P., Heidrich, W.: Intratomo: Self-supervised\nlearning-based tomography via sinogram synthesis and prediction. In: Proceedings\nof the IEEE/CVF International Conference on Computer Vision. pp. 1960–1970\n(2021)",
+  "payload": {
+    "dataset": [
+      {
+        "k": "人体器官数据集来源",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "人体器官数据集名称",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "人体器官CT维度",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "体模数据集采集设备",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "体模数据集CT维度",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "体模数据集探测器分辨率",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      }
+    ],
+    "acquisition": [
+      {
+        "k": "人体器官数据投影数量",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "人体器官数据投影噪声",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "人体器官数据角度范围",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "体模数据投影数量",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "体模数据角度范围",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "SOD",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "SDD",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      }
+    ],
+    "training": [
+      {
+        "k": "优化器",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "初始学习率",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "学习率衰减后取值",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "batch size",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "每条射线采样点数",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      },
+      {
+        "k": "迭代次数",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      }
+    ],
+    "loss": [
+      {
+        "k": "损失函数",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      }
+    ],
+    "metrics": [
+      {
+        "k": "评价指标",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      }
+    ],
+    "results": [],
+    "baselines": [
+      {
+        "k": "对比基线",
+        "v": "论文未说明",
+        "page": null,
+        "excerpt": null
+      }
+    ]
+  }
+}

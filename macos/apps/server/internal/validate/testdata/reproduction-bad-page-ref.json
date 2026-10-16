@@ -1,0 +1,70 @@
+{
+  "name": "reproduction-bad-page-ref",
+  "kind": "reproduction",
+  "expect": {
+    "ok": false
+  },
+  "source": "=== Page 1 ===\nWe train using 50 views and report PSNR of 33.05 dB on the Walnut dataset.\nThe loss weight lambda is set to 0.5 and training takes 12 hours on one GPU.\n=== Page 2 ===\nTable 1 compares methods.\nNAF: PSNR 33.05 dB, SSIM 0.912\nFDK: PSNR 29.10 dB, SSIM 0.845\nReferences\n[1] Someone et al.",
+  "payload": {
+    "resources": [
+      {
+        "finding": {
+          "k": "数据可得性",
+          "v": "见原文",
+          "page": 1,
+          "excerpt": "We train using 50 views"
+        },
+        "assessment": "见 Page 9",
+        "action": "核对授权"
+      }
+    ],
+    "environment": [
+      {
+        "finding": {
+          "k": "特殊算子",
+          "v": "见原文",
+          "page": 1,
+          "excerpt": "training takes 12 hours on one GPU"
+        },
+        "assessment": "见 Page 1",
+        "action": "确认算子实现"
+      }
+    ],
+    "cost": [
+      {
+        "finding": {
+          "k": "训练时长",
+          "v": "见原文",
+          "page": 1,
+          "excerpt": "training takes 12 hours on one GPU"
+        },
+        "assessment": "见 Page 1",
+        "action": "记录墙钟时间"
+      }
+    ],
+    "missing": [
+      {
+        "finding": {
+          "k": "几何参数未知",
+          "v": "论文未说明",
+          "page": null,
+          "excerpt": null
+        },
+        "assessment": "论文未说明几何参数",
+        "action": "邮件询问作者"
+      }
+    ],
+    "risks": [
+      {
+        "finding": {
+          "k": "评测协议风险",
+          "v": "见原文",
+          "page": 1,
+          "excerpt": "report PSNR of 33.05 dB"
+        },
+        "assessment": "见 Page 1",
+        "action": "对齐 PSNR 计算方式"
+      }
+    ]
+  }
+}

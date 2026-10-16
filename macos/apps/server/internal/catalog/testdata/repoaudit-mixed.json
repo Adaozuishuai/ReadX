@@ -1,0 +1,1 @@
+{"name":"repoaudit-mixed","kind":"repoaudit","snapshot":{"files":[{"path":"requirements.txt","lines":["torch==2.0"]},{"path":"src/train.py","lines":["# download data from https://drive.google.com/xyz","ckpt = download('https://example.com/pretrained.pth')","print('https://compressed.example/very/long/line')"]},{"path":"src/notes.py","lines":["no url here"]}]}}

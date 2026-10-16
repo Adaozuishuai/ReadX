@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- CBCT 精读 v2 应用图标 -->
+  <!-- 母题：一本摊开的书（阅读）+ 锥束扇形射线（CBCT）+ 页签高亮（批注） -->
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFDF8"/>
+      <stop offset="100%" stop-color="#F3EBDD"/>
+    </linearGradient>
+    <linearGradient id="spine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C4603A"/>
+      <stop offset="100%" stop-color="#A84A28"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角方形底：暖纸色，细墨线描边（与应用卡片语言一致） -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#paper)"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" stroke="#E3DBCA" stroke-width="8"/>
+
+  <!-- 锥束扇形：从顶部源点向下张开的射线束，落在书页上 -->
+  <g stroke="#B1542C" stroke-opacity="0.20" stroke-width="10" stroke-linecap="round">
+    <path d="M256 96 L130 330"/>
+    <path d="M256 96 L176 356"/>
+    <path d="M256 96 L256 372"/>
+    <path d="M256 96 L336 356"/>
+    <path d="M256 96 L382 330"/>
+  </g>
+  <path d="M130 330 A 150 150 0 0 0 382 330" stroke="#B1542C" stroke-opacity="0.32" stroke-width="12" fill="none" stroke-linecap="round"/>
+
+  <!-- 源点 -->
+  <circle cx="256" cy="96" r="26" fill="#B1542C"/>
+  <circle cx="256" cy="96" r="11" fill="#FFFDF8"/>
+
+  <!-- 摊开的书：左右两页 + 中缝书脊 -->
+  <path d="M96 336 C 150 312, 216 312, 248 336 L 248 428 C 216 404, 150 404, 96 428 Z" fill="#FFFFFF" stroke="#8A7B66" stroke-width="9" stroke-linejoin="round"/>
+  <path d="M416 336 C 362 312, 296 312, 264 336 L 264 428 C 296 404, 362 404, 416 428 Z" fill="#FFFFFF" stroke="#8A7B66" stroke-width="9" stroke-linejoin="round"/>
+  <path d="M256 340 L 256 426" stroke="url(#spine)" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- 左页两行文字线 + 右页一条高亮批注（琥珀mark） -->
+  <g stroke="#9A9081" stroke-width="9" stroke-linecap="round" opacity="0.85">
+    <path d="M124 366 L 216 360"/>
+    <path d="M124 392 L 200 387"/>
+  </g>
+  <path d="M290 372 L 386 366" stroke="#E0A32E" stroke-width="16" stroke-linecap="round" opacity="0.9"/>
+</svg>

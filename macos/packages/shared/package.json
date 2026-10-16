@@ -1,0 +1,24 @@
+{
+  "name": "@cbct/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "v2 前后端共享的 API 契约类型（与 Go handler 的 JSON tag 一一对应）",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test dist/text.test.js dist/annotate.test.js dist/pdfLayout.test.js dist/outline.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.9.2"
+  }
+}
