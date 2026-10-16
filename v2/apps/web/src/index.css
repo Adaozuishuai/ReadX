@@ -9,6 +9,25 @@
   font-display: swap;
 }
 
+/* Route only numeric glyphs to Times New Roman while keeping the app's text face. */
+@font-face {
+  font-family: 'Instrument Sans';
+  src: local('Times New Roman'), local('TimesNewRomanPSMT'), local('Liberation Serif');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0030-0039, U+FF10-FF19;
+}
+
+@font-face {
+  font-family: 'Instrument Sans';
+  src: local('Times New Roman Bold'), local('TimesNewRomanPS-BoldMT'), local('Liberation Serif Bold');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0030-0039, U+FF10-FF19;
+}
+
 @theme {
   --font-sans: 'Instrument Sans', 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
   --font-serif: 'Instrument Sans', Georgia, 'Songti SC', serif;
@@ -942,3 +961,19 @@ button:disabled { opacity:.5;cursor:default; }
 .reading-table-scroll { max-width:100%; overflow:auto; }
 .reading-table-scroll table { border-collapse:collapse; font-size:12px; min-width:100%; }
 .reading-table-scroll th,.reading-table-scroll td { border:1px solid var(--color-line); padding:6px 8px; white-space:nowrap; }
+
+.paper-visuals { margin-top:18px; padding-top:12px; border-top:1px solid var(--color-line); }
+.paper-visuals > h3 { margin:0 0 10px; font-size:13px; font-weight:650; }
+.paper-visual-card { overflow:hidden; margin:10px 0; border:1px solid var(--color-line); border-radius:10px; background:var(--color-surface); }
+.paper-visual-card > a { display:block; padding:6px; background:#f5f3ee; }
+.paper-visual-card img { display:block; width:100%; max-height:360px; object-fit:contain; }
+.paper-visual-caption { display:grid; gap:5px; padding:9px 10px; font-size:12px; }
+.paper-visual-caption > span { color:var(--color-ink-faint); font-size:10px; }
+.paper-visual-caption > p { margin:2px 0; line-height:1.6; }
+.paper-visual-caption > button { justify-self:start; color:var(--color-accent); font-size:11px; }
+.reading-formula { overflow-x:auto; margin:10px 0; padding:12px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-surface-sunk); }
+.reading-formula-render { min-width:max-content; }
+.reading-formula details { margin-top:8px; color:var(--color-ink-faint); font-size:11px; }
+.reading-formula code { display:block; margin-top:5px; overflow-wrap:anywhere; color:var(--color-ink); }
+.reading-math-inline { display:inline-block; vertical-align:middle; }
+.reading-math-display { display:block; overflow-x:auto; margin:5px 0; }

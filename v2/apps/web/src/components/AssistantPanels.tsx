@@ -14,6 +14,10 @@ import type { DocumentSummary } from '@cbct/shared';
 import { ResearchNotesBlock, DetailedResultsBlock, ReproductionNotesBlock } from './DeepReadingBlocks';
 import { ReproductionSection } from './ReproductionSection';
 import type { ParagraphQuestion } from './ParagraphActions';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { usePaperVisuals } from '../hooks/usePaperVisuals';
+import { PaperVisualGallery } from './PaperVisualGallery';
+import { MathText } from './FormulaContent';
 
 export type AssistantTab = 'chat' | 'reading' | 'notes';
 
@@ -34,6 +38,7 @@ export function AssistantSidebar({
   format = 'pdf',
   paragraphQuestion,
   document,
+  pdfDocument,
 }: {
   apiKey: string | null;
   onCite: (page: number) => void;
@@ -43,6 +48,7 @@ export function AssistantSidebar({
   onTabChange: (tab: AssistantTab) => void;
   format?: 'pdf' | 'epub';
   document?: DocumentSummary | null;
+  pdfDocument?: PDFDocumentProxy | null;
   paragraphQuestion?: ParagraphQuestion | null;
 }) {
   const [status, setStatus] = useState<AIStatus | null>(null);
@@ -124,6 +130,8 @@ export function AssistantSidebar({
       {format !== 'epub' && <div className={tab === 'reading' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
         <ReadingPane
           document={document}
+          pdfDocument={pdfDocument}
+          enabled={tab === 'reading'}
           apiKey={apiKey}
           onCite={onCite}
           disabled={!status?.configured}
@@ -310,10 +318,13 @@ const READING_STEPS: { kind: ReadingKind; label: string }[] = [
   { kind: 'experiment', label: '实验配置' }, { kind: 'results', label: '结果分析' },
   { kind: 'reproduction', label: '代码复现' },
 ];
-function ReadingPane({ apiKey, onCite, disabled, document }: {
+function ReadingPane({ apiKey, onCite, disabled, document, pdfDocument, enabled }: {
   apiKey: string | null; onCite: (page: number) => void; disabled: boolean; document?: DocumentSummary | null;
+  pdfDocument?: PDFDocumentProxy | null; enabled: boolean;
 }) {
   const { entries, loading, error, generating, generate } = useReadings(apiKey);
+  const { visuals, progress: visualProgress, error: visualError } = usePaperVisuals(pdfDocument ?? null, enabled);
+  const waitingPDF = enabled && !pdfDocument;
   const [active, setActive] = useState<ReadingKind>('motivation');
   const [revision, setRevision] = useState(0);
   const [saveError, setSaveError] = useState('');
@@ -326,7 +337,7 @@ function ReadingPane({ apiKey, onCite, disabled, document }: {
   };
   return <div className="min-h-0 flex-1 overflow-y-auto p-3" aria-label="五重奏精读">
     <div className="reading-steps" role="tablist" aria-label="精读步骤">{READING_STEPS.map((step, index) => <button key={step.kind} role="tab" aria-selected={active === step.kind} onClick={() => setActive(step.kind)}>{index + 1}. {step.label}</button>)}</div>
-    <div className="reading-generate"><strong>{label}</strong><button disabled={!apiKey || disabled || generating !== null} onClick={() => void generate(active)}>{generating === active ? '生成中…' : `${entry ? '重新生成' : '生成'}${label}`}</button></div>
+    <div className="reading-generate"><strong>{label}</strong><button disabled={!apiKey || disabled || generating !== null || visualProgress !== null || waitingPDF} onClick={() => void generate(active, visuals.map(({ id, kind, page, caption, suggestedStep }) => ({ id, kind, page, caption, suggestedStep })))}>{generating === active ? '生成中…' : waitingPDF || visualProgress ? '图表识别中…' : `${entry ? '重新生成' : '生成'}${label}`}</button></div>
     {loading && <p>读取精读产物…</p>}
     {error && <p role="alert" className="text-bad">{error}</p>}
     {!loading && !entry && <p className="text-[13px] text-ink-soft">尚无{label}记录。生成后自动保存，可点击页码回到原文核对。</p>}
@@ -338,6 +349,7 @@ function ReadingPane({ apiKey, onCite, disabled, document }: {
       {saveError && <p role="alert" className="text-bad">{saveError}</p>}
       {document && <ReproductionSection document={document} documents={[document]} onPick={() => undefined} refreshToken={revision} />}
     </>}
+    <PaperVisualGallery visuals={visuals} entries={entries} activeStep={active} progress={visualProgress} error={visualError} waitingPDF={waitingPDF} onCite={onCite} />
   </div>;
 }
 
@@ -379,9 +391,9 @@ function ExperimentBlock({
                     key={`${field.k}-${index}`}
                     className="flex gap-2 text-[12px] leading-snug"
                   >
-                    <dt className="w-24 shrink-0 text-ink-soft">{field.k}</dt>
+                    <dt className="w-24 shrink-0 text-ink-soft"><MathText text={field.k} /></dt>
                     <dd className="min-w-0 flex-1">
-                      {field.v}
+                      <MathText text={field.v} />
                       {field.page != null ? (
                         <button
                           type="button"

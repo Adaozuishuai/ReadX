@@ -11,6 +11,7 @@ import { layoutFromPDF } from '../api/pdfLayout';
 import { ResizeHandle } from './ResizeHandle';
 import { EPUBView } from './EPUBView';
 import { ParagraphActions, type SelectedParagraph, type ParagraphQuestion } from './ParagraphActions';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 type ReadingMode = 'source' | 'parallel' | 'translation';
 interface Props {
@@ -565,6 +566,7 @@ export function ReaderScreen({
             key={documentKey}
             apiKey={documentKey}
             document={selected}
+            pdfDocument={pdf.document as PDFDocumentProxy | null}
             format={epub ? 'epub' : 'pdf'}
             onCite={onCite}
             annotations={annotations}

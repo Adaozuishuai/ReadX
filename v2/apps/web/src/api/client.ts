@@ -111,6 +111,14 @@ export interface ReadingEntry {
   updatedAt: string;
 }
 
+export interface ReadingVisualReference {
+  id: string;
+  kind: 'figure' | 'table';
+  page: number;
+  caption: string;
+  suggestedStep: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
+}
+
 export interface ReadingsResponse {
   key: string;
   entries: Record<string, unknown>;
@@ -712,10 +720,10 @@ export const api = {
         signal,
       },
     ),
-  generate: (key: string, kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction') =>
+  generate: (key: string, kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction', visuals: ReadingVisualReference[] = []) =>
     request<GenerateResponse>('/v1/ai/generate', {
       method: 'POST',
-      body: { key, kind },
+      body: { key, kind, visuals },
     }),
   documents: (
     signal?: AbortSignal,

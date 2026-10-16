@@ -1,5 +1,6 @@
 import type { ReadingEntry } from '../api/client';
 import type { ReadingField } from '../hooks/useReadings';
+import { LatexFormula, MathText } from './FormulaContent';
 
 function isReadingField(value: unknown): value is ReadingField {
   if (!value || typeof value !== 'object') return false;
@@ -10,7 +11,7 @@ function isReadingField(value: unknown): value is ReadingField {
 export function EvidenceField({ field, onCite }: { field: ReadingField; onCite: (page: number) => void }) {
   if (!isReadingField(field)) return <p>此条目格式无法解析，请对照原始记录。</p>;
   return <div className="reading-fact">
-    <strong>{field.k}</strong><p>{field.v}</p>
+    <strong><MathText text={field.k} /></strong><p><MathText text={field.v} /></p>
     {field.page != null && <button onClick={() => onCite(field.page!)}>Page {field.page}</button>}
     {field.excerpt && <details><summary>原文依据</summary><blockquote>{field.excerpt}</blockquote></details>}
   </div>;
@@ -18,14 +19,19 @@ export function EvidenceField({ field, onCite }: { field: ReadingField; onCite: 
 
 export function ResearchNotesBlock({ entry, onCite }: { entry: ReadingEntry; onCite: (page: number) => void }) {
   let sections: { title: string; fields: ReadingField[] }[] = [];
-  try { const raw = JSON.parse(entry.value); if (raw && Array.isArray(raw.sections)) sections = raw.sections.filter((section: { title?: unknown; fields?: unknown[] } | null) => section && typeof section.title === 'string' && Array.isArray(section.fields) && section.fields.every(isReadingField)); } catch { /* Legacy prose remains readable. */ }
+  let formulas: { latex: string; explanation: string; page?: number }[] = [];
+  try {
+    const raw = JSON.parse(entry.value);
+    if (raw && Array.isArray(raw.sections)) sections = raw.sections.filter((section: { title?: unknown; fields?: unknown[] } | null) => section && typeof section.title === 'string' && Array.isArray(section.fields) && section.fields.every(isReadingField));
+    if (raw && Array.isArray(raw.formulas)) formulas = raw.formulas.filter((formula: { latex?: unknown; explanation?: unknown; page?: unknown } | null) => formula && typeof formula.latex === 'string' && typeof formula.explanation === 'string' && (formula.page == null || typeof formula.page === 'number'));
+  } catch { /* Legacy prose remains readable. */ }
   if (!sections.length) {
     const parts = entry.value.split(/(Page\s+\d+)/g);
-    return <div className="whitespace-pre-wrap text-[13px] leading-relaxed">{parts.map((text, index) => /^Page\s+\d+$/.test(text) ? <button key={index} className="text-accent" onClick={() => onCite(Number(text.match(/\d+/)![0]))}>{text}</button> : text)}</div>;
+    return <div className="whitespace-pre-wrap text-[13px] leading-relaxed">{parts.map((text, index) => /^Page\s+\d+$/.test(text) ? <button key={index} className="text-accent" onClick={() => onCite(Number(text.match(/\d+/)![0]))}>{text}</button> : <MathText key={index} text={text} />)}{formulas.map((formula, index) => <div key={`formula-${index}`}><LatexFormula latex={formula.latex} /><p>{formula.explanation}{formula.page != null && <button className="ml-2 text-accent" onClick={() => onCite(formula.page!)}>Page {formula.page}</button>}</p></div>)}</div>;
   }
-  return <div>{sections.map((section, index) => <section key={index} className="reading-section"><h3>{section.title}</h3>
+  return <div>{sections.map((section, index) => <section key={index} className="reading-section"><h3><MathText text={section.title} /></h3>
     {Array.isArray(section.fields) && section.fields.map((field, index) => <EvidenceField key={index} field={field} onCite={onCite} />)}
-  </section>)}</div>;
+  </section>)}{formulas.length > 0 && <section className="reading-section"><h3>LaTeX 公式</h3>{formulas.map((formula, index) => <article key={index}><LatexFormula latex={formula.latex} /><p><MathText text={formula.explanation} />{formula.page != null && <button className="ml-2 text-accent" onClick={() => onCite(formula.page!)}>Page {formula.page}</button>}</p></article>)}</section>}</div>;
 }
 
 interface ResultTable {
@@ -42,10 +48,10 @@ export function DetailedResultsBlock({ entry, onCite }: { entry: ReadingEntry; o
   const tables = Array.isArray(result.tables) ? result.tables as ResultTable[] : [];
   if (tables.some((table) => !table || (table.caption && !isReadingField(table.caption)) || (table.protocol && !isReadingField(table.protocol)) || !Array.isArray(table.columns) || !Array.isArray(table.rows) || table.columns.some((column) => !column || typeof column.id !== 'string' || typeof column.label !== 'string' || (column.unit != null && typeof column.unit !== 'string')) || table.rows.some((row) => !row || typeof row.method !== 'string' || !Array.isArray(row.cells) || row.cells.some((cell) => !cell || typeof cell.valueText !== 'string')))) return <pre className="whitespace-pre-wrap">{entry.value}</pre>;
   return <div>{tables.map((table, index) => <section key={table.id ?? index} className="reading-section">
-    <h3>{table.caption?.v || `结果表 ${index + 1}`}</h3>
+    <h3><MathText text={table.caption?.v || `结果表 ${index + 1}`} /></h3>
     {table.caption && <EvidenceField field={table.caption} onCite={onCite} />}
     {table.protocol && <EvidenceField field={table.protocol} onCite={onCite} />}
-    <div className="reading-table-scroll"><table><thead><tr><th>方法</th>{table.columns?.map((column) => <th key={column.id}>{column.label}{column.unit && <small className="block">{column.unit}</small>}</th>)}</tr></thead>
+    <div className="reading-table-scroll"><table><thead><tr><th>方法</th>{table.columns?.map((column) => <th key={column.id}><MathText text={column.label} />{column.unit && <small className="block"><MathText text={column.unit} /></small>}</th>)}</tr></thead>
       <tbody>{table.rows?.map((row, index) => <tr key={index}><th>{row.method}</th>{table.columns?.map((column) => {
         const cell = row.cells?.find((cell) => cell.columnID === column.id);
         return <td key={column.id}>{cell?.valueText ?? '—'}{cell?.uncertaintyText && ` ± ${cell.uncertaintyText}`}</td>;

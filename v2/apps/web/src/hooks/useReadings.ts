@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { GenerateResponse, ReadingEntry } from '../api/client';
+import type { GenerateResponse, ReadingEntry, ReadingVisualReference } from '../api/client';
 import { api } from '../api/client';
 
 export type ReadingKind = 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
@@ -46,12 +46,12 @@ export function useReadings(key: string | null) {
   }, [reload]);
 
   const generate = useCallback(
-    async (kind: ReadingKind) => {
+    async (kind: ReadingKind, visuals: ReadingVisualReference[] = []) => {
       if (!key) return;
       setGenerating(kind);
       setNotice(null);
       try {
-        const result = await api.generate(key, kind);
+        const result = await api.generate(key, kind, visuals);
         setNotice(result);
         await reload();
       } catch (error) {

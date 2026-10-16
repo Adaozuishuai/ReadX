@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@cbct/shared": "0.0.0",
+    "katex": "^0.16.47",
     "pdfjs-dist": "^4.10.38",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"

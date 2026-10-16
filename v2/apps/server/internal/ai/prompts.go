@@ -46,7 +46,7 @@ func ReadingTask(kind string) string {
 	case "motivation":
 		return "解析实验动机：具体问题、既有方法局限、研究假设、贡献及实验为何这样设计。" + researchNotesContract
 	case "method":
-		return "解析方法公式：按输入→模块→输出讲清数据流、体积表示、投影约束、损失、几何设置。关键公式说明符号、作用与假设。公式转写标为「转写待核对」；符号不完整只解释作用并指向原 PDF，不拼造公式。" + researchNotesContract
+		return "解析方法公式：按输入→模块→输出讲清数据流、体积表示、投影约束、损失、几何设置。关键公式说明符号、作用与假设。公式转写标为「转写待核对」；符号不完整只解释作用并指向原 PDF，不拼造公式。" + researchNotesContract + ` 公式另列入可选字段 "formulas"：[{"latex":"不带定界符的 LaTeX 源码","explanation":"公式含义与适用条件","page":1,"excerpt":"同页连续逐字原文"}]。只转写材料中看得清的公式；不确定时不要补全或猜符号。`
 	case "reproduction":
 		return `制定代码复现计划，覆盖 resources（代码/数据/权重）、environment（依赖/特殊算子）、cost（训练时间/显存）、missing（几何/预处理/参数缺失）、risks（实现和评测协议）。只输出 JSON，五组均给出1–4项：{"resources":[{"finding":{"k":"字段","v":"原文事实或论文未说明","page":1,"excerpt":"同页逐字摘录"},"assessment":"有条件的分析，区分事实与推断","action":"可以执行的核对或复现步骤"}],"environment":[],"cost":[],"missing":[],"risks":[]}。未知信息用 v="论文未说明",page=null,excerpt=null，但必须给出核对行动。不可编造代码路径、仓库地址、运行结果；没有仓库源码时只作计划。` + PageEvidenceRule
 	case "experiment":
@@ -68,9 +68,14 @@ const researchNotesContract = `只输出 JSON：{"sections":[{"title":"章节标
 
 // ReadingSystemPrompt 对应旧版 readingSystemPrompt。
 func ReadingSystemPrompt(kind, material string) string {
-	return SystemLead + "\n" + BaseRules +
+	prompt := SystemLead + "\n" + BaseRules +
 		"\n\n【论文全文（按页标记）】\n" + material +
 		"\n\n【本次任务】" + ReadingTask(kind)
+	prompt += "\n\n【图表解析补充要求】若提供了 PDF 图表目录，JSON 根对象必须含 \"visuals\" 数组，格式为 [{\"id\":\"目录中的原样 id\",\"step\":\"motivation|method|experiment|results|reproduction\",\"analysis\":\"结合图注和正文上下文说明用途\"}]；目录中每个图表都要恰好出现一次，并分配给一个最合适的步骤。架构、模型结构和流程图通常归方法与公式；实验采集/数据集示意归实验配置；定量/定性对比、消融图和结果表归结果分析；不明确时按论文正文邻近章节和图注判断，不确定要说明。表格截图归结果分析，除非图注明确说明它是实验配置。当前请求步骤对应的图表需说明它如何支持该步骤，其他步骤只作简洁归类。目录为空时输出空数组。图注不能代替逐字证据摘录。"
+	if kind == "method" {
+		prompt += "\n方法步骤还必须含 \"formulas\" 数组，项格式为 {\"latex\":\"不带定界符的 LaTeX 源码\",\"explanation\":\"公式含义与适用条件\",\"page\":1,\"excerpt\":\"同页连续逐字原文\"}；没有可可靠转写的公式时输出空数组。只转写材料中看得清的公式，不要补全或猜符号。"
+	}
+	return prompt
 }
 
 // ChatSystemPrompt 是对话用的 system prompt：可选带上材料与本次任务。
