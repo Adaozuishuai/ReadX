@@ -14,12 +14,22 @@ export interface PaperVisualMetadata {
 }
 
 export interface PaperVisual extends PaperVisualMetadata {
-  imageURL: string;
+  imageURL: string | null;
+  debugImageURL: string | null;
+  sourcePDFURL: string | null;
+  captionBounds: VisualBounds;
+  detectedBounds: VisualBounds;
+  cropBounds: VisualBounds | null;
+  extractionStatus: 'ready' | 'crop-failed';
+  extractionError?: string;
 }
+
+export interface VisualBounds { x: number; y: number; width: number; height: number }
+export interface PaperVisualProgress { page: number; total: number; phase: 'detecting' | 'extracting' | 'source-pdf'; detected: number; failed: number }
 
 interface TextRow { text: string; x: number; y: number; width: number; height: number }
 
-const CAPTION_LABEL = /^(?:(?:supplementary|extended\s+data|appendix)\s+)?(tables?|figures?|figs?\.?|图|表)\s*[.．:：、]?\s*([a-z]?\s*\d+(?:\.\d+)*(?:[a-z])?|[ivxlcdm]+|[一二三四五六七八九十百]+)(?:\s*\([a-z0-9]+\))?/i;
+const CAPTION_LABEL = /^(?:(?:supplementary|extended\s+data|appendix)\s+)?(tables?|figures?|figs?\.?|图|表)\s*[.．:：、]?\s*([a-z]?\s*\d+(?:\.\d+)*(?:[a-z]|\s*\([a-z0-9]+\))?|[ivxlcdm]+|[一二三四五六七八九十百]+)(?:\s*\([a-z0-9]+\))?/i;
 
 function normalizeCaptionText(text: string) {
   return text.replace(/[\u00a0\u2000-\u200b\u202f\u205f\u3000]/g, ' ').replace(/[‐‑‒–—]/g, '-').replace(/\s+/g, ' ').trim();
@@ -27,7 +37,7 @@ function normalizeCaptionText(text: string) {
 
 function rowsFromPage(page: PDFPageProxy, content: TextContent): TextRow[] {
   const viewport = page.getViewport({ scale: 1 });
-  const [a, b, c, d, e, f] = viewport.transform;
+  const [a, b, c, d] = viewport.transform;
   const rows: TextRow[] = [];
   const positioned: { text: string; x: number; y: number; width: number; height: number }[] = [];
   for (const item of content.items) {
@@ -36,10 +46,13 @@ function rowsFromPage(page: PDFPageProxy, content: TextContent): TextRow[] {
     const dx = a! * m0! + c! * m1!;
     const dy = b! * m0! + d! * m1!;
     if (Math.abs(dy) > Math.abs(dx) * 0.2) continue;
-    const height = Math.max(4, Math.hypot(m2!, m3!));
-    const x = a! * m4! + c! * m5! + e!;
-    const y = b! * m4! + d! * m5! + f! - height * 0.85;
-    positioned.push({ text: item.str.trim(), x, y, width: item.width, height });
+    // Apply the page viewport to the text origin and glyph basis. This accounts
+    // for crop-box offsets, page rotation, and the current viewport scale.
+    const [x, baselineY] = viewport.convertToViewportPoint(m4!, m5!);
+    const height = Math.max(4, Math.hypot(a! * m2! + c! * m3!, b! * m2! + d! * m3!));
+    const y = baselineY - height * 0.9;
+    const width = item.width * viewport.scale;
+    positioned.push({ text: item.str.trim(), x, y, width, height });
   }
   // PDF text items are not guaranteed to arrive in visual order (especially in
   // two-column papers). Order them geometrically before assembling caption rows.
@@ -73,7 +86,9 @@ function suggestedStep(kind: PaperVisualKind, caption: string): ReadingKind {
   return kind === 'table' ? 'results' : 'method';
 }
 
-function findCaptions(page: PDFPageProxy, content: TextContent): (PaperVisualMetadata & { x: number; y: number; width: number; height: number })[] {
+type VisualCandidate = PaperVisualMetadata & { x: number; y: number; width: number; height: number };
+
+function findCaptions(page: PDFPageProxy, content: TextContent): VisualCandidate[] {
   const rows = rowsFromPage(page, content);
   const out: (PaperVisualMetadata & { x: number; y: number; width: number; height: number })[] = [];
   for (let index = 0; index < rows.length; index++) {
@@ -94,7 +109,7 @@ function findCaptions(page: PDFPageProxy, content: TextContent): (PaperVisualMet
       lines.push(candidate);
     }
     const caption = normalizeCaptionText(lines.map((line) => line.text).join(' '));
-    const number = caption.match(CAPTION_LABEL)?.[2]?.replace(/\s+/g, '') ?? String(out.length + 1);
+    const number = caption.match(CAPTION_LABEL)?.[2]?.replace(/[\s()]/g, '') ?? String(out.length + 1);
     const baseId = `${kind}-${page.pageNumber}-${number.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-')}`;
     const id = out.some((item) => item.id === baseId) ? `${baseId}-${out.length + 1}` : baseId;
     const endY = Math.max(...lines.map((line) => line.y + line.height));
@@ -106,10 +121,37 @@ function findCaptions(page: PDFPageProxy, content: TextContent): (PaperVisualMet
     });
     index += lines.length - 1;
   }
-  return out;
+  // Merge adjacent Figure 4a/4b-style sibling captions into a single figure
+  // region. This prevents multi-panel figures from being exported as fragments.
+  const groups = new Map<string, VisualCandidate[]>();
+  const consumed = new Set<string>();
+  for (const item of out) {
+    if (item.kind !== 'figure') continue;
+    const number = item.caption.match(CAPTION_LABEL)?.[2]?.replace(/[\s()]/g, '') ?? '';
+    const sibling = number.match(/^(\d+(?:\.\d+)*)([a-z])$/i);
+    if (!sibling) continue;
+    const key = `${item.page}:${sibling[1]!.toLowerCase()}`;
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+  const merged: VisualCandidate[] = [];
+  for (const [key, siblings] of groups) {
+    if (siblings.length < 2) continue;
+    const ids = siblings.map((item) => item.id);
+    ids.forEach((id) => consumed.add(id));
+    const left = Math.min(...siblings.map((item) => item.x));
+    const top = Math.min(...siblings.map((item) => item.y));
+    const right = Math.max(...siblings.map((item) => item.x + item.width));
+    const bottom = Math.max(...siblings.map((item) => item.y + item.height));
+    const caption = siblings.map((item) => item.caption).join(' · ');
+    merged.push({
+      id: `figure-${page.pageNumber}-${key.split(':')[1]}-group`, kind: 'figure', page: page.pageNumber, caption,
+      suggestedStep: suggestedStep('figure', caption), x: left, y: top, width: right - left, height: bottom - top,
+    });
+  }
+  return [...out.filter((item) => !consumed.has(item.id)), ...merged].sort((left, right) => left.y - right.y || left.x - right.x);
 }
 
-function cropRegion(viewport: { width: number; height: number }, visual: { x: number; y: number; width: number; height: number }, kind: PaperVisualKind) {
+function cropRegion(viewport: { width: number; height: number }, visual: { x: number; y: number; width: number; height: number }, kind: PaperVisualKind, side: 'before' | 'after' = kind === 'figure' ? 'before' : 'after'): VisualBounds {
   // Captions commonly occupy one column even when the figure itself spans the page.
   // Treat broad captions as full-width, otherwise preserve the column containing the caption.
   const fullWidth = visual.x < viewport.width * 0.16 && visual.x + visual.width > viewport.width * 0.84
@@ -120,10 +162,8 @@ function cropRegion(viewport: { width: number; height: number }, visual: { x: nu
   // conventional half-page crop. The whitespace scan below tightens this band.
   const context = viewport.height * 0.68;
   // Keep the caption for identification in the card, but crop it out of the image itself.
-  const top = kind === 'figure' ? Math.max(0, visual.y - context) : Math.min(viewport.height, visual.y + visual.height + 6);
-  const bottom = kind === 'figure'
-    ? Math.max(top + 1, visual.y - 6)
-    : Math.min(viewport.height, top + context);
+  const top = side === 'before' ? Math.max(0, visual.y - context) : Math.min(viewport.height, visual.y + visual.height + 6);
+  const bottom = side === 'before' ? Math.max(top + 1, visual.y - 6) : Math.min(viewport.height, top + context);
   return { x, y: top, width, height: Math.max(1, bottom - top) };
 }
 
@@ -132,45 +172,53 @@ function trimToCaptionAdjacentContent(
   crop: { x: number; y: number; width: number; height: number },
   visual: { y: number; height: number },
   kind: PaperVisualKind,
+  side: 'before' | 'after',
   scale: number,
-) {
+): VisualBounds | null {
   const x = Math.max(0, Math.floor(crop.x * scale));
   const y = Math.max(0, Math.floor(crop.y * scale));
   const width = Math.min(pageCanvas.width - x, Math.ceil(crop.width * scale));
   const height = Math.min(pageCanvas.height - y, Math.ceil(crop.height * scale));
   const context = pageCanvas.getContext('2d');
-  if (!context || width <= 0 || height <= 0) return crop;
+  if (!context || width <= 0 || height <= 0) return null;
   const pixels = context.getImageData(x, y, width, height).data;
-  const columnStride = 4;
-  const sampledWidth = Math.ceil(width / columnStride);
-  const anchor = kind === 'figure'
+  const anchor = side === 'before'
     ? Math.max(0, Math.min(height - 1, Math.floor((visual.y - 8 - crop.y) * scale)))
     : Math.max(0, Math.min(height - 1, Math.floor((visual.y + visual.height + 8 - crop.y) * scale)));
-  const direction = kind === 'figure' ? -1 : 1;
-  let nearest = -1;
-  let farthest = -1;
-  let blankRows = 0;
-  // Bridge modest gaps between panels/plot regions; stopping at the first
-  // small gap was clipping composite figures into a single panel.
-  const blankGap = Math.max(24, scale * 12);
-  for (let row = anchor; row >= 0 && row < height; row += direction) {
-    let ink = 0;
-    const offset = row * width * 4;
-    for (let column = 0; column < width; column += columnStride) {
-      const pixel = offset + column * 4;
-      if (pixels[pixel]! < 242 || pixels[pixel + 1]! < 242 || pixels[pixel + 2]! < 242) ink += 1;
+  const scan = (columnStride: number, inkThreshold: number) => {
+    const sampledWidth = Math.ceil(width / columnStride);
+    let nearest = -1;
+    let farthest = -1;
+    let blankRows = 0;
+    // A table's horizontal rules can be separated by larger row gaps than a
+    // plot's axes, so bridge a little farther for tables. Multi-scale column
+    // sampling below catches both thin rules and dense borderless cell text.
+    const blankGap = Math.max(24, scale * (kind === 'table' ? 16 : 12));
+    for (let row = anchor; row >= 0 && row < height; row += 1) {
+      let ink = 0;
+      const offset = row * width * 4;
+      for (let column = 0; column < width; column += columnStride) {
+        const pixel = offset + column * 4;
+        if (pixels[pixel]! < inkThreshold || pixels[pixel + 1]! < inkThreshold || pixels[pixel + 2]! < inkThreshold) ink += 1;
+      }
+      const hasInk = ink > Math.max(2, sampledWidth * 0.0007);
+      if (hasInk) {
+        if (nearest < 0) nearest = row;
+        farthest = row;
+        blankRows = 0;
+      } else if (nearest >= 0) {
+        blankRows += 1;
+        if (blankRows >= blankGap) break;
+      }
     }
-    const hasInk = ink > Math.max(2, sampledWidth * 0.0007);
-    if (hasInk) {
-      if (nearest < 0) nearest = row;
-      farthest = row;
-      blankRows = 0;
-    } else if (nearest >= 0) {
-      blankRows += 1;
-      if (blankRows >= blankGap) break;
-    }
-  }
-  if (nearest < 0 || farthest < 0 || Math.abs(nearest - farthest) < scale * 8) return crop;
+    if (nearest < 0 || farthest < 0 || Math.abs(nearest - farthest) < scale * 4) return null;
+    return { nearest, farthest };
+  };
+  const fine = scan(Math.max(2, Math.round(scale * 0.55)), 246);
+  const coarse = scan(Math.max(4, Math.round(scale * 1.5)), 238);
+  if (!fine && !coarse) return null;
+  const nearest = Math.min(fine?.nearest ?? Number.POSITIVE_INFINITY, coarse?.nearest ?? Number.POSITIVE_INFINITY);
+  const farthest = Math.max(fine?.farthest ?? Number.NEGATIVE_INFINITY, coarse?.farthest ?? Number.NEGATIVE_INFINITY);
   const padding = scale * 2;
   const contentStart = Math.min(nearest, farthest);
   const contentEnd = Math.max(nearest, farthest);
@@ -183,33 +231,88 @@ function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('无法编码图表截图')), 'image/png'));
 }
 
+async function debugPageImage(pageCanvas: HTMLCanvasElement, visuals: ReturnType<typeof findCaptions>, detections: (VisualBounds | null)[], crops: (VisualBounds | null)[], scale: number) {
+  const debugScale = Math.min(1, 1800 / pageCanvas.width);
+  const canvas = window.document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(pageCanvas.width * debugScale));
+  canvas.height = Math.max(1, Math.round(pageCanvas.height * debugScale));
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  context.drawImage(pageCanvas, 0, 0, canvas.width, canvas.height);
+  for (let index = 0; index < visuals.length; index++) {
+    const visual = visuals[index]!;
+    const drawBounds = (bounds: VisualBounds, color: string, lineWidth: number) => {
+      context.strokeStyle = color;
+      context.lineWidth = lineWidth;
+      context.strokeRect(bounds.x * scale * debugScale, bounds.y * scale * debugScale, bounds.width * scale * debugScale, bounds.height * scale * debugScale);
+    };
+    drawBounds({ x: visual.x, y: visual.y, width: visual.width, height: visual.height }, '#2188ff', 2);
+    const detection = detections[index];
+    if (detection) drawBounds(detection, '#ff8c00', 2);
+    const crop = crops[index];
+    if (crop) drawBounds(crop, '#12a150', 3);
+  }
+  try { return URL.createObjectURL(await canvasBlob(canvas)); }
+  finally { canvas.width = 0; canvas.height = 0; }
+}
+
 async function renderPageCrops(page: PDFPageProxy, visuals: ReturnType<typeof findCaptions>): Promise<PaperVisual[]> {
   if (!visuals.length) return [];
-  const scale = 3;
   const viewport = page.getViewport({ scale: 1 });
+  const scale = Math.min(5, 12000 / Math.max(viewport.width, viewport.height), Math.sqrt(36_000_000 / (viewport.width * viewport.height)));
   const highResolution = page.getViewport({ scale });
   const pageCanvas = window.document.createElement('canvas');
   pageCanvas.width = Math.ceil(highResolution.width);
   pageCanvas.height = Math.ceil(highResolution.height);
   const context = pageCanvas.getContext('2d');
-  if (!context) throw new Error('无法创建高清图表画布');
+  if (!context) return visuals.map((visual) => ({ ...visual, imageURL: null, debugImageURL: null, sourcePDFURL: null, captionBounds: { x: visual.x, y: visual.y, width: visual.width, height: visual.height }, detectedBounds: cropRegion(viewport, visual, visual.kind), cropBounds: null, extractionStatus: 'crop-failed', extractionError: '无法创建高清图表画布' }));
   try {
-    await page.render({ canvasContext: context, viewport: highResolution }).promise;
-    const result: PaperVisual[] = [];
-    for (const visual of visuals) {
-      const crop = trimToCaptionAdjacentContent(pageCanvas, cropRegion(viewport, visual, visual.kind), visual, visual.kind, scale);
-      const canvas = window.document.createElement('canvas');
-      canvas.width = Math.max(1, Math.ceil(crop.width * scale));
-      canvas.height = Math.max(1, Math.ceil(crop.height * scale));
-      const cropContext = canvas.getContext('2d');
-      if (!cropContext) continue;
-      cropContext.drawImage(pageCanvas, crop.x * scale, crop.y * scale, crop.width * scale, crop.height * scale, 0, 0, canvas.width, canvas.height);
-      const blob = await canvasBlob(canvas);
-      result.push({ ...visual, imageURL: URL.createObjectURL(blob) });
-      canvas.width = 0;
-      canvas.height = 0;
+    try {
+      await page.render({ canvasContext: context, viewport: highResolution }).promise;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      return visuals.map((visual) => ({ ...visual, imageURL: null, debugImageURL: null, sourcePDFURL: null, captionBounds: { x: visual.x, y: visual.y, width: visual.width, height: visual.height }, detectedBounds: cropRegion(viewport, visual, visual.kind), cropBounds: null, extractionStatus: 'crop-failed', extractionError: `PDF 页面渲染失败：${message}` }));
     }
-    return result;
+    const preferredSides = visuals.map((visual) => visual.kind === 'figure' ? 'before' as const : 'after' as const);
+    const proposed = visuals.map((visual, index) => cropRegion(viewport, visual, visual.kind, preferredSides[index]));
+    const detections: (VisualBounds | null)[] = [];
+    const crops: (VisualBounds | null)[] = [];
+    const result: PaperVisual[] = [];
+    for (let index = 0; index < visuals.length; index++) {
+      const visual = visuals[index]!;
+      const preferred = proposed[index]!;
+      const alternate = cropRegion(viewport, visual, visual.kind, preferredSides[index] === 'before' ? 'after' : 'before');
+      const preferredTrim = trimToCaptionAdjacentContent(pageCanvas, preferred, visual, visual.kind, preferredSides[index]!, scale);
+      const alternateSide = preferredSides[index] === 'before' ? 'after' : 'before';
+      const alternateTrim = trimToCaptionAdjacentContent(pageCanvas, alternate, visual, visual.kind, alternateSide, scale);
+      const preferredScore = preferredTrim ? preferredTrim.height : 0;
+      const alternateScore = alternateTrim ? alternateTrim.height * 0.82 : 0;
+      const useAlternate = alternateScore > preferredScore;
+      const detectedBounds = useAlternate ? alternate : preferred;
+      const selectedCrop = (useAlternate ? alternateTrim : preferredTrim) ?? detectedBounds;
+      let crop: VisualBounds | null = null;
+      let imageURL: string | null = null;
+      let extractionError: string | undefined;
+      try {
+        crop = selectedCrop;
+        const canvas = window.document.createElement('canvas');
+        canvas.width = Math.max(1, Math.ceil(crop.width * scale));
+        canvas.height = Math.max(1, Math.ceil(crop.height * scale));
+        const cropContext = canvas.getContext('2d');
+        if (!cropContext) throw new Error('无法创建图表裁剪画布');
+        cropContext.drawImage(pageCanvas, crop.x * scale, crop.y * scale, crop.width * scale, crop.height * scale, 0, 0, canvas.width, canvas.height);
+        imageURL = URL.createObjectURL(await canvasBlob(canvas));
+        canvas.width = 0;
+        canvas.height = 0;
+      } catch (cause) {
+        extractionError = cause instanceof Error ? cause.message : String(cause);
+      }
+      crops.push(crop);
+      detections.push(detectedBounds);
+      result.push({ ...visual, imageURL, debugImageURL: null, sourcePDFURL: null, captionBounds: { x: visual.x, y: visual.y, width: visual.width, height: visual.height }, detectedBounds, cropBounds: crop, extractionStatus: imageURL ? 'ready' : 'crop-failed', ...(extractionError ? { extractionError } : {}) });
+    }
+    const debugURL = await debugPageImage(pageCanvas, visuals, detections, crops, scale).catch(() => null);
+    return result.map((item) => ({ ...item, debugImageURL: debugURL }));
   } finally {
     pageCanvas.width = 0;
     pageCanvas.height = 0;
@@ -218,7 +321,7 @@ async function renderPageCrops(page: PDFPageProxy, visuals: ReturnType<typeof fi
 
 export function usePaperVisuals(document: PDFDocumentProxy | null, enabled: boolean) {
   const [visuals, setVisuals] = useState<PaperVisual[]>([]);
-  const [progress, setProgress] = useState<{ page: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<PaperVisualProgress | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     if (!document || !enabled) return;
@@ -226,22 +329,48 @@ export function usePaperVisuals(document: PDFDocumentProxy | null, enabled: bool
     const urls: string[] = [];
     setVisuals([]);
     setError('');
-    setProgress({ page: 0, total: document.numPages });
+    setProgress({ page: 0, total: document.numPages, phase: 'detecting', detected: 0, failed: 0 });
     void (async () => {
       try {
         const all: PaperVisual[] = [];
         for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
-          const page = await document.getPage(pageNumber);
-          const captions = findCaptions(page, await page.getTextContent());
+          setProgress({ page: pageNumber, total: document.numPages, phase: 'detecting', detected: all.length, failed: all.filter((item) => item.extractionStatus === 'crop-failed').length });
+          let page: PDFPageProxy;
+          let captions: ReturnType<typeof findCaptions>;
+          try {
+            page = await document.getPage(pageNumber);
+            captions = findCaptions(page, await page.getTextContent());
+          } catch (cause) {
+            if (!cancelled) setError((current) => [current, `第 ${pageNumber} 页图表检测失败：${cause instanceof Error ? cause.message : String(cause)}`].filter(Boolean).join('\n'));
+            continue;
+          }
+          setProgress({ page: pageNumber, total: document.numPages, phase: 'extracting', detected: all.length + captions.length, failed: all.filter((item) => item.extractionStatus === 'crop-failed').length });
           const crops = await renderPageCrops(page, captions);
           if (cancelled) {
-            crops.forEach((item) => URL.revokeObjectURL(item.imageURL));
+            crops.forEach((item) => { if (item.imageURL) URL.revokeObjectURL(item.imageURL); if (item.debugImageURL) URL.revokeObjectURL(item.debugImageURL); });
             return;
           }
-          crops.forEach((item) => urls.push(item.imageURL));
+          crops.forEach((item) => { if (item.imageURL) urls.push(item.imageURL); if (item.debugImageURL && !urls.includes(item.debugImageURL)) urls.push(item.debugImageURL); });
           all.push(...crops);
+          const fingerprint = document.fingerprints?.[0];
+          if (fingerprint) {
+            try {
+              window.localStorage.setItem(`cbct-visual-detections:${fingerprint}`, JSON.stringify(all.map(({ id, kind, page, caption, captionBounds, detectedBounds, cropBounds, extractionStatus }) => ({ id, kind, page, caption, captionBounds, detectedBounds, cropBounds, extractionStatus }))));
+            } catch { /* Detection results remain available in memory if storage is unavailable. */ }
+          }
           setVisuals([...all]);
-          setProgress({ page: pageNumber, total: document.numPages });
+          setProgress({ page: pageNumber, total: document.numPages, phase: 'detecting', detected: all.length, failed: all.filter((item) => item.extractionStatus === 'crop-failed').length });
+        }
+        if (!cancelled && all.length) {
+          setProgress({ page: document.numPages, total: document.numPages, phase: 'source-pdf', detected: all.length, failed: all.filter((item) => item.extractionStatus === 'crop-failed').length });
+          try {
+            const bytes = await document.getData();
+            if (cancelled) return;
+            const pdfURL = URL.createObjectURL(new Blob([bytes.slice().buffer], { type: 'application/pdf' }));
+            urls.push(pdfURL);
+            const withSource = all.map((item) => ({ ...item, sourcePDFURL: pdfURL }));
+            setVisuals(withSource);
+          } catch { /* Keep the high-resolution rendered export when source bytes are unavailable. */ }
         }
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
