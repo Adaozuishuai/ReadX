@@ -52,7 +52,7 @@ func serifFont(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
     .system(size: size, weight: weight, design: .default)
 }
 
-// MARK: - 视图层级自检（写 native/layout.log，用于排查渲染问题）
+// MARK: - 视图层级自检（写 macos/layout.log，用于排查渲染问题）
 
 func dumpLayoutHierarchy() {
     var lines: [String] = []
@@ -73,9 +73,9 @@ func dumpLayoutHierarchy() {
     if let res = Bundle.main.resourceURL,
        let rootStr = try? String(contentsOf: res.appendingPathComponent("ROOT.txt"), encoding: .utf8) {
         let root = URL(fileURLWithPath: rootStr.trimmingCharacters(in: .whitespacesAndNewlines))
-        try? report.write(to: root.appendingPathComponent("native/layout.log"), atomically: true, encoding: .utf8)
+        try? report.write(to: root.appendingPathComponent("macos/layout.log"), atomically: true, encoding: .utf8)
     } else {
-        try? report.write(to: URL(fileURLWithPath: "native/layout.log"), atomically: true, encoding: .utf8)
+        try? report.write(to: URL(fileURLWithPath: "macos/layout.log"), atomically: true, encoding: .utf8)
     }
 }
 

@@ -346,7 +346,7 @@ final class Store: ObservableObject {
 
     func bootLog() {
         let line = "[\(Self.nowISO())] 启动：笔记 \(notes.count) 篇 | 今日: \(today?.title.prefix(40) ?? "无") | API: \(config.hasKey ? "已配置(\(config.model ?? ""))" : "未配置") | 根目录: \(root.path)"
-        let logURL = root.appendingPathComponent("native/boot.log")
+        let logURL = root.appendingPathComponent("macos/boot.log")
         try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         var lines = ((try? String(contentsOf: logURL, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
         lines.append(line)

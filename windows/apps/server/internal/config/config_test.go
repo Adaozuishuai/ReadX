@@ -12,7 +12,7 @@ func TestResolveDataRootWalksUp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "queue.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	nested := filepath.Join(root, "v2", "apps", "server")
+	nested := filepath.Join(root, "windows", "apps", "server")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -42,11 +42,11 @@ func TestResolveDataRootAcceptsPapersDirOnly(t *testing.T) {
 
 func TestResolveDataRootInCleanV2Checkout(t *testing.T) {
 	root := t.TempDir()
-	serverDir := filepath.Join(root, "v2", "apps", "server")
+	serverDir := filepath.Join(root, "windows", "apps", "server")
 	if err := os.MkdirAll(serverDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range []string{filepath.Join(root, "v2", "package.json"), filepath.Join(serverDir, "go.mod")} {
+	for _, marker := range []string{filepath.Join(root, "windows", "package.json"), filepath.Join(serverDir, "go.mod")} {
 		if err := os.WriteFile(marker, []byte("test marker"), 0600); err != nil {
 			t.Fatal(err)
 		}

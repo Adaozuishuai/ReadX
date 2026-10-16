@@ -59,7 +59,7 @@ JS
 [ $? -eq 0 ] || fail=$((fail+1))
 
 echo "[2b/4] Markdown 表格渲染回归"
-FRONT="$ROOT/app/public/app.js" REAL="$ROOT/native/acceptance/2026-10-02/verified-v3/NAF-chat-geometry.md" "$NODE" - <<'JS'
+FRONT="$ROOT/app/public/app.js" REAL="$ROOT/macos/acceptance/2026-10-02/verified-v3/NAF-chat-geometry.md" "$NODE" - <<'JS'
 const fs = require('fs');
 const src = fs.readFileSync(process.env.FRONT, 'utf8');
 const escDef = src.match(/const esc = [\s\S]*?;\n/)[0];

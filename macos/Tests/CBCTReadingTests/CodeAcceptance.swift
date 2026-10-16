@@ -18,7 +18,7 @@ import Darwin
         try Data(#"{"papers":[{"arxiv":"2209.14540","title":"Neural Attenuation Fields for Sparse-View CBCT Reconstruction"}]}"#.utf8).write(to: temporary.appendingPathComponent("queue.json"))
         try FileManager.default.copyItem(at: workspace.appendingPathComponent("library/2022-NAF-2209.14540.pdf"), to: temporary.appendingPathComponent("library/2209.14540.pdf"))
         let store = Store(root: temporary, startTimers: false)
-        let output = workspace.appendingPathComponent("native/acceptance/" + Store.nowISO() + "/" + (ProcessInfo.processInfo.environment["CBCT_ACCEPTANCE_RUN"] ?? "code-v1"))
+        let output = workspace.appendingPathComponent("macos/acceptance/" + Store.nowISO() + "/" + (ProcessInfo.processInfo.environment["CBCT_ACCEPTANCE_RUN"] ?? "code-v1"))
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let snapshot: CodeSnapshot

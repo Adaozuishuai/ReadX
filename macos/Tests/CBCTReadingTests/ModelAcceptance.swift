@@ -51,7 +51,7 @@ import Foundation
         let store = Store(root: temporary, startTimers: false)
         store.config = try JSONDecoder().decode(Config.self, from: Data(contentsOf: workspace.appendingPathComponent("app/config.json")))
         guard store.config.hasKey else { print("No configured API key; skipped."); return }
-        let output = workspace.appendingPathComponent("native/acceptance/" + Store.nowISO() + "/" + (ProcessInfo.processInfo.environment["CBCT_ACCEPTANCE_RUN"] ?? "initial"))
+        let output = workspace.appendingPathComponent("macos/acceptance/" + Store.nowISO() + "/" + (ProcessInfo.processInfo.environment["CBCT_ACCEPTANCE_RUN"] ?? "initial"))
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 
         // module → paper → (passed, citeOK, citeTotal)

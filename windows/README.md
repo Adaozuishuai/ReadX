@@ -1,4 +1,4 @@
-# CBCT 精读 v2
+# CBCT 精读 Windows 版
 
 React + Go + Electron 的本地阅读与研究工作区。
 
@@ -7,7 +7,7 @@ React + Go + Electron 的本地阅读与研究工作区。
 需要 Node.js 20.19+、Go 1.27+；Go 工具链可由 `CBCT_V2_GO` 指定。
 
 ```powershell
-cd v2
+cd windows
 npm install
 npm run build
 npm start

@@ -12,7 +12,7 @@ enum LocalFormulaOCR {
     static func scriptURL(projectRoot: URL) -> URL {
         let bundled = Bundle.main.resourceURL?.appendingPathComponent("scripts/formula_ocr.py")
         if let bundled, FileManager.default.fileExists(atPath: bundled.path) { return bundled }
-        return projectRoot.appendingPathComponent("native/scripts/formula_ocr.py")
+        return projectRoot.appendingPathComponent("macos/scripts/formula_ocr.py")
     }
 
     static func isFormulaCandidate(kind: String, latex: String) -> Bool {
@@ -62,7 +62,7 @@ enum LocalFormulaOCR {
             throw NSError(domain: "local-formula-ocr", code: 2, userInfo: [NSLocalizedDescriptionKey: "本地公式识别器返回了无法读取的结果（退出码 \(process.terminationStatus)；\(preview)）。"])
         }
         if response.error == "missing_dependency" {
-            throw unavailable("本地公式 OCR 尚未安装。可在项目根目录运行 `native/scripts/install_formula_ocr.sh`，然后重新解析；首次使用会下载模型，之后可离线识别。")
+            throw unavailable("本地公式 OCR 尚未安装。可在项目根目录运行 `macos/scripts/install_formula_ocr.sh`，然后重新解析；首次使用会下载模型，之后可离线识别。")
         }
         guard process.terminationStatus == 0 else {
             throw NSError(domain: "local-formula-ocr", code: 3, userInfo: [NSLocalizedDescriptionKey: "本地公式 OCR 失败：\(response.message ?? "请检查模型文件后重试。")"])

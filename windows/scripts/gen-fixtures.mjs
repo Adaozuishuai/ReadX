@@ -5,7 +5,7 @@
  * 跨页拼接、配置混入结果、证据页码、结果表合法/列错位/绑定悬空、复现五组/错页引用/空组、
  * idea 的 origin 分流，以及已冻结在 testdata 中的历史样本。
  *
- * 用法：node v2/scripts/gen-fixtures.mjs
+ * 用法：node windows/scripts/gen-fixtures.mjs
  */
 import fs from 'node:fs';
 import path from 'node:path';

@@ -1,9 +1,9 @@
-# Publish only v2 source and repository entry documents.
+# Publish Windows and macOS source plus repository entry documents.
 /*
 !/.gitignore
 !/README.md
-!/v2/
-!/native/
+!/windows/
+!/macos/
 .DS_Store
 **/__pycache__/
 *.py[cod]

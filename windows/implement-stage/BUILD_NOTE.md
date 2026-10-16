@@ -16,8 +16,8 @@
 
 - `npm run build` — exit 0 after the initial feature implementation and again after widening caption-based crop bounds and correcting the Times New Roman fallback declaration. Shared, web (TypeScript + production Vite bundle), desktop TypeScript, and Go server build checks passed.
 - Follow-up `npm run build` — exit 0 after adding SSE generation progress and caption-adjacent crop trimming.
-- `go test ./...` from `v2/apps/server` — exit 0, including updated quintet-generation SSE integration coverage.
-- Follow-up `go test ./...` from `v2/apps/server` — exit 0, including bounded-concurrency ordering, malformed-paragraph isolation, import-without-translation, and concurrent import-progress coverage.
+- `go test ./...` from `windows/apps/server` — exit 0, including updated quintet-generation SSE integration coverage.
+- Follow-up `go test ./...` from `windows/apps/server` — exit 0, including bounded-concurrency ordering, malformed-paragraph isolation, import-without-translation, and concurrent import-progress coverage.
 - Tests were not run.
 
 ## Deferred

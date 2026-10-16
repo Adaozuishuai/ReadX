@@ -39,7 +39,7 @@ extension ResearchTests {
     // 真实产物：NAF 几何表必须完整解析且数值逐字保留
     @MainActor
     func testRealTableFromAcceptanceArtifact() throws {
-        let url = Store.findRoot().appendingPathComponent("native/acceptance/2026-10-02/verified-v3/NAF-chat-geometry.md")
+        let url = Store.findRoot().appendingPathComponent("macos/acceptance/2026-10-02/verified-v3/NAF-chat-geometry.md")
         guard let src = try? String(contentsOf: url, encoding: .utf8) else { return }  // 产物缺失则跳过
         let tables = Markdown.parse(src).compactMap { b -> MarkdownTable? in
             if case .table(let t) = b { return t }; return nil

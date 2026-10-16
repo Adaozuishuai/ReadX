@@ -1,7 +1,7 @@
 // Package config 负责 v2 server 的启动配置：数据根、监听地址、本地 token。
 //
 // 与旧版 windows/ 的约定保持一致：数据根就是仓库根目录（queue.json / papers/ /
-// library/ / app/data 所在处），v2 不复制数据，只在其下新建 app/data/v2/。
+// library/ / app/data 所在处），Windows 版不复制数据，只在其下新建 app/data/v2/。
 package config
 
 import (
@@ -90,7 +90,7 @@ func ResolveDataRoot(explicit, startDir string) (string, error) {
 		}
 		dir = parent
 	}
-	return "", errors.New("未能自动定位数据根目录，请从 v2 仓库启动或用 --data-root 指定")
+	return "", errors.New("未能自动定位数据根目录，请从 Windows 版目录启动或用 --data-root 指定")
 }
 
 func looksLikeDataRoot(dir string) bool {
@@ -102,7 +102,7 @@ func looksLikeDataRoot(dir string) bool {
 	}
 	// A clean v2 checkout has no legacy queue or private library. Its repository
 	// root is the default data root; runtime files are created only when needed.
-	for _, marker := range []string{filepath.Join("v2", "package.json"), filepath.Join("v2", "apps", "server", "go.mod")} {
+	for _, marker := range []string{filepath.Join("windows", "package.json"), filepath.Join("windows", "apps", "server", "go.mod")} {
 		if fi, err := os.Stat(filepath.Join(dir, marker)); err != nil || fi.IsDir() {
 			return false
 		}
