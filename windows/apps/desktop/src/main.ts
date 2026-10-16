@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, dialog, shell } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,18 +42,28 @@ if (!app.requestSingleInstanceLock()) {
 async function bootstrap(): Promise<void> {
   await app.whenReady();
 
-  // 页面内任何跳转与新窗口都不允许离开本地阅读页。
+  // 页面内的应用内跳转一律拦回本地阅读页；但指向外部的 http(s) 链接
+  // （如每日推荐的「论文来源」）交给系统浏览器打开——原先 setWindowOpenHandler
+  // 一律 deny，导致 target="_blank" 的外链点了完全没反应（连提示都没有）。
   app.on('web-contents-created', (_event, contents) => {
-    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    contents.setWindowOpenHandler(({ url }) => {
+      // 外链（target="_blank"）走系统浏览器；其余一律不开新窗口。
+      if (isExternalHTTP(url) && !sameOrigin(url)) void shell.openExternal(url);
+      return { action: 'deny' };
+    });
     contents.on('will-navigate', (event, target) => {
-      if (!sameOrigin(target)) {
-        event.preventDefault();
-        void dialog.showMessageBox({
-          type: 'warning',
-          message: '已阻止离开本地阅读页的跳转',
-          detail: target,
-        });
+      if (sameOrigin(target)) return;
+      event.preventDefault();
+      // 外链交给系统浏览器，别把阅读页导航走；非 http(s) 仍然只做拦截提示。
+      if (isExternalHTTP(target)) {
+        void shell.openExternal(target);
+        return;
       }
+      void dialog.showMessageBox({
+        type: 'warning',
+        message: '已阻止离开本地阅读页的跳转',
+        detail: target,
+      });
     });
   });
 
@@ -232,6 +242,19 @@ function startUrl(handle: ServerHandle): string {
 function sameOrigin(target: string): boolean {
   try {
     return originOf(target) === allowedOrigin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 只把 http/https 当作可以交给系统浏览器的外链。
+ * 白名单而非黑名单：file:、javascript: 等一律不外发，避免把危险协议交给 ShellExecute。
+ */
+function isExternalHTTP(target: string): boolean {
+  try {
+    const { protocol } = new URL(target);
+    return protocol === 'http:' || protocol === 'https:';
   } catch {
     return false;
   }
