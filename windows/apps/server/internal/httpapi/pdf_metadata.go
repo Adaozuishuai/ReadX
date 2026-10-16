@@ -235,5 +235,21 @@ func (s *Server) recognizePDFMetadata(ctx context.Context, filename string, hint
 	if err != nil {
 		return recognizedPaperMetadata{}, fmt.Errorf("论文信息识别失败，尚未导入：%w", err)
 	}
-	return recognizedPaperMetadata{Title: parsed.Title, TranslatedTitle: parsed.TranslatedTitle, Authors: parsed.Authors, Venue: parsed.Venue, Year: parsed.Year, DOI: normalizePublicationDOI(parsed.DOI)}, nil
+	recognized := recognizedPaperMetadata{Title: parsed.Title, TranslatedTitle: parsed.TranslatedTitle, Authors: parsed.Authors, Venue: parsed.Venue, Year: parsed.Year, DOI: normalizePublicationDOI(parsed.DOI)}
+	// 调用方可能已经知道题录（每日推荐卡片带着 OpenAlex 的 DOI/作者）：模型没识别出来的字段用 hint 兜底，
+	// 免得把已经确定的值写空——旧版链接导入是直接把卡片元数据写库的，这里不能比它更差。
+	if recognized.DOI == "" {
+		recognized.DOI = normalizePublicationDOI(hint.DOI)
+	}
+	if len(recognized.Authors) == 0 {
+		if author := strings.TrimSpace(hint.Author); author != "" {
+			recognized.Authors = []string{author}
+		}
+	}
+	if !usablePDFTitle(recognized.Title, filename) {
+		if title := strings.TrimSpace(hint.Title); title != "" {
+			recognized.Title = title
+		}
+	}
+	return recognized, nil
 }

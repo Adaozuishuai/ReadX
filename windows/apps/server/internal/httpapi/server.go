@@ -33,9 +33,16 @@ type Server struct {
 	downloadPublication func(context.Context, string, int64, func(int64, int64)) ([]byte, string, error)
 	settingsMu          sync.Mutex
 	appStateMu          sync.Mutex
-	cfg                 config.Config
-	handle              *sql.DB
-	startedAt           time.Time
+	// visionMu 只保护「版式校正缓存读 → 调模型 → 写缓存」这一小段：模型调用可能长达 120s，
+	// 绝不能借用 appStateMu，否则书库元数据、想法、复现、回收站会被一起卡住。
+	visionMu sync.Mutex
+	// graphMu 与 visionMu 同理：知识图谱抽取要先调 180s 的模型，模型调用期间不持任何锁；
+	// graphMu（以及 appStateMu）只在 load-modify-save 的短窗口内持有，否则一次抽取
+	// 会把图谱读写与其它 app_state 功能一起卡死。
+	graphMu   sync.Mutex
+	cfg       config.Config
+	handle    *sql.DB
+	startedAt time.Time
 }
 
 func New(cfg config.Config, handle *sql.DB) *Server {
@@ -71,8 +78,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/ai/settings", withAuth(s.handleAISettings))
 	mux.Handle("PUT /v1/ai/settings", withAuth(s.handleAISettings))
 	mux.Handle("POST /v1/ai/test", withAuth(s.handleAIProbe))
+	mux.Handle("POST /v1/ai/models", withAuth(s.handleAIModels))
 	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
 	mux.Handle("POST /v1/ai/generate", withAuth(s.handleAIGenerate))
+	mux.Handle("POST /v1/layout/vision", withAuth(s.handleVisionLayout))
 	mux.Handle("GET /v1/readings/{key}", withAuth(s.handleReadingGet))
 	mux.Handle("PUT /v1/readings/{key}/{kind}", withAuth(s.handleReadingPut))
 	mux.Handle("GET /v1/annotations/{key}", withAuth(s.handleAnnotationList))
@@ -98,6 +107,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PATCH /v1/idea/{id}", withAuth(s.handleIdeaPatch))
 	mux.Handle("DELETE /v1/idea/{id}", withAuth(s.handleIdeaDelete))
 	mux.Handle("GET /v1/duplicates", withAuth(s.handleDuplicates))
+	mux.Handle("GET /v1/graph", withAuth(s.handleGraphList))
+	mux.Handle("POST /v1/graph/extract", withAuth(s.handleGraphExtract))
+	mux.Handle("DELETE /v1/graph/{key}", withAuth(s.handleGraphDelete))
 
 	if s.cfg.StaticDir != "" {
 		mux.HandleFunc("/", s.handleStatic)

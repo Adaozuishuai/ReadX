@@ -5,9 +5,13 @@ import (
 	"cbctv2/server/internal/legacy"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -111,6 +115,187 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := ai.LoadConfig(path)
 	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}})
 }
+// handleAIModels 读取当前地址可用的模型列表：OpenAI 兼容与 Anthropic 都提供 GET /models。
+//
+// Key 优先用请求里刚输入的（还没保存也能先看看有哪些模型），否则回落到该「渠道|地址」已保存的 Key。
+// 这与保存逻辑一致：绝不会把别的地址的 Key 发到当前地址上。
+func (s *Server) handleAIModels(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Provider string `json:"provider"`
+		BaseURL  string `json:"baseURL"`
+		APIKey   string `json:"apiKey"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		return
+	}
+	provider := strings.TrimSpace(body.Provider)
+	if provider != "openai" && provider != "anthropic" {
+		writeError(w, 400, "只有 API 渠道能获取模型列表；CLI 渠道留空即使用它自己的默认模型")
+		return
+	}
+	base := strings.TrimRight(strings.TrimSpace(body.BaseURL), "/")
+	if base == "" {
+		writeError(w, 400, "请先填写服务地址，再获取模型列表")
+		return
+	}
+	endpoint := base
+	if !strings.HasSuffix(endpoint, "/models") {
+		endpoint += "/models"
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+		writeError(w, 400, "API 地址无效，请填写完整的 http/https 地址")
+		return
+	}
+	key := strings.TrimSpace(body.APIKey)
+	if key == "" {
+		key = s.savedConnectionKey(provider, base)
+	}
+	if key == "" {
+		writeError(w, 400, "请先填写 API Key（或先保存设置）再获取模型列表")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		writeError(w, 400, "API 地址无效，请填写完整的 http/https 地址")
+		return
+	}
+	request.Header.Set("Accept", "application/json")
+	if provider == "anthropic" {
+		request.Header.Set("x-api-key", key)
+		request.Header.Set("anthropic-version", "2023-06-01")
+	} else {
+		request.Header.Set("Authorization", "Bearer "+key)
+	}
+	response, err := (&http.Client{}).Do(request)
+	if err != nil {
+		writeError(w, 502, "获取模型列表失败："+redactKey(err.Error(), key))
+		return
+	}
+	defer response.Body.Close()
+	detail, _ := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	if response.StatusCode != http.StatusOK {
+		text := strings.TrimSpace(string(detail))
+		if len([]rune(text)) > 200 {
+			text = string([]rune(text)[:200])
+		}
+		message := fmt.Sprintf("接口返回 %d，无法读取模型列表。", response.StatusCode)
+		if text != "" {
+			message += "\n服务端返回：" + redactKey(text, key)
+		}
+		writeError(w, 502, message)
+		return
+	}
+	names := modelNamesFromJSON(detail)
+	// 补充目录：LiteLLM 一类网关的 /model/info 会列出全部部署，其中包含 /models 未暴露给当前 Key 的
+	// 名字（例如 deepseek-v4-pro、qwen3.5）。只做并集且把 /models 的名字排在前面，确保首选仍是能直接调用的那批。
+	if catalog := modelNamesFromJSON(s.fetchModelCatalog(ctx, base, provider, key)); len(catalog) > 0 {
+		names = append(names, catalog...)
+	}
+	seen := map[string]bool{}
+	models := []string{}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		models = append(models, name)
+	}
+	sort.Strings(models)
+	if len(models) > 1000 {
+		models = models[:1000]
+	}
+	writeJSON(w, 200, map[string]any{"models": models})
+}
+
+// modelNamesFromJSON 兼容两种常见形状：OpenAI/Anthropic 的 data[].id，以及 LiteLLM /model/info 的
+// data[].model_name。**不要**取 model_info.id——那是网关内部的部署 UUID，填进模型名会被上游拒绝。
+func modelNamesFromJSON(body []byte) []string {
+	if len(body) == 0 {
+		return nil
+	}
+	type entry struct {
+		ID        string `json:"id"`
+		ModelName string `json:"model_name"`
+	}
+	var decoded struct {
+		Data   []entry `json:"data"`
+		Models []entry `json:"models"`
+	}
+	if json.Unmarshal(body, &decoded) != nil {
+		return nil
+	}
+	out := []string{}
+	for _, item := range append(decoded.Data, decoded.Models...) {
+		for _, candidate := range []string{item.ID, item.ModelName} {
+			if strings.TrimSpace(candidate) != "" {
+				out = append(out, candidate)
+			}
+		}
+	}
+	return out
+}
+
+// fetchModelCatalog 尽力而为地取一次模型目录：超时、非 200、解析不了都只当作"没有补充"。
+func (s *Server) fetchModelCatalog(ctx context.Context, base, provider, key string) []byte {
+	catalogCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(catalogCtx, http.MethodGet, base+"/model/info", nil)
+	if err != nil {
+		return nil
+	}
+	request.Header.Set("Accept", "application/json")
+	if provider == "anthropic" {
+		request.Header.Set("x-api-key", key)
+		request.Header.Set("anthropic-version", "2023-06-01")
+	} else {
+		request.Header.Set("Authorization", "Bearer "+key)
+	}
+	response, err := (&http.Client{}).Do(request)
+	if err != nil {
+		return nil
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	if err != nil {
+		return nil
+	}
+	return body
+}
+
+// savedConnectionKey 读取 app/config.json 里该「渠道|地址」自己的 Key（与保存时同一套归一化）。
+func (s *Server) savedConnectionKey(provider, base string) string {
+	path := legacy.NewPaths(s.cfg.DataRoot).ConfigFile()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	raw := map[string]any{}
+	if json.Unmarshal(body, &raw) != nil {
+		return ""
+	}
+	connections, _ := raw["connections"].(map[string]any)
+	if connections == nil {
+		return ""
+	}
+	key, _ := connections[provider+"|"+strings.TrimRight(strings.TrimSpace(base), "/")].(string)
+	return strings.TrimSpace(key)
+}
+
+// redactKey 保证上游把 Key 回显在错误里时也不会漏到界面与日志。
+func redactKey(text, key string) string {
+	if key == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, key, "[redacted]")
+}
+
 func (s *Server) handleAIProbe(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.aiConfig()
 	if err != nil || !cfg.Ready() {
