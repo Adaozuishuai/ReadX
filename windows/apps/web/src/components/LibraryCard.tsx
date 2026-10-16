@@ -88,31 +88,36 @@ export function LibraryCard({
         <span>{doc.venue || ''}</span>
       </div>
 
-      {assigned.length ? (
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          {assigned.map((name) => {
-            const definition = categories.find((item) => item.name === name);
-            return (
-              <span
-                key={name}
-                className="flex items-center gap-1 rounded-pill bg-surface-sunk px-1.5 py-0.5 text-[10px] text-ink-soft"
-              >
-                <span
-                  className="ann-color-dot"
-                  style={{
-                    background: categoryDot(definition?.color ?? 'slate'),
-                  }}
-                />
-                {name}
-              </span>
-            );
-          })}
-        </div>
-      ) : null}
-
       {categories.length ? (
         <details className="relative mt-1.5">
-          <summary className="w-fit cursor-pointer list-none rounded-md border border-line px-2 py-1 text-[10px] text-ink-faint hover:text-accent">＋ 归入书架</summary>
+          {/* 已归入书架的论文：标签本身就是可点按的入口，不再重复显示「＋ 归入书架」。
+              未归入的才需要这个提示。 */}
+          <summary
+            className={`w-fit cursor-pointer list-none ${assigned.length ? 'flex flex-wrap gap-1' : 'rounded-md border border-line px-2 py-1 text-[10px] text-ink-faint hover:text-accent'}`}
+            title={assigned.length ? '点按调整所属书架' : '归入书架'}
+          >
+            {assigned.length ? (
+              assigned.map((name) => {
+                const definition = categories.find((item) => item.name === name);
+                return (
+                  <span
+                    key={name}
+                    className="flex items-center gap-1 rounded-pill border border-line bg-surface-sunk px-1.5 py-0.5 text-[10px] text-ink-soft hover:text-accent"
+                  >
+                    <span
+                      className="ann-color-dot"
+                      style={{
+                        background: categoryDot(definition?.color ?? 'slate'),
+                      }}
+                    />
+                    {name}
+                  </span>
+                );
+              })
+            ) : (
+              '＋ 归入书架'
+            )}
+          </summary>
           <div className="absolute left-0 top-full z-20 mt-1 min-w-40 rounded-lg border border-line bg-surface p-2 shadow-lg">
             {categories.map((shelf) => (
               <label key={shelf.name} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] text-ink hover:bg-surface-sunk">

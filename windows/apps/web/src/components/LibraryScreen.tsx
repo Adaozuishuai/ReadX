@@ -11,9 +11,33 @@ import { LibraryCard } from './LibraryCard';
 import { LibraryTrashButton } from './LibraryTrashButton';
 import { EmptyTrashDialog } from './EmptyTrashDialog';
 import { DailyRecommendations } from './DailyRecommendations';
+import { ResizeHandle } from './ResizeHandle';
 
 type Layout = 'grid' | 'list' | 'table';
 type SortKey = 'title' | 'year' | 'status';
+
+/** 每日推荐的独立侧栏：开合与宽度都按用户上次的选择保存。 */
+const DAILY_STORAGE = 'cbct-v2-library-daily';
+const DAILY_DEFAULT_WIDTH = 360;
+const DAILY_MIN_WIDTH = 260;
+const DAILY_MAX_WIDTH = 720;
+
+function readDailyPanel(): { open: boolean; width: number } {
+  // 宽窗口默认展开（原来它常驻列表顶部），窄窗口默认收起，不挤占书库列表。
+  const fallback = { open: typeof window !== 'undefined' && window.innerWidth >= 1280, width: DAILY_DEFAULT_WIDTH };
+  if (typeof localStorage === 'undefined') return fallback;
+  try {
+    const value = JSON.parse(localStorage.getItem(DAILY_STORAGE) ?? 'null') as { open?: unknown; width?: unknown } | null;
+    return {
+      open: typeof value?.open === 'boolean' ? value.open : fallback.open,
+      width: typeof value?.width === 'number' && Number.isFinite(value.width)
+        ? Math.min(DAILY_MAX_WIDTH, Math.max(DAILY_MIN_WIDTH, value.width))
+        : fallback.width,
+    };
+  } catch {
+    return fallback;
+  }
+}
 
 const LAYOUT_STORAGE = 'cbct-v2-library-layout';
 
@@ -40,7 +64,7 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 /** 左侧导航的视图项（复刻参考实现：全部文档 / 收藏 / 回收站）。 */
-type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'reproduction' | 'trends';
+type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'reproduction' | 'graph';
 
 interface Props {
   phase: WorkspacePhase;
@@ -48,9 +72,8 @@ interface Props {
   setFilters: (next: Partial<Filters>) => void;
   selectedId: string | null;
   onOpenDocument: (id: string) => void;
-  importing: boolean;
-  importError: string | null;
-  runImport: () => void;
+  onOpenImport: () => void;
+  onOpenSettings: () => void;
   meta: ReturnType<typeof useLibraryMeta>;
   view: ViewId;
   onViewChange: (view: ViewId) => void;
@@ -70,9 +93,8 @@ export function LibraryScreen({
   setFilters,
   selectedId,
   onOpenDocument,
-  importing,
-  importError,
-  runImport,
+  onOpenImport,
+  onOpenSettings,
   meta,
   view,
   onViewChange,
@@ -89,6 +111,13 @@ export function LibraryScreen({
   const [managingCategories, setManagingCategories] = useState(false);
   const [duplicates, setDuplicates] = useState<{ primaryKey: string; keys: string[] }[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+  const [dailyOpen, setDailyOpen] = useState(() => readDailyPanel().open);
+  const [dailyWidth, setDailyWidth] = useState(() => readDailyPanel().width);
+  useEffect(() => {
+    try {
+      localStorage.setItem(DAILY_STORAGE, JSON.stringify({ open: dailyOpen, width: dailyWidth }));
+    } catch { /* Storage may be disabled. */ }
+  }, [dailyOpen, dailyWidth]);
   const [fetchingArxiv, setFetchingArxiv] = useState(false);
   const [arxivProgress, setArxivProgress] = useState('');
   const [arxivSummary, setArxivSummary] = useState('');
@@ -203,12 +232,12 @@ export function LibraryScreen({
     { id: 'shelves', label: '书架', count: activeDocuments.length },
     { id: 'favorite', label: '收藏', count: favoriteCount },
     { id: 'trash', label: '回收站', count: trashCount },
-    { id: 'trends', label: '趋势与想法' },
+    { id: 'graph', label: '知识图谱' },
     { id: 'reproduction', label: '复现准备' },
   ];
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${dailyOpen ? ' daily-open' : ''}`}>
       <aside className={`library-sidebar${collapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-brand">
           <span>CBCT 精读</span>
@@ -269,13 +298,9 @@ export function LibraryScreen({
         {managingCategories ? <CategoryManager meta={meta} onDone={() => setManagingCategories(false)} /> : null}
 
         <div className="sidebar-bottom">
-          <button
-            type="button"
-            onClick={runImport}
-            disabled={importing}
-            className="nav-item"
-          >
-            {importing ? '导入中…' : '导入旧数据'}
+          {/* 左下角：AI 助手设置。放在持久可见的侧栏底部，不再占顶栏空间。 */}
+          <button type="button" className="nav-item" onClick={onOpenSettings}>
+            AI 助手设置
           </button>
           {meta.error ? <p className="px-3 text-[10px] leading-relaxed text-bad">{meta.error}</p> : null}
         </div>
@@ -293,7 +318,7 @@ export function LibraryScreen({
               {collapsed ? '»' : '«'}
             </button>
             <h1 className="truncate text-[15px] font-medium">
-              {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'shelves' ? '我的书架' : view === 'trends' ? '趋势与想法' : '复现准备'}
+              {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'shelves' ? '我的书架' : view === 'graph' ? '知识图谱' : '复现准备'}
             </h1>
             <span className="text-[11px] text-ink-faint">{documents.length} 份文档</span>
           </div>
@@ -320,13 +345,21 @@ export function LibraryScreen({
                 {item === 'grid' ? '网格' : item === 'list' ? '列表' : '表格'}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => setDailyOpen((value) => !value)}
+              aria-pressed={dailyOpen}
+              title="每日论文推荐单独占一个侧栏；宽度可拖拽，双击分隔线复位"
+              className={`rounded-md px-2 py-1 text-[11px] transition ${dailyOpen ? 'bg-surface-sunk font-medium text-ink' : 'text-ink-faint hover:text-ink'}`}
+            >
+              每日推荐
+            </button>
           </div>
         </header>
 
         <div className="library-content">
           {arxivProgress ? <p role="status" className="mb-2 rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">{arxivProgress}</p> : null}
           {arxivSummary ? <p role="status" className="mb-2 rounded-md bg-surface-sunk px-3 py-2 text-xs text-ink-soft">{arxivSummary}</p> : null}
-          {view === 'all' ? <DailyRecommendations documents={rawDocuments} onReload={onReload} /> : null}
           {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空仅移除书库条目和关联阅读数据，所有 PDF / EPUB 文件均保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
           <div className="library-controls">
             <label className="search-field">
@@ -369,17 +402,16 @@ export function LibraryScreen({
                 <>
                   <h2>库里还没有论文</h2>
                   <p>
-                    点左下「导入旧数据」把旧版 queue.json、逐页正文缓存与精读记录导入 SQLite。
+                    点右上「＋ 导入 PDF / EPUB」选择本地文件，或从每日推荐卡片一键导入公开全文。
                     <br />
-                    导入前会自动备份到 app/data/v2/backups，旧文件只读不改。
+                    导入时会先识别题目、作者、期刊/会议与中文题名，并完成全文翻译再入库。
                   </p>
                   <button
                     type="button"
-                    onClick={runImport}
-                    disabled={importing}
-                    className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-surface shadow-sm transition hover:brightness-105 disabled:opacity-50"
+                    onClick={onOpenImport}
+                    className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-surface shadow-sm transition hover:brightness-105"
                   >
-                    {importing ? '导入中…' : '导入旧数据'}
+                    导入 PDF / EPUB
                   </button>
                 </>
               ) : (
@@ -388,7 +420,6 @@ export function LibraryScreen({
                   <p>调整搜索或清空书架/标签筛选后再看。</p>
                 </>
               )}
-              {importError ? <p className="text-[12px] text-bad">{importError}</p> : null}
             </div>
           ) : null}
 
@@ -461,6 +492,37 @@ export function LibraryScreen({
           ) : null}
         </div>
       </section>
+
+      {dailyOpen ? (
+        <>
+          <ResizeHandle
+            label="每日推荐栏宽度"
+            value={dailyWidth}
+            onStart={() => {
+              const start = dailyWidth;
+              return (delta: number) => setDailyWidth(Math.min(DAILY_MAX_WIDTH, Math.max(DAILY_MIN_WIDTH, start - delta)));
+            }}
+            onStep={(delta: number) => setDailyWidth((value) => Math.min(DAILY_MAX_WIDTH, Math.max(DAILY_MIN_WIDTH, value - delta)))}
+            onReset={() => setDailyWidth(DAILY_DEFAULT_WIDTH)}
+          />
+          <aside className="daily-sidebar" style={{ width: dailyWidth }} aria-label="每日论文推荐">
+            <header className="daily-sidebar-head">
+              <span className="truncate text-[12px] font-medium text-ink">每日论文推荐</span>
+              <button
+                type="button"
+                onClick={() => setDailyOpen(false)}
+                className="rounded-md border border-line px-2 py-0.5 text-[11px] text-ink-soft transition hover:text-ink"
+                title="收起每日推荐侧栏"
+              >
+                »
+              </button>
+            </header>
+            <div className="daily-sidebar-body">
+              <DailyRecommendations documents={rawDocuments} onReload={onReload} embedded />
+            </div>
+          </aside>
+        </>
+      ) : null}
       {emptyTrashKeys ? <EmptyTrashDialog keysToDelete={emptyTrashKeys} onClose={() => setEmptyTrashKeys(null)} onCleared={async () => { setEmptyTrashKeys(null); onTrashEmptied(); await meta.reload(); }} /> : null}
     </div>
   );

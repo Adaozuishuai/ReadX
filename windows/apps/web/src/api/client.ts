@@ -8,6 +8,7 @@ import type {
   MetaResponse,
   PageListResponse,
   PageText,
+  PDFTranslationPlan,
   WireStatus,
 } from '@cbct/shared';
 import { isApiFailure } from '@cbct/shared';
@@ -259,6 +260,23 @@ export interface TranslationResponse {
   distinct: number;
 }
 
+/** 页级版式校正的输入块：文本与坐标都来自 PDF 文本层的几何重建。 */
+export interface VisionLayoutBlock {
+  index: number;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+}
+
+export interface VisionLayoutResponse {
+  plan: PDFTranslationPlan;
+  cached: boolean;
+  model: string;
+}
+
 export interface DocumentMeta {
   key: string;
   favorite: boolean;
@@ -330,49 +348,50 @@ export interface TagListResponse {
   total: number;
 }
 
-export interface TrendFinding {
-  Topic: string;
-  Count: number;
-  Sample: {
-    papers: string[];
-    windowStart: string | null;
-    windowEnd: string | null;
-  };
-  Evidence: { category: string; value: string; evidence: string }[];
-  IsSupported: boolean;
-  Claim: string;
-  Caveat: string;
-}
+/** 图谱节点的三类实体：概念 / 方法 / 结论。 */
+export type GraphNodeKind = 'concept' | 'method' | 'conclusion';
 
-export interface TrendsResponse {
-  sample: { papers: string[]; count: number };
-  findings: TrendFinding[];
-  evidence: Record<string, string[]>;
-  coverage: { Category: string; Count: number }[];
-  minimum: number;
-}
-
-export interface IdeaEvidence {
-  id: string;
+/** 一条关系的原文依据：论文 + 页码 + 逐字摘录（服务端已对正文核验过）。 */
+export interface GraphEvidence {
   paperKey: string;
   paperTitle: string;
-  origin: string;
-  page: number | null;
+  page: number;
   excerpt: string;
-  verifiedAt: string | null;
 }
 
-export interface ResearchIdea {
+export interface GraphNode {
   id: string;
-  question: string;
-  observation: string;
-  hypothesis: string;
-  method: string;
-  experiment: string;
-  status: string;
-  evidence: IdeaEvidence[];
-  createdAt: string;
-  updatedAt: string;
+  label: string;
+  kind: GraphNodeKind;
+  docs: string[];
+  /** 模型给出的同义写法；两个不同 label 靠别名相交被视为同一实体。 */
+  aliases?: string[];
+}
+
+export interface GraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+  docs: string[];
+  evidence: GraphEvidence[];
+}
+
+export interface GraphPaper {
+  key: string;
+  title: string;
+  extractedAt: string;
+  nodeCount: number;
+  relationCount: number;
+  dropped: number;
+}
+
+export interface KnowledgeGraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  papers: GraphPaper[];
+  /** 有正文缓存的文档总数；papers 更少说明还有论文没抽取。 */
+  totalDocuments: number;
 }
 
 export interface AnnotationLocator {
@@ -613,6 +632,9 @@ export const api = {
       method: 'POST',
       body: {},
     }),
+  /** 读取当前地址可用的模型列表：Key 可传刚输入的（未保存也能先看），否则用该地址已保存的。 */
+  listModels: (body: { provider: string; baseURL: string; apiKey?: string }) =>
+    request<{ models: string[] }>('/v1/ai/models', { method: 'POST', body }),
   upload: uploadPublications,
   importURL: importRemotePublication,
   dailyRecommendations: (signal?: AbortSignal) => request<{ papers: DailyRecommendation[]; fetchedAt: string }>('/v1/discovery/daily', { signal }),
@@ -778,6 +800,12 @@ export const api = {
         signal,
       },
     ),
+  /**
+   * 页级版式校正：把整页图像交给视觉模型，换回结构计划（分组合并、角色、丢弃）。
+   * 文本仍来自几何块，模型不产出正文；服务端按图像与块指纹缓存，重复调用不再计费。
+   */
+  visionLayout: (body: { page: number; imageBase64: string; blocks: VisionLayoutBlock[] }, signal?: AbortSignal) =>
+    request<VisionLayoutResponse>('/v1/layout/vision', { method: 'POST', body, signal }),
   generate: async (
     key: string,
     kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction',
@@ -941,20 +969,17 @@ export const api = {
       groups: { primaryKey: string; keys: string[] }[];
       total: number;
     }>('/v1/duplicates', { signal }),
-  trends: (status: string, signal?: AbortSignal) =>
-    request<TrendsResponse>(`/v1/trends${query({ status })}`, { signal }),
-  ideas: (signal?: AbortSignal) =>
-    request<{ ideas: ResearchIdea[]; total: number }>('/v1/ideas', { signal }),
-  createIdea: (body: Partial<ResearchIdea>) =>
-    request<ResearchIdea>('/v1/ideas', { method: 'POST', body }),
-  patchIdea: (id: string, body: Partial<ResearchIdea>) =>
-    request<ResearchIdea>(`/v1/idea/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body,
-    }),
-  deleteIdea: (id: string) =>
-    request<{ id: string; deleted: boolean }>(
-      `/v1/idea/${encodeURIComponent(id)}`,
+  graph: (signal?: AbortSignal) =>
+    request<KnowledgeGraphResponse>('/v1/graph', { signal }),
+  /** 对一篇论文跑图谱抽取；已有结果时 force=true 才会重新调模型。 */
+  graphExtract: (key: string, force = false) =>
+    request<{ skipped: boolean; paper: GraphPaper }>(
+      '/v1/graph/extract',
+      { method: 'POST', body: { key, force } },
+    ),
+  graphRemove: (key: string) =>
+    request<{ key: string; deleted: boolean }>(
+      `/v1/graph/${encodeURIComponent(key)}`,
       { method: 'DELETE' },
     ),
 };
