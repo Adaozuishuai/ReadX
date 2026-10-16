@@ -79,44 +79,8 @@ func post(t *testing.T, bundle *httptestServerBundle, method, path, body string)
 	return res, payload
 }
 
-func TestImportEndpointIsTokenGuardedAndIdempotent(t *testing.T) {
-	bundle, _ := newImportServer(t)
-
-	req, _ := http.NewRequest(http.MethodPost, bundle.frontend.URL+"/v1/import", strings.NewReader("{}"))
-	res, err := bundle.frontend.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("导入接口必须鉴权，实际 %d", res.StatusCode)
-	}
-
-	first, payload := post(t, bundle, http.MethodPost, "/v1/import", "")
-	if first.StatusCode != http.StatusOK {
-		t.Fatalf("导入应 200，实际 %d %v", first.StatusCode, payload)
-	}
-	if payload["documentsAdded"] != float64(2) {
-		t.Fatalf("应导入 2 篇，实际 %v", payload["documentsAdded"])
-	}
-	if backup, _ := payload["backupDir"].(string); backup == "" {
-		t.Fatal("首次导入必须备份旧数据")
-	}
-
-	second, payload := post(t, bundle, http.MethodPost, "/v1/import", "")
-	if second.StatusCode != http.StatusOK {
-		t.Fatalf("重复导入应仍可执行，实际 %d", second.StatusCode)
-	}
-	if payload["documentsAdded"] != float64(0) || payload["documentsUnchanged"] != float64(2) {
-		t.Fatalf("重复导入必须幂等，实际 %v", payload)
-	}
-}
-
 func TestDocumentListFilters(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	if _, payload := post(t, bundle, http.MethodPost, "/v1/import", ""); payload["documentsAdded"] != float64(2) {
-		t.Fatal("前置导入失败")
-	}
+	bundle, _ := newSeededServer(t)
 
 	all := decode(t, get(t, bundle.frontend, "/v1/documents", bundle.token))
 	if all["total"] != float64(2) {
@@ -155,8 +119,7 @@ func TestDocumentListFilters(t *testing.T) {
 }
 
 func TestDocumentDetailPagesAndReading(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 
 	detail := decode(t, get(t, bundle.frontend, "/v1/documents/2209.14540", bundle.token))
 	document := detail["document"].(map[string]any)
@@ -191,8 +154,7 @@ func TestDocumentDetailPagesAndReading(t *testing.T) {
 }
 
 func TestUnsafeKeysRejectedOnEveryRoute(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 	for _, path := range []string{
 		"/v1/documents/..%2F..%2Fetc%2Fpasswd",
 		"/v1/documents/%2E%2E/pages",
@@ -220,8 +182,7 @@ func TestUnsafeKeysRejectedOnEveryRoute(t *testing.T) {
 }
 
 func TestPageUploadRoundTrip(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 
 	res, payload := post(t, bundle, http.MethodPut, "/v1/documents/intratomo-2021/pages/1", `{"text":"新抽取的第一页正文"}`)
 	if res.StatusCode != http.StatusOK {
@@ -256,20 +217,17 @@ func TestPageUploadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestStatusPatchSurvivesReimport(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+func TestStatusPatchPersists(t *testing.T) {
+	bundle, _ := newSeededServer(t)
 
 	res, payload := post(t, bundle, http.MethodPatch, "/v1/documents/2209.14540/status", `{"status":"done"}`)
 	if res.StatusCode != http.StatusOK || payload["status"] != "done" {
 		t.Fatalf("改状态应成功，实际 %d %v", res.StatusCode, payload)
 	}
-	if _, payload := post(t, bundle, http.MethodPost, "/v1/import", ""); payload["documentsUpdated"] == float64(0) {
-		_ = payload // 元数据未变时可能整批 unchanged，这里只关心状态是否被冲掉
-	}
+	// 重新查询：状态必须落库，不能被后续读取冲掉。
 	detail := decode(t, get(t, bundle.frontend, "/v1/documents/2209.14540", bundle.token))
 	if status := detail["document"].(map[string]any)["status"]; status != "done" {
-		t.Fatalf("重跑导入不得冲掉用户手改状态，实际 %v", status)
+		t.Fatalf("状态改动必须持久，实际 %v", status)
 	}
 	if res, _ := post(t, bundle, http.MethodPatch, "/v1/documents/2209.14540/status", `{"status":"bogus"}`); res.StatusCode != http.StatusBadRequest {
 		t.Fatalf("非法状态应 400，实际 %d", res.StatusCode)
@@ -277,8 +235,7 @@ func TestStatusPatchSurvivesReimport(t *testing.T) {
 }
 
 func TestPDFStreamingAndRange(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 
 	req, _ := http.NewRequest(http.MethodGet, bundle.frontend.URL+"/v1/documents/2209.14540/pdf", nil)
 	req.Header.Set("Authorization", "Bearer "+bundle.token)
@@ -300,20 +257,6 @@ func TestPDFStreamingAndRange(t *testing.T) {
 	}
 	if res := get(t, bundle.frontend, "/v1/documents/intratomo-2021/pdf", bundle.token); res.StatusCode != http.StatusNotFound {
 		t.Fatalf("没有本地 PDF 应 404，实际 %d", res.StatusCode)
-	}
-}
-
-func TestImportFailureReturnsActionableStatus(t *testing.T) {
-	bundle, paths := newImportServer(t)
-	if err := os.WriteFile(paths.QueueFile(), []byte(`{"papers":[`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	res, payload := post(t, bundle, http.MethodPost, "/v1/import", "")
-	if res.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("数据本身有问题应 422，实际 %d %v", res.StatusCode, payload)
-	}
-	if !strings.Contains(fmt.Sprint(payload["error"]), "queue.json") {
-		t.Fatalf("错误信息要指出是哪个文件，实际 %v", payload["error"])
 	}
 }
 

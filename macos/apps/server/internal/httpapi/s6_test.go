@@ -8,8 +8,7 @@ import (
 
 func newS6Server(t *testing.T) *httptestServerBundle {
 	t.Helper()
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 	return bundle
 }
 

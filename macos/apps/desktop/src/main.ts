@@ -66,6 +66,19 @@ async function bootstrap(): Promise<void> {
     return;
   }
 
+  // macOS 的 Dock 图标不能靠 BrowserWindow.icon 设置——那只影响窗口本身。
+  // 开发态从 node_modules/electron 启动时，Dock 默认显示 Electron 自己的图标，
+  // 必须显式 app.dock.setIcon() 才能换成我们的「读」字图标。
+  // 注意：setIcon 只接受 PNG/JPEG，传 .icns 会报 "Failed to load image"。
+  if (process.platform === 'darwin' && app.dock) {
+    try {
+      app.dock.setIcon(path.join(__dirname, '..', 'icon.png'));
+    } catch (error) {
+      // 图标缺失不应阻断启动——退回 Electron 默认图标即可
+      console.warn('[desktop] Dock 图标设置失败:', error instanceof Error ? error.message : error);
+    }
+  }
+
   createWindow();
 
   app.on('window-all-closed', () => {
@@ -206,7 +219,8 @@ function createWindow(): void {
     title: 'CBCT 精读 v2',
     // 应用图标（书页 + 锥束射线母题）：dist/main.js 的 __dirname 是 apps/desktop/dist，
     // ico 放在 apps/desktop/ 下，源码运行与打包后都按这个相对位置解析。
-    icon: path.join(__dirname, '..', 'icon.ico'),
+    // macOS 用 PNG（Electron 不认 .icns 作为窗口图标），Windows 用 .ico。
+    icon: path.join(__dirname, '..', process.platform === 'darwin' ? 'icon.png' : 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

@@ -48,9 +48,6 @@ interface Props {
   setFilters: (next: Partial<Filters>) => void;
   selectedId: string | null;
   onOpenDocument: (id: string) => void;
-  importing: boolean;
-  importError: string | null;
-  runImport: () => void;
   meta: ReturnType<typeof useLibraryMeta>;
   view: ViewId;
   onViewChange: (view: ViewId) => void;
@@ -70,9 +67,6 @@ export function LibraryScreen({
   setFilters,
   selectedId,
   onOpenDocument,
-  importing,
-  importError,
-  runImport,
   meta,
   view,
   onViewChange,
@@ -269,14 +263,6 @@ export function LibraryScreen({
         {managingCategories ? <CategoryManager meta={meta} onDone={() => setManagingCategories(false)} /> : null}
 
         <div className="sidebar-bottom">
-          <button
-            type="button"
-            onClick={runImport}
-            disabled={importing}
-            className="nav-item"
-          >
-            {importing ? '导入中…' : '导入旧数据'}
-          </button>
           {meta.error ? <p className="px-3 text-[10px] leading-relaxed text-bad">{meta.error}</p> : null}
         </div>
       </aside>
@@ -368,19 +354,7 @@ export function LibraryScreen({
               ) : total === 0 ? (
                 <>
                   <h2>库里还没有论文</h2>
-                  <p>
-                    点左下「导入旧数据」把旧版 queue.json、逐页正文缓存与精读记录导入 SQLite。
-                    <br />
-                    导入前会自动备份到 app/data/v2/backups，旧文件只读不改。
-                  </p>
-                  <button
-                    type="button"
-                    onClick={runImport}
-                    disabled={importing}
-                    className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-surface shadow-sm transition hover:brightness-105 disabled:opacity-50"
-                  >
-                    {importing ? '导入中…' : '导入旧数据'}
-                  </button>
+                  <p>点右上角「＋ 导入 PDF / EPUB」添加论文。</p>
                 </>
               ) : (
                 <>
@@ -388,7 +362,6 @@ export function LibraryScreen({
                   <p>调整搜索或清空书架/标签筛选后再看。</p>
                 </>
               )}
-              {importError ? <p className="text-[12px] text-bad">{importError}</p> : null}
             </div>
           ) : null}
 

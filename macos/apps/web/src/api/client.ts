@@ -4,7 +4,6 @@ import type {
   DocumentDetail,
   DocumentsResponse,
   HealthResponse,
-  ImportReport,
   MetaResponse,
   PageListResponse,
   PageText,
@@ -869,11 +868,6 @@ export const api = {
         body: { status },
       },
     ),
-  importLegacy: (forceBackup = false) =>
-    request<ImportReport>('/v1/import', {
-      method: 'POST',
-      body: { forceBackup },
-    }),
   documentsMeta: (signal?: AbortSignal) =>
     request<DocumentMetaResponse>('/v1/documents-meta', { signal }),
   emptyTrash: (keys: string[]) =>

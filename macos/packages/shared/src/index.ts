@@ -129,19 +129,6 @@ export interface DocumentDetail {
 }
 
 /** 一次「旧 JSON → SQLite」导入的结果。 */
-export interface ImportReport {
-  documentsAdded: number;
-  documentsUpdated: number;
-  documentsUnchanged: number;
-  pagesImported: number;
-  pagesUnchanged: number;
-  textCaches: number;
-  readingsImported: number;
-  backupDir?: string;
-  warnings: string[];
-  startedAt: string;
-  finishedAt: string;
-}
 
 declare global {
   interface Window {

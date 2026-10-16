@@ -10,8 +10,7 @@ import (
 )
 
 func TestTrashEmptyPreservesAllPaperFiles(t *testing.T) {
-	bundle, paths := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, paths := newSeededServer(t)
 	original := filepath.Join(t.TempDir(), "original-paper.pdf")
 	data := []byte("%PDF-1.4\noriginal paper content\n")
 	if err := os.WriteFile(original, data, 0600); err != nil {

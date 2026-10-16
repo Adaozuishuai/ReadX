@@ -28,9 +28,6 @@ export default function App() {
     filters,
     setFilters,
     reload,
-    importing,
-    importError,
-    runImport,
   } = useWorkspace();
   const [screen, setScreen] = useState<
     'library' | 'reader' | 'trends' | 'reproduction'
@@ -156,9 +153,6 @@ export default function App() {
           setFilters={setFilters}
           selectedId={selectedId}
           onOpenDocument={openDocument}
-          importing={importing}
-          importError={importError}
-          runImport={runImport}
           meta={libraryMeta}
           view={libraryView}
           onViewChange={(view) => {

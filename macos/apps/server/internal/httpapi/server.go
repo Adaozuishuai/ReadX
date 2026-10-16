@@ -50,7 +50,6 @@ func (s *Server) Handler() http.Handler {
 	withAuth := func(h http.HandlerFunc) http.Handler { return s.requireBearer(h) }
 	mux.Handle("/v1/meta", withAuth(s.handleMeta))
 	mux.Handle("GET /v1/documents", withAuth(s.handleDocuments))
-	mux.Handle("POST /v1/import", withAuth(s.handleImport))
 	mux.Handle("POST /v1/import/files", withAuth(s.handlePublicationUpload))
 	mux.Handle("POST /v1/import/url", withAuth(s.handlePublicationURL))
 	mux.Handle("GET /v1/import/search", withAuth(s.handleImportSearch))

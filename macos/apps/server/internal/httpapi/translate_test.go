@@ -76,8 +76,7 @@ func translate(t *testing.T, bundle *httptestServerBundle, key, body string) (*h
 }
 
 func TestTranslateRequiresConfiguration(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 	// 未写 config.json：必须明确回 503 而不是空译文。
 	res, payload := translate(t, bundle, "2209.14540", `{"segments":["We train using 50 views."]}`)
 	if res.StatusCode != http.StatusServiceUnavailable {
@@ -89,8 +88,7 @@ func TestTranslateRequiresConfiguration(t *testing.T) {
 }
 
 func TestTranslateUsesCacheWithoutCallingModel(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 	// 故意指向一个不存在的上游：只要命中缓存，就根本不该发请求。
 	writeAIConfig(t, bundle, "http://127.0.0.1:1/v1")
 
@@ -117,8 +115,7 @@ func TestTranslateUsesCacheWithoutCallingModel(t *testing.T) {
 }
 
 func TestTranslateCallsModelAndPersists(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
 		items := make([]map[string]any, len(sources))
 		for index, source := range sources {
@@ -152,8 +149,7 @@ func TestTranslateCallsModelAndPersists(t *testing.T) {
 }
 
 func TestTranslateRejectsMismatchedSegmentCount(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 	// 模型持续返回空数组；缩小到单段后仍缺失，交互翻译必须失败且不能错位落库。
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
 		return `{"items":[]}`, http.StatusOK
@@ -177,8 +173,7 @@ func TestTranslateRejectsMismatchedSegmentCount(t *testing.T) {
 }
 
 func TestTranslateDedupesRepeatedParagraphs(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 	var seen int
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
 		seen = len(sources)
@@ -210,8 +205,7 @@ func TestTranslateDedupesRepeatedParagraphs(t *testing.T) {
 }
 
 func TestTranslateGuards(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 	upstream := fakeUpstream(t, func(sources []string) (string, int) { return `{"items":[]}`, http.StatusOK })
 	writeAIConfig(t, bundle, upstream.URL)
 
@@ -230,8 +224,7 @@ func TestTranslateGuards(t *testing.T) {
 }
 
 func TestTranslatePropagatesUpstreamFailure(t *testing.T) {
-	bundle, _ := newImportServer(t)
-	post(t, bundle, http.MethodPost, "/v1/import", "")
+	bundle, _ := newSeededServer(t)
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
 		return "upstream boom", http.StatusInternalServerError
 	})
