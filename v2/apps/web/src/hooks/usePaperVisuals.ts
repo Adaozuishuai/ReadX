@@ -19,10 +19,17 @@ export interface PaperVisual extends PaperVisualMetadata {
 
 interface TextRow { text: string; x: number; y: number; width: number; height: number }
 
+const CAPTION_LABEL = /^(?:(?:supplementary|extended\s+data|appendix)\s+)?(tables?|figures?|figs?\.?|图|表)\s*[.．:：、]?\s*([a-z]?\s*\d+(?:\.\d+)*(?:[a-z])?|[ivxlcdm]+|[一二三四五六七八九十百]+)(?:\s*\([a-z0-9]+\))?/i;
+
+function normalizeCaptionText(text: string) {
+  return text.replace(/[\u00a0\u2000-\u200b\u202f\u205f\u3000]/g, ' ').replace(/[‐‑‒–—]/g, '-').replace(/\s+/g, ' ').trim();
+}
+
 function rowsFromPage(page: PDFPageProxy, content: TextContent): TextRow[] {
   const viewport = page.getViewport({ scale: 1 });
   const [a, b, c, d, e, f] = viewport.transform;
   const rows: TextRow[] = [];
+  const positioned: { text: string; x: number; y: number; width: number; height: number }[] = [];
   for (const item of content.items) {
     if (!('str' in item) || !item.str.trim()) continue;
     const [m0, m1, m2, m3, m4, m5] = item.transform;
@@ -32,19 +39,28 @@ function rowsFromPage(page: PDFPageProxy, content: TextContent): TextRow[] {
     const height = Math.max(4, Math.hypot(m2!, m3!));
     const x = a! * m4! + c! * m5! + e!;
     const y = b! * m4! + d! * m5! + f! - height * 0.85;
-    const row = rows.findLast((candidate) => Math.abs(candidate.y - y) < height * 0.35 && x >= candidate.x && x - (candidate.x + candidate.width) < height * 1.2);
+    positioned.push({ text: item.str.trim(), x, y, width: item.width, height });
+  }
+  // PDF text items are not guaranteed to arrive in visual order (especially in
+  // two-column papers). Order them geometrically before assembling caption rows.
+  positioned.sort((left, right) => left.y - right.y || left.x - right.x);
+  for (const item of positioned) {
+    const row = rows.findLast((candidate) => Math.abs(candidate.y - item.y) < Math.max(2.5, Math.min(candidate.height, item.height) * 0.4)
+      && item.x >= candidate.x - 2 && item.x - (candidate.x + candidate.width) < Math.max(12, item.height * 1.5));
     if (row) {
-      row.text += (x - row.x - row.width > height * 0.1 ? ' ' : '') + item.str;
-      row.width = Math.max(row.width, x + item.width - row.x);
-      row.height = Math.max(row.height, height);
-    } else rows.push({ text: item.str.trim(), x, y, width: item.width, height });
+      const gap = item.x - (row.x + row.width);
+      row.text += (gap > item.height * 0.1 ? ' ' : '') + item.text;
+      row.width = Math.max(row.width, item.x + item.width - row.x);
+      row.height = Math.max(row.height, item.height);
+    } else rows.push({ text: item.text, x: item.x, y: item.y, width: item.width, height: item.height });
   }
   return rows.sort((left, right) => left.y - right.y || left.x - right.x);
 }
 
 function captionType(text: string): PaperVisualKind | null {
-  if (/^(?:table|表)\s*[\divxlcdm一二三四五六七八九十]/i.test(text)) return 'table';
-  if (/^(?:fig(?:ure)?\.?|图)\s*[\divxlcdm一二三四五六七八九十]/i.test(text)) return 'figure';
+  const label = normalizeCaptionText(text).match(CAPTION_LABEL)?.[1]?.toLowerCase().replace(/\.$/, '');
+  if (label === 'table' || label === 'tables' || label === '表') return 'table';
+  if (label) return 'figure';
   return null;
 }
 
@@ -65,18 +81,22 @@ function findCaptions(page: PDFPageProxy, content: TextContent): (PaperVisualMet
     const kind = captionType(row.text);
     if (!kind) continue;
     const lines = [row];
-    for (let next = index + 1; next < rows.length && lines.length < 4; next++) {
+    for (let next = index + 1; next < rows.length && lines.length < 8; next++) {
       const candidate = rows[next]!;
       const previous = lines.at(-1)!;
       const gap = candidate.y - (previous.y + previous.height);
-      if (gap > Math.max(5, previous.height * 0.65) || gap < -2) break;
-      if (Math.abs(candidate.x - row.x) > Math.max(30, row.width * 0.2)) break;
+      if (gap > Math.max(7, previous.height * 1.15) || gap < -2) break;
+      // Caption continuations can be indented or reflowed, but should remain
+      // close to the same text column. A new caption always starts a new item.
+      if (Math.abs(candidate.x - row.x) > Math.max(42, Math.min(row.width * 0.4, 96))) break;
       if (captionType(candidate.text)) break;
+      if (/^(?:\d+(?:\.\d+)*\s+)?(?:introduction|methods?|results?|discussion|conclusion|参考文献|引言|方法|结果|讨论|结论)\b/i.test(candidate.text)) break;
       lines.push(candidate);
     }
-    const caption = lines.map((line) => line.text).join(' ').replace(/\s+/g, ' ').trim();
-    const number = caption.match(/^(?:table|fig(?:ure)?\.?|图|表)\s*([\divxlcdm一二三四五六七八九十]+[a-z]?)/i)?.[1] ?? String(out.length + 1);
-    const id = `${kind}-${page.pageNumber}-${number.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-')}`;
+    const caption = normalizeCaptionText(lines.map((line) => line.text).join(' '));
+    const number = caption.match(CAPTION_LABEL)?.[2]?.replace(/\s+/g, '') ?? String(out.length + 1);
+    const baseId = `${kind}-${page.pageNumber}-${number.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-')}`;
+    const id = out.some((item) => item.id === baseId) ? `${baseId}-${out.length + 1}` : baseId;
     const endY = Math.max(...lines.map((line) => line.y + line.height));
     out.push({
       id, kind, page: page.pageNumber, caption,
@@ -96,7 +116,9 @@ function cropRegion(viewport: { width: number; height: number }, visual: { x: nu
     || visual.width > viewport.width * 0.58;
   const x = fullWidth ? 0 : visual.x + visual.width / 2 < viewport.width / 2 ? 0 : viewport.width / 2;
   const width = fullWidth ? viewport.width : viewport.width / 2;
-  const context = viewport.height * 0.45;
+  // Tall figures and multi-panel charts often extend much farther than a
+  // conventional half-page crop. The whitespace scan below tightens this band.
+  const context = viewport.height * 0.68;
   // Keep the caption for identification in the card, but crop it out of the image itself.
   const top = kind === 'figure' ? Math.max(0, visual.y - context) : Math.min(viewport.height, visual.y + visual.height + 6);
   const bottom = kind === 'figure'
@@ -128,7 +150,9 @@ function trimToCaptionAdjacentContent(
   let nearest = -1;
   let farthest = -1;
   let blankRows = 0;
-  const blankGap = Math.max(12, scale * 4);
+  // Bridge modest gaps between panels/plot regions; stopping at the first
+  // small gap was clipping composite figures into a single panel.
+  const blankGap = Math.max(24, scale * 12);
   for (let row = anchor; row >= 0 && row < height; row += direction) {
     let ink = 0;
     const offset = row * width * 4;
