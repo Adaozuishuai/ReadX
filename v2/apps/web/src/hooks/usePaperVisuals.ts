@@ -90,10 +90,13 @@ function findCaptions(page: PDFPageProxy, content: TextContent): (PaperVisualMet
 }
 
 function cropRegion(viewport: { width: number; height: number }, visual: { x: number; y: number; width: number; height: number }, kind: PaperVisualKind) {
-  const fullWidth = visual.x < viewport.width * 0.3 && visual.x + visual.width > viewport.width * 0.7;
+  // Captions commonly occupy one column even when the figure itself spans the page.
+  // Treat broad captions as full-width, otherwise preserve the column containing the caption.
+  const fullWidth = visual.x < viewport.width * 0.16 && visual.x + visual.width > viewport.width * 0.84
+    || visual.width > viewport.width * 0.58;
   const x = fullWidth ? 0 : visual.x + visual.width / 2 < viewport.width / 2 ? 0 : viewport.width / 2;
   const width = fullWidth ? viewport.width : viewport.width / 2;
-  const context = Math.min(330, viewport.height * 0.42);
+  const context = viewport.height * 0.55;
   const top = kind === 'figure' ? Math.max(0, visual.y - context) : Math.max(0, visual.y - 8);
   const bottom = kind === 'figure'
     ? Math.min(viewport.height, visual.y + visual.height + 10)

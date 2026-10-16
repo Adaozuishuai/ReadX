@@ -12,7 +12,7 @@
 /* Route only numeric glyphs to Times New Roman while keeping the app's text face. */
 @font-face {
   font-family: 'Instrument Sans';
-  src: local('Times New Roman'), local('TimesNewRomanPSMT'), local('Liberation Serif');
+  src: local('Times New Roman'), local('TimesNewRomanPSMT');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -21,7 +21,7 @@
 
 @font-face {
   font-family: 'Instrument Sans';
-  src: local('Times New Roman Bold'), local('TimesNewRomanPS-BoldMT'), local('Liberation Serif Bold');
+  src: local('Times New Roman Bold'), local('TimesNewRomanPS-BoldMT');
   font-weight: 700;
   font-style: normal;
   font-display: swap;

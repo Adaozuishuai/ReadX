@@ -10,12 +10,14 @@
 
 ## Run record
 
-- `npm run build` — exit 0. Shared, web (TypeScript + production Vite bundle), desktop TypeScript, and Go server builds passed after the feature changes.
+- `npm run build` — exit 0 after the initial feature implementation and again after widening caption-based crop bounds and correcting the Times New Roman fallback declaration. Shared, web (TypeScript + production Vite bundle), desktop TypeScript, and Go server build checks passed.
 - Tests were not run.
 
 ## Deferred
 - Native macOS integration; the five-step PDF flow changed here is v2's React reader.
 - Figures without readable text captions (for example image-only scanned pages) are not catalogued.
-- Crops are rendered from the original PDF page at 3× scale and include nearby caption/context; embedded PDF image objects are not extracted as standalone media.
+- Crops are rendered from the original PDF page at 3× scale and include up to 55% of page height around the caption. Exact figure boundaries are not encoded in PDF text, so unusually tall figures may still extend beyond the crop.
+- Embedded PDF image objects are not extracted as standalone media. The AI receives caption/page metadata and paper text, while the high-resolution page crops are shown next to the relevant step in the UI.
+- Times New Roman is selected when installed locally; other machines fall back to the app's existing font stack. No Times New Roman font files are redistributed.
 
 ## Blockers
