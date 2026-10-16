@@ -100,7 +100,7 @@ async function imageObjectBounds(page: PDFPageProxy, viewport: { transform: numb
     const args = operators.argsArray[index] as unknown[] | undefined;
     if (op === OPS.save) stack.push(transform);
     else if (op === OPS.restore) transform = stack.pop() ?? [1, 0, 0, 1, 0, 0];
-    else if (op === OPS.transform && args?.length && Array.isArray(args[0])) transform = Util.transform(transform, args[0] as number[]);
+    else if (op === OPS.transform && args?.length === 6 && args.every((value) => typeof value === 'number')) transform = Util.transform(transform, args as number[]);
     else if (op === OPS.paintFormXObjectBegin && args?.length && Array.isArray(args[0])) {
       stack.push(transform);
       transform = Util.transform(transform, args[0] as number[]);
@@ -115,7 +115,7 @@ async function imageObjectBounds(page: PDFPageProxy, viewport: { transform: numb
     const right = Math.min(viewport.width, Math.max(...xs));
     const bottom = Math.min(viewport.height, Math.max(...ys));
     const candidate = { x, y, width: right - x, height: bottom - y };
-    if (candidate.width >= 48 && candidate.height >= 36 && candidate.width * candidate.height >= viewport.width * viewport.height * 0.004
+    if (candidate.width >= 68 && candidate.height >= 50 && candidate.width * candidate.height >= viewport.width * viewport.height * 0.012
       && candidate.width * candidate.height <= viewport.width * viewport.height * 0.82) bounds.push(candidate);
   }
   // Merge overlapping/touching raster tiles (common in scanned charts) into
@@ -137,17 +137,40 @@ async function imageObjectBounds(page: PDFPageProxy, viewport: { transform: numb
   return merged;
 }
 
-function uncaptionedImageCandidates(page: number, images: VisualBounds[], captions: VisualCandidate[]): VisualCandidate[] {
-  const unmatched = images.filter((image) => !captions.some((caption) => {
+function associateImageObjects(page: number, images: VisualBounds[], captions: VisualCandidate[], viewport: { width: number; height: number }): VisualCandidate[] {
+  const used = new Set<VisualBounds>();
+  const associated = captions.map((caption) => {
+    const candidates = images.map((image) => {
+      const gap = image.y + image.height < caption.y ? caption.y - (image.y + image.height) : caption.y + caption.height < image.y ? image.y - (caption.y + caption.height) : 0;
+      const horizontalOverlap = Math.min(image.x + image.width, caption.x + caption.width) - Math.max(image.x, caption.x);
+      const areaRatio = image.width * image.height / (viewport.width * viewport.height);
+      const preferredSide = caption.kind === 'figure' ? image.y + image.height <= caption.y + 12 : image.y >= caption.y + caption.height - 12;
+      // PDF image operators frequently describe tiles or individual panels,
+      // not the complete figure. Keep caption-based page crops unless an image
+      // object is large and clearly on the expected side of that caption.
+      if (used.has(image) || !preferredSide || gap > 96 || horizontalOverlap < -20 || areaRatio < 0.035
+        || image.width < viewport.width * 0.18 || image.height < viewport.height * 0.08) return null;
+      const score = gap + (horizontalOverlap < 0 ? 18 : 0);
+      return { image, score };
+    }).filter((item): item is { image: VisualBounds; score: number } => item !== null).sort((left, right) => left.score - right.score);
+    const match = candidates[0];
+    if (!match) return caption;
+    used.add(match.image);
+    return { ...caption, imageBounds: match.image };
+  });
+  const unmatched = images.filter((image) => image.width * image.height >= viewport.width * viewport.height * 0.075
+    && image.width >= viewport.width * 0.2 && image.height >= viewport.height * 0.1
+    && !used.has(image) && !captions.some((caption) => {
     const gap = image.y + image.height < caption.y ? caption.y - (image.y + image.height) : caption.y + caption.height < image.y ? image.y - (caption.y + caption.height) : 0;
     const horizontalOverlap = Math.min(image.x + image.width, caption.x + caption.width) - Math.max(image.x, caption.x);
-    return gap < 150 && horizontalOverlap > -24;
+    return gap < 90 && horizontalOverlap > -18;
   }));
-  return unmatched.map((image, index) => ({
-    id: `figure-${page}-image-${index + 1}`, kind: 'figure', page,
-    caption: `PDF 图像对象 · Page ${page}（未匹配到图注）`, suggestedStep: 'method',
+  const uncaptioned = unmatched.map((image, index) => ({
+    id: `figure-${page}-image-${index + 1}`, kind: 'figure' as const, page,
+    caption: `PDF 图像对象 · Page ${page}（未匹配到图注）`, suggestedStep: 'method' as const,
     x: image.x, y: image.y, width: image.width, height: image.height, imageBounds: image,
   }));
+  return [...associated, ...uncaptioned];
 }
 
 function findCaptions(page: PDFPageProxy, content: TextContent): VisualCandidate[] {
@@ -368,9 +391,10 @@ async function renderPageCrops(page: PDFPageProxy, visuals: ReturnType<typeof fi
       const preferredTrim = trimToCaptionAdjacentContent(pageCanvas, preferred, visual, visual.kind, preferredSides[index]!, scale);
       const alternateSide = preferredSides[index] === 'before' ? 'after' : 'before';
       const alternateTrim = trimToCaptionAdjacentContent(pageCanvas, alternate, visual, visual.kind, alternateSide, scale);
-      const preferredScore = preferredTrim ? preferredTrim.height : 0;
-      const alternateScore = alternateTrim ? alternateTrim.height * 0.82 : 0;
-      const useAlternate = alternateScore > preferredScore;
+      // Figure/Table convention is a strong prior. Switch sides only when the
+      // expected side has no connected visual content; choosing the larger ink
+      // block often grabbed a neighbouring paragraph or another chart.
+      const useAlternate = !preferredTrim && !!alternateTrim;
       const detectedBounds = useAlternate ? alternate : preferred;
       const selectedCrop = (useAlternate ? alternateTrim : preferredTrim) ?? detectedBounds;
       let crop: VisualBounds | null = null;
@@ -430,7 +454,7 @@ export function usePaperVisuals(document: PDFDocumentProxy | null, enabled: bool
           try {
             const viewport = page.getViewport({ scale: 1 });
             const images = await imageObjectBounds(page, viewport);
-            captions = [...captions, ...uncaptionedImageCandidates(pageNumber, images, captions)];
+            captions = associateImageObjects(pageNumber, images, captions, viewport);
           } catch { /* Caption-based detection remains usable when the PDF has no readable image operators. */ }
           setProgress({ page: pageNumber, total: document.numPages, phase: 'extracting', detected: all.length + captions.length, failed: all.filter((item) => item.extractionStatus === 'crop-failed').length });
           const crops = await renderPageCrops(page, captions);
