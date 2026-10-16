@@ -68,7 +68,7 @@ export function PaperVisualGallery({
         {item.debugImageURL && <><a href={item.debugImageURL} download={`page-${item.page}-visual-debug.png`}>下载检测框调试图</a><small>调试图颜色：蓝色图注框、橙色候选区域、绿色最终裁切框</small></>}
         <details>
           <summary>检测框坐标</summary>
-          <small>图注框（pt）：{item.captionBounds.x.toFixed(1)}, {item.captionBounds.y.toFixed(1)}, {item.captionBounds.width.toFixed(1)} × {item.captionBounds.height.toFixed(1)}</small>
+          {item.captionBounds && <small>图注框（pt）：{item.captionBounds.x.toFixed(1)}, {item.captionBounds.y.toFixed(1)}, {item.captionBounds.width.toFixed(1)} × {item.captionBounds.height.toFixed(1)}</small>}
           <small>PDF 页面坐标（pt）：{item.detectedBounds.x.toFixed(1)}, {item.detectedBounds.y.toFixed(1)}, {item.detectedBounds.width.toFixed(1)} × {item.detectedBounds.height.toFixed(1)}</small>
           {item.cropBounds && <small>实际裁切（pt）：{item.cropBounds.x.toFixed(1)}, {item.cropBounds.y.toFixed(1)}, {item.cropBounds.width.toFixed(1)} × {item.cropBounds.height.toFixed(1)}</small>}
         </details>

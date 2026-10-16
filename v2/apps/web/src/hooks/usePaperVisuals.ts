@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { OPS, Util } from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { TextContent } from 'pdfjs-dist/types/src/display/api';
 
@@ -17,7 +18,7 @@ export interface PaperVisual extends PaperVisualMetadata {
   imageURL: string | null;
   debugImageURL: string | null;
   sourcePDFURL: string | null;
-  captionBounds: VisualBounds;
+  captionBounds: VisualBounds | null;
   detectedBounds: VisualBounds;
   cropBounds: VisualBounds | null;
   extractionStatus: 'ready' | 'crop-failed';
@@ -86,7 +87,68 @@ function suggestedStep(kind: PaperVisualKind, caption: string): ReadingKind {
   return kind === 'table' ? 'results' : 'method';
 }
 
-type VisualCandidate = PaperVisualMetadata & { x: number; y: number; width: number; height: number };
+type VisualCandidate = PaperVisualMetadata & { x: number; y: number; width: number; height: number; imageBounds?: VisualBounds };
+
+async function imageObjectBounds(page: PDFPageProxy, viewport: { transform: number[]; width: number; height: number }): Promise<VisualBounds[]> {
+  const operators = await page.getOperatorList();
+  const stack: number[][] = [];
+  let transform = [1, 0, 0, 1, 0, 0];
+  const bounds: VisualBounds[] = [];
+  const imageOps = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintImageMaskXObject]);
+  for (let index = 0; index < operators.fnArray.length; index++) {
+    const op = operators.fnArray[index];
+    const args = operators.argsArray[index] as unknown[] | undefined;
+    if (op === OPS.save) stack.push(transform);
+    else if (op === OPS.restore) transform = stack.pop() ?? [1, 0, 0, 1, 0, 0];
+    else if (op === OPS.transform && args?.length && Array.isArray(args[0])) transform = Util.transform(transform, args[0] as number[]);
+    else if (op === OPS.paintFormXObjectBegin && args?.length && Array.isArray(args[0])) {
+      stack.push(transform);
+      transform = Util.transform(transform, args[0] as number[]);
+    } else if (op === OPS.paintFormXObjectEnd) transform = stack.pop() ?? [1, 0, 0, 1, 0, 0];
+    if (op === undefined || !imageOps.has(op)) continue;
+    const matrix = Util.transform(viewport.transform, transform);
+    const corners = [[0, 0], [1, 0], [0, 1], [1, 1]].map((point) => Util.applyTransform(point, matrix));
+    const xs = corners.map((point) => point[0]!);
+    const ys = corners.map((point) => point[1]!);
+    const x = Math.max(0, Math.min(...xs));
+    const y = Math.max(0, Math.min(...ys));
+    const right = Math.min(viewport.width, Math.max(...xs));
+    const bottom = Math.min(viewport.height, Math.max(...ys));
+    const candidate = { x, y, width: right - x, height: bottom - y };
+    if (candidate.width >= 48 && candidate.height >= 36 && candidate.width * candidate.height >= viewport.width * viewport.height * 0.004
+      && candidate.width * candidate.height <= viewport.width * viewport.height * 0.82) bounds.push(candidate);
+  }
+  // Merge overlapping/touching raster tiles (common in scanned charts) into
+  // one original-image region before associating it with a nearby caption.
+  const merged: VisualBounds[] = [];
+  for (const bound of bounds) {
+    const touching = merged.findIndex((item) => bound.x <= item.x + item.width + 8 && bound.x + bound.width >= item.x - 8
+      && bound.y <= item.y + item.height + 8 && bound.y + bound.height >= item.y - 8);
+    if (touching < 0) merged.push(bound);
+    else {
+      const item = merged[touching]!;
+      const left = Math.min(item.x, bound.x);
+      const top = Math.min(item.y, bound.y);
+      const right = Math.max(item.x + item.width, bound.x + bound.width);
+      const bottom = Math.max(item.y + item.height, bound.y + bound.height);
+      merged[touching] = { x: left, y: top, width: right - left, height: bottom - top };
+    }
+  }
+  return merged;
+}
+
+function uncaptionedImageCandidates(page: number, images: VisualBounds[], captions: VisualCandidate[]): VisualCandidate[] {
+  const unmatched = images.filter((image) => !captions.some((caption) => {
+    const gap = image.y + image.height < caption.y ? caption.y - (image.y + image.height) : caption.y + caption.height < image.y ? image.y - (caption.y + caption.height) : 0;
+    const horizontalOverlap = Math.min(image.x + image.width, caption.x + caption.width) - Math.max(image.x, caption.x);
+    return gap < 150 && horizontalOverlap > -24;
+  }));
+  return unmatched.map((image, index) => ({
+    id: `figure-${page}-image-${index + 1}`, kind: 'figure', page,
+    caption: `PDF 图像对象 · Page ${page}（未匹配到图注）`, suggestedStep: 'method',
+    x: image.x, y: image.y, width: image.width, height: image.height, imageBounds: image,
+  }));
+}
 
 function findCaptions(page: PDFPageProxy, content: TextContent): VisualCandidate[] {
   const rows = rowsFromPage(page, content);
@@ -246,7 +308,7 @@ async function debugPageImage(pageCanvas: HTMLCanvasElement, visuals: ReturnType
       context.lineWidth = lineWidth;
       context.strokeRect(bounds.x * scale * debugScale, bounds.y * scale * debugScale, bounds.width * scale * debugScale, bounds.height * scale * debugScale);
     };
-    drawBounds({ x: visual.x, y: visual.y, width: visual.width, height: visual.height }, '#2188ff', 2);
+    if (!visual.imageBounds) drawBounds({ x: visual.x, y: visual.y, width: visual.width, height: visual.height }, '#2188ff', 2);
     const detection = detections[index];
     if (detection) drawBounds(detection, '#ff8c00', 2);
     const crop = crops[index];
@@ -265,22 +327,43 @@ async function renderPageCrops(page: PDFPageProxy, visuals: ReturnType<typeof fi
   pageCanvas.width = Math.ceil(highResolution.width);
   pageCanvas.height = Math.ceil(highResolution.height);
   const context = pageCanvas.getContext('2d');
-  if (!context) return visuals.map((visual) => ({ ...visual, imageURL: null, debugImageURL: null, sourcePDFURL: null, captionBounds: { x: visual.x, y: visual.y, width: visual.width, height: visual.height }, detectedBounds: cropRegion(viewport, visual, visual.kind), cropBounds: null, extractionStatus: 'crop-failed', extractionError: '无法创建高清图表画布' }));
+  if (!context) return visuals.map((visual) => ({ ...visual, imageURL: null, debugImageURL: null, sourcePDFURL: null, captionBounds: visual.imageBounds ? null : { x: visual.x, y: visual.y, width: visual.width, height: visual.height }, detectedBounds: visual.imageBounds ?? cropRegion(viewport, visual, visual.kind), cropBounds: null, extractionStatus: 'crop-failed', extractionError: '无法创建高清图表画布' }));
   try {
     try {
       await page.render({ canvasContext: context, viewport: highResolution }).promise;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      return visuals.map((visual) => ({ ...visual, imageURL: null, debugImageURL: null, sourcePDFURL: null, captionBounds: { x: visual.x, y: visual.y, width: visual.width, height: visual.height }, detectedBounds: cropRegion(viewport, visual, visual.kind), cropBounds: null, extractionStatus: 'crop-failed', extractionError: `PDF 页面渲染失败：${message}` }));
+      return visuals.map((visual) => ({ ...visual, imageURL: null, debugImageURL: null, sourcePDFURL: null, captionBounds: visual.imageBounds ? null : { x: visual.x, y: visual.y, width: visual.width, height: visual.height }, detectedBounds: visual.imageBounds ?? cropRegion(viewport, visual, visual.kind), cropBounds: null, extractionStatus: 'crop-failed', extractionError: `PDF 页面渲染失败：${message}` }));
     }
     const preferredSides = visuals.map((visual) => visual.kind === 'figure' ? 'before' as const : 'after' as const);
-    const proposed = visuals.map((visual, index) => cropRegion(viewport, visual, visual.kind, preferredSides[index]));
+    const proposed = visuals.map((visual, index) => visual.imageBounds ?? cropRegion(viewport, visual, visual.kind, preferredSides[index]));
     const detections: (VisualBounds | null)[] = [];
     const crops: (VisualBounds | null)[] = [];
     const result: PaperVisual[] = [];
     for (let index = 0; index < visuals.length; index++) {
       const visual = visuals[index]!;
       const preferred = proposed[index]!;
+      if (visual.imageBounds) {
+        const bounds = visual.imageBounds;
+        const padding = 8;
+        const cropBounds = { x: Math.max(0, bounds.x - padding), y: Math.max(0, bounds.y - padding), width: Math.min(viewport.width, bounds.x + bounds.width + padding) - Math.max(0, bounds.x - padding), height: Math.min(viewport.height, bounds.y + bounds.height + padding) - Math.max(0, bounds.y - padding) };
+        const imageCanvas = window.document.createElement('canvas');
+        imageCanvas.width = Math.max(1, Math.ceil(cropBounds.width * scale));
+        imageCanvas.height = Math.max(1, Math.ceil(cropBounds.height * scale));
+        let imageURL: string | null = null;
+        let extractionError: string | undefined;
+        try {
+          const imageContext = imageCanvas.getContext('2d');
+          if (!imageContext) throw new Error('无法创建 PDF 图像对象导出画布');
+          imageContext.drawImage(pageCanvas, cropBounds.x * scale, cropBounds.y * scale, cropBounds.width * scale, cropBounds.height * scale, 0, 0, imageCanvas.width, imageCanvas.height);
+          imageURL = URL.createObjectURL(await canvasBlob(imageCanvas));
+        } catch (cause) { extractionError = cause instanceof Error ? cause.message : String(cause); }
+        finally { imageCanvas.width = 0; imageCanvas.height = 0; }
+        detections.push(bounds);
+        crops.push(cropBounds);
+        result.push({ ...visual, imageURL, debugImageURL: null, sourcePDFURL: null, captionBounds: null, detectedBounds: bounds, cropBounds, extractionStatus: imageURL ? 'ready' : 'crop-failed', ...(extractionError ? { extractionError } : {}) });
+        continue;
+      }
       const alternate = cropRegion(viewport, visual, visual.kind, preferredSides[index] === 'before' ? 'after' : 'before');
       const preferredTrim = trimToCaptionAdjacentContent(pageCanvas, preferred, visual, visual.kind, preferredSides[index]!, scale);
       const alternateSide = preferredSides[index] === 'before' ? 'after' : 'before';
@@ -309,7 +392,7 @@ async function renderPageCrops(page: PDFPageProxy, visuals: ReturnType<typeof fi
       }
       crops.push(crop);
       detections.push(detectedBounds);
-      result.push({ ...visual, imageURL, debugImageURL: null, sourcePDFURL: null, captionBounds: { x: visual.x, y: visual.y, width: visual.width, height: visual.height }, detectedBounds, cropBounds: crop, extractionStatus: imageURL ? 'ready' : 'crop-failed', ...(extractionError ? { extractionError } : {}) });
+      result.push({ ...visual, imageURL, debugImageURL: null, sourcePDFURL: null, captionBounds: visual.imageBounds ? null : { x: visual.x, y: visual.y, width: visual.width, height: visual.height }, detectedBounds, cropBounds: crop, extractionStatus: imageURL ? 'ready' : 'crop-failed', ...(extractionError ? { extractionError } : {}) });
     }
     const debugURL = await debugPageImage(pageCanvas, visuals, detections, crops, scale).catch(() => null);
     return result.map((item) => ({ ...item, debugImageURL: debugURL }));
@@ -344,6 +427,11 @@ export function usePaperVisuals(document: PDFDocumentProxy | null, enabled: bool
             if (!cancelled) setError((current) => [current, `第 ${pageNumber} 页图表检测失败：${cause instanceof Error ? cause.message : String(cause)}`].filter(Boolean).join('\n'));
             continue;
           }
+          try {
+            const viewport = page.getViewport({ scale: 1 });
+            const images = await imageObjectBounds(page, viewport);
+            captions = [...captions, ...uncaptionedImageCandidates(pageNumber, images, captions)];
+          } catch { /* Caption-based detection remains usable when the PDF has no readable image operators. */ }
           setProgress({ page: pageNumber, total: document.numPages, phase: 'extracting', detected: all.length + captions.length, failed: all.filter((item) => item.extractionStatus === 'crop-failed').length });
           const crops = await renderPageCrops(page, captions);
           if (cancelled) {
