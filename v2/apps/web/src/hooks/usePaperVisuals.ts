@@ -96,12 +96,63 @@ function cropRegion(viewport: { width: number; height: number }, visual: { x: nu
     || visual.width > viewport.width * 0.58;
   const x = fullWidth ? 0 : visual.x + visual.width / 2 < viewport.width / 2 ? 0 : viewport.width / 2;
   const width = fullWidth ? viewport.width : viewport.width / 2;
-  const context = viewport.height * 0.55;
-  const top = kind === 'figure' ? Math.max(0, visual.y - context) : Math.max(0, visual.y - 8);
+  const context = viewport.height * 0.45;
+  // Keep the caption for identification in the card, but crop it out of the image itself.
+  const top = kind === 'figure' ? Math.max(0, visual.y - context) : Math.min(viewport.height, visual.y + visual.height + 6);
   const bottom = kind === 'figure'
-    ? Math.min(viewport.height, visual.y + visual.height + 10)
-    : Math.min(viewport.height, visual.y + context);
+    ? Math.max(top + 1, visual.y - 6)
+    : Math.min(viewport.height, top + context);
   return { x, y: top, width, height: Math.max(1, bottom - top) };
+}
+
+function trimToCaptionAdjacentContent(
+  pageCanvas: HTMLCanvasElement,
+  crop: { x: number; y: number; width: number; height: number },
+  visual: { y: number; height: number },
+  kind: PaperVisualKind,
+  scale: number,
+) {
+  const x = Math.max(0, Math.floor(crop.x * scale));
+  const y = Math.max(0, Math.floor(crop.y * scale));
+  const width = Math.min(pageCanvas.width - x, Math.ceil(crop.width * scale));
+  const height = Math.min(pageCanvas.height - y, Math.ceil(crop.height * scale));
+  const context = pageCanvas.getContext('2d');
+  if (!context || width <= 0 || height <= 0) return crop;
+  const pixels = context.getImageData(x, y, width, height).data;
+  const columnStride = 4;
+  const sampledWidth = Math.ceil(width / columnStride);
+  const anchor = kind === 'figure'
+    ? Math.max(0, Math.min(height - 1, Math.floor((visual.y - 8 - crop.y) * scale)))
+    : Math.max(0, Math.min(height - 1, Math.floor((visual.y + visual.height + 8 - crop.y) * scale)));
+  const direction = kind === 'figure' ? -1 : 1;
+  let nearest = -1;
+  let farthest = -1;
+  let blankRows = 0;
+  const blankGap = Math.max(12, scale * 4);
+  for (let row = anchor; row >= 0 && row < height; row += direction) {
+    let ink = 0;
+    const offset = row * width * 4;
+    for (let column = 0; column < width; column += columnStride) {
+      const pixel = offset + column * 4;
+      if (pixels[pixel]! < 242 || pixels[pixel + 1]! < 242 || pixels[pixel + 2]! < 242) ink += 1;
+    }
+    const hasInk = ink > Math.max(2, sampledWidth * 0.0007);
+    if (hasInk) {
+      if (nearest < 0) nearest = row;
+      farthest = row;
+      blankRows = 0;
+    } else if (nearest >= 0) {
+      blankRows += 1;
+      if (blankRows >= blankGap) break;
+    }
+  }
+  if (nearest < 0 || farthest < 0 || Math.abs(nearest - farthest) < scale * 8) return crop;
+  const padding = scale * 2;
+  const contentStart = Math.min(nearest, farthest);
+  const contentEnd = Math.max(nearest, farthest);
+  const localTop = Math.max(0, contentStart - padding);
+  const localBottom = Math.min(height, contentEnd + padding);
+  return { ...crop, y: (y + localTop) / scale, height: Math.max(1, (localBottom - localTop) / scale) };
 }
 
 function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
@@ -122,7 +173,7 @@ async function renderPageCrops(page: PDFPageProxy, visuals: ReturnType<typeof fi
     await page.render({ canvasContext: context, viewport: highResolution }).promise;
     const result: PaperVisual[] = [];
     for (const visual of visuals) {
-      const crop = cropRegion(viewport, visual, visual.kind);
+      const crop = trimToCaptionAdjacentContent(pageCanvas, cropRegion(viewport, visual, visual.kind), visual, visual.kind, scale);
       const canvas = window.document.createElement('canvas');
       canvas.width = Math.max(1, Math.ceil(crop.width * scale));
       canvas.height = Math.max(1, Math.ceil(crop.height * scale));

@@ -952,6 +952,10 @@ button:disabled { opacity:.5;cursor:default; }
 .reading-steps button[aria-selected=true] { background:var(--color-accent-soft); color:var(--color-accent); border-color:var(--color-accent); }
 .reading-generate { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
 .reading-generate button:disabled,.reading-save-checklist:disabled { opacity:.45; }
+.reading-generation-progress { display:grid; gap:6px; margin:-3px 0 13px; color:var(--color-ink-soft); font-size:11px; }
+.reading-generation-progress-track { height:6px; overflow:hidden; border-radius:999px; background:var(--color-surface-sunk); }
+.reading-generation-progress-track > span { display:block; height:100%; min-width:3%; border-radius:inherit; background:linear-gradient(90deg,var(--color-accent),#72a7a0,var(--color-accent)); background-size:200% 100%; transition:width .45s ease; animation:reading-progress-shimmer 1.4s linear infinite; }
+@keyframes reading-progress-shimmer { to { background-position:200% 0; } }
 .reading-section { margin:14px 0; font-size:13px; line-height:1.65; }
 .reading-section h3 { font-weight:600; margin-bottom:8px; }
 .reading-fact { margin:8px 0; padding:10px; border:1px solid var(--color-line); border-radius:8px; overflow-wrap:anywhere; white-space:pre-wrap; }

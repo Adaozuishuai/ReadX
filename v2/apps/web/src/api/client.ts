@@ -133,6 +133,11 @@ export interface GenerateResponse {
   attempts: number;
 }
 
+export interface GenerateProgress {
+  percent: number;
+  message: string;
+}
+
 export interface ChatChunk {
   meta?: { included: number; total: number; scope: string; unit?: string };
   delta?: string;
@@ -720,11 +725,59 @@ export const api = {
         signal,
       },
     ),
-  generate: (key: string, kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction', visuals: ReadingVisualReference[] = []) =>
-    request<GenerateResponse>('/v1/ai/generate', {
-      method: 'POST',
-      body: { key, kind, visuals },
-    }),
+  generate: async (
+    key: string,
+    kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction',
+    visuals: ReadingVisualReference[] = [],
+    onProgress?: (progress: GenerateProgress) => void,
+  ): Promise<GenerateResponse> => {
+    const { apiBase, token } = bootstrap();
+    const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    let response: Response;
+    try {
+      response = await fetch(`${apiBase}/v1/ai/generate`, {
+        method: 'POST', headers, body: JSON.stringify({ key, kind, visuals }), credentials: 'omit',
+      });
+    } catch (error) {
+      throw new ApiError(error instanceof Error ? error.message : '本地服务未响应', 0);
+    }
+    if (!response.ok) {
+      const text = await response.text();
+      let message = `HTTP ${response.status}`;
+      try { const parsed = JSON.parse(text) as ApiFailure; if (isApiFailure(parsed)) message = parsed.error; }
+      catch { if (text) message = text.slice(0, 200); }
+      throw new ApiError(message, response.status);
+    }
+    if (!response.body) throw new ApiError('精读生成没有返回进度流。', response.status);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: GenerateResponse | null = null;
+    let streamError = '';
+    const processLine = (raw: string) => {
+      const line = raw.trim();
+      if (!line.startsWith('data:')) return;
+      try {
+        const event = JSON.parse(line.slice(5).trim()) as { progress?: GenerateProgress; result?: GenerateResponse; error?: string };
+        if (event.progress) onProgress?.(event.progress);
+        if (event.result) result = event.result;
+        if (event.error) streamError = event.error;
+      } catch { /* Ignore incomplete or malformed progress events. */ }
+    };
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      lines.forEach(processLine);
+    }
+    processLine(buffer + decoder.decode());
+    if (streamError) throw new ApiError(streamError, 502);
+    if (!result) throw new ApiError('生成连接中断，精读结果未确认保存。', 502);
+    return result;
+  },
   documents: (
     signal?: AbortSignal,
     filters?: { status?: string; q?: string },

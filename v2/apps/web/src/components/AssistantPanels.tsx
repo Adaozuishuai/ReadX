@@ -322,7 +322,7 @@ function ReadingPane({ apiKey, onCite, disabled, document, pdfDocument, enabled 
   apiKey: string | null; onCite: (page: number) => void; disabled: boolean; document?: DocumentSummary | null;
   pdfDocument?: PDFDocumentProxy | null; enabled: boolean;
 }) {
-  const { entries, loading, error, generating, generate } = useReadings(apiKey);
+  const { entries, loading, error, generating, progress: generationProgress, generate } = useReadings(apiKey);
   const { visuals, progress: visualProgress, error: visualError } = usePaperVisuals(pdfDocument ?? null, enabled);
   const waitingPDF = enabled && !pdfDocument;
   const [active, setActive] = useState<ReadingKind>('motivation');
@@ -338,6 +338,12 @@ function ReadingPane({ apiKey, onCite, disabled, document, pdfDocument, enabled 
   return <div className="min-h-0 flex-1 overflow-y-auto p-3" aria-label="五重奏精读">
     <div className="reading-steps" role="tablist" aria-label="精读步骤">{READING_STEPS.map((step, index) => <button key={step.kind} role="tab" aria-selected={active === step.kind} onClick={() => setActive(step.kind)}>{index + 1}. {step.label}</button>)}</div>
     <div className="reading-generate"><strong>{label}</strong><button disabled={!apiKey || disabled || generating !== null || visualProgress !== null || waitingPDF} onClick={() => void generate(active, visuals.map(({ id, kind, page, caption, suggestedStep }) => ({ id, kind, page, caption, suggestedStep })))}>{generating === active ? '生成中…' : waitingPDF || visualProgress ? '图表识别中…' : `${entry ? '重新生成' : '生成'}${label}`}</button></div>
+    {generationProgress && <div className="reading-generation-progress" role="status" aria-live="polite">
+      <div className="reading-generation-progress-track" role="progressbar" aria-label="精读生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={generationProgress.percent} aria-valuetext={generationProgress.message}>
+        <span style={{ width: `${generationProgress.percent}%` }} />
+      </div>
+      <span>{generationProgress.message}</span>
+    </div>}
     {loading && <p>读取精读产物…</p>}
     {error && <p role="alert" className="text-bad">{error}</p>}
     {!loading && !entry && <p className="text-[13px] text-ink-soft">尚无{label}记录。生成后自动保存，可点击页码回到原文核对。</p>}

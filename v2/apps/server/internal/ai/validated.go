@@ -20,12 +20,24 @@ type ValidatedOutcome struct {
 // GenerateValidated 对应旧版 generateValidated。
 // 实测失败主因是模型合并事实/漏数组字段——看到具体错误后大多能自行改对，所以把校验错误原样回喂。
 func GenerateValidated(ctx context.Context, client *Client, kind, system, source string, maxRepairs int) (ValidatedOutcome, error) {
+	return GenerateValidatedWithProgress(ctx, client, kind, system, source, maxRepairs, nil)
+}
+
+// GenerateValidatedWithProgress reports work as it moves through model generation and evidence validation.
+func GenerateValidatedWithProgress(ctx context.Context, client *Client, kind, system, source string, maxRepairs int, progress func(stage string, attempt, maxAttempts int)) (ValidatedOutcome, error) {
 	outcome := ValidatedOutcome{}
 	value := ""
 	validationError := ""
 
 	for attempt := 0; attempt <= maxRepairs; attempt++ {
 		outcome.Attempts = attempt + 1
+		if progress != nil {
+			stage := "generating"
+			if attempt > 0 {
+				stage = "repairing"
+			}
+			progress(stage, attempt+1, maxRepairs+2)
+		}
 		userMessage := FirstInstruction(kind)
 		if attempt > 0 {
 			userMessage = RepairInstruction(kind, validationError, value)
@@ -35,6 +47,9 @@ func GenerateValidated(ctx context.Context, client *Client, kind, system, source
 			return outcome, err
 		}
 		value = generated
+		if progress != nil {
+			progress("validating", attempt+1, maxRepairs+2)
+		}
 		if !JSONKinds[kind] {
 			outcome.Value = value
 			return outcome, nil
@@ -51,11 +66,17 @@ func GenerateValidated(ctx context.Context, client *Client, kind, system, source
 	// 终局降级轮：顽固字段（PDF 文本抽取错乱导致逐字摘录无法命中）反复修正也过不去。
 	if validationError != "" {
 		outcome.Attempts++
+		if progress != nil {
+			progress("downgrading", outcome.Attempts, maxRepairs+2)
+		}
 		generated, err := client.Generate(ctx, system, DowngradeInstruction(validationError), 0.2)
 		if err != nil {
 			return outcome, err
 		}
 		value = generated
+		if progress != nil {
+			progress("validating", outcome.Attempts, maxRepairs+2)
+		}
 		if validateErr := validate.ValidateGenerated(kind, value, source); validateErr == nil {
 			outcome.Value = value
 			outcome.ValidationError = ""

@@ -149,7 +149,7 @@ export function usePDF(key: string | null) {
           setIndexing(
             empty
               ? `${empty} 页没有文本层，扫描页暂不支持 OCR`
-              : '正文已就绪，可翻译和提问',
+              : '',
           );
       } catch (cause) {
         if (!controller.signal.aborted) {

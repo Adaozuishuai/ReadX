@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bufio"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -23,8 +25,40 @@ func TestQuintetGenerationValidatesAndPreservesEachStep(t *testing.T) {
 				return notes, 200
 			})
 			writeAIConfig(t, bundle, upstream.URL)
-			response, payload := post(t, bundle, http.MethodPost, "/v1/ai/generate", `{"key":"k1","kind":"`+kind+`"}`)
-			if response.StatusCode != 200 || payload["saved"] != true || payload["validationError"] != nil || payload["attempts"] != float64(1) {
+			request, err := http.NewRequest(http.MethodPost, bundle.frontend.URL+"/v1/ai/generate", strings.NewReader(`{"key":"k1","kind":"`+kind+`"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Authorization", "Bearer "+bundle.token)
+			request.Header.Set("Content-Type", "application/json")
+			response, err := bundle.frontend.Client().Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			payload := map[string]any{}
+			progressEvents := 0
+			scanner := bufio.NewScanner(response.Body)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if !strings.HasPrefix(line, "data:") {
+					continue
+				}
+				var event map[string]any
+				if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &event); err != nil {
+					t.Fatal(err)
+				}
+				if event["progress"] != nil {
+					progressEvents++
+				}
+				if result, ok := event["result"].(map[string]any); ok {
+					payload = result
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != 200 || progressEvents < 3 || payload["saved"] != true || payload["validationError"] != nil || payload["attempts"] != float64(1) {
 				t.Fatalf("generation failed: %d %v", response.StatusCode, payload)
 			}
 		})

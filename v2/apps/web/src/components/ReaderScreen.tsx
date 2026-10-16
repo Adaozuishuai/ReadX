@@ -509,7 +509,7 @@ export function ReaderScreen({
                   </button>
                 ))}
           </div>
-          {!epub && (
+          {!epub && pdf.indexing && (
             <p className="p-3 text-xs text-ink-faint" role="status">
               {pdf.indexing}
             </p>

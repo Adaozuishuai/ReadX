@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { GenerateResponse, ReadingEntry, ReadingVisualReference } from '../api/client';
+import type { GenerateProgress, GenerateResponse, ReadingEntry, ReadingVisualReference } from '../api/client';
 import { api } from '../api/client';
 
 export type ReadingKind = 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
@@ -14,6 +14,7 @@ export interface ReadingState {
 export function useReadings(key: string | null) {
   const [state, setState] = useState<ReadingState>({ entries: {}, loading: false, error: null });
   const [generating, setGenerating] = useState<ReadingKind | null>(null);
+  const [progress, setProgress] = useState<GenerateProgress | null>(null);
   const [notice, setNotice] = useState<GenerateResponse | null>(null);
 
   const reload = useCallback(async () => {
@@ -49,21 +50,23 @@ export function useReadings(key: string | null) {
     async (kind: ReadingKind, visuals: ReadingVisualReference[] = []) => {
       if (!key) return;
       setGenerating(kind);
+      setProgress({ percent: 2, message: '正在准备精读任务…' });
       setNotice(null);
       try {
-        const result = await api.generate(key, kind, visuals);
+        const result = await api.generate(key, kind, visuals, setProgress);
         setNotice(result);
         await reload();
       } catch (error) {
         setState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
       } finally {
         setGenerating(null);
+        setProgress(null);
       }
     },
     [key, reload],
   );
 
-  return { ...state, generating, notice, generate, clearNotice: () => setNotice(null), reload };
+  return { ...state, generating, progress, notice, generate, clearNotice: () => setNotice(null), reload };
 }
 
 /** 把条目 JSON 解析成「分组 → 字段」结构供界面渲染；解析失败时原样给出错误。 */

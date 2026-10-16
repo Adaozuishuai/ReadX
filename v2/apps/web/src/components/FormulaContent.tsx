@@ -20,18 +20,19 @@ export function LatexFormula({ latex }: { latex: string }) {
 }
 
 export function MathText({ text }: { text: string }) {
+  const source = text.replace(/公式\s*转写待核对\s*[：:]?/g, '').replace(/转写待核对/g, '');
   const pattern = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(?<!\\)\$[^$\n]+\$)/g;
   const parts: ReactNode[] = [];
   let last = 0;
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > last) parts.push(text.slice(last, match.index));
+  while ((match = pattern.exec(source)) !== null) {
+    if (match.index > last) parts.push(source.slice(last, match.index));
     const value = match[0];
     const display = value.startsWith('$$') || value.startsWith('\\[');
     const tex = display ? value.slice(2, -2) : value.startsWith('\\(') ? value.slice(2, -2) : value.slice(1, -1);
     parts.push(<span key={`${match.index}-${value}`} className={display ? 'reading-math-display' : 'reading-math-inline'} dangerouslySetInnerHTML={{ __html: renderMath(tex, display) }} />);
     last = match.index + value.length;
   }
-  if (last < text.length) parts.push(text.slice(last));
+  if (last < source.length) parts.push(source.slice(last));
   return <>{parts}</>;
 }
