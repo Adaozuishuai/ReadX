@@ -54,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/import/files", withAuth(s.handlePublicationUpload))
 	mux.Handle("POST /v1/import/url", withAuth(s.handlePublicationURL))
 	mux.Handle("GET /v1/import/search", withAuth(s.handleImportSearch))
+	mux.Handle("POST /v1/documents/{key}/arxiv-pdf", withAuth(s.handleDocumentArxivPDF))
 	mux.Handle("GET /v1/documents/{key}/file", withAuth(s.handlePublicationFile))
 	mux.Handle("GET /v1/documents/{key}/sections/{page}", withAuth(s.handleSection))
 	mux.Handle("GET /v1/documents/{key}/resource", withAuth(s.handleEPUBResource))
@@ -210,6 +211,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 // DocumentSummary 与 packages/shared 的 DocumentSummary 一一对应。
 type DocumentSummary struct {
 	Format          string   `json:"format"`
+	HasPDF          bool     `json:"hasPdf"`
 	ID              string   `json:"id"`
 	Key             string   `json:"key"`
 	Title           string   `json:"title"`
@@ -280,6 +282,7 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 			parsed := int(year.Int64)
 			item.Year = &parsed
 		}
+		item.HasPDF = s.documentHasPDF(item.Key)
 		documents = append(documents, item)
 	}
 	if err := rows.Err(); err != nil {

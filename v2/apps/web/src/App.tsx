@@ -174,6 +174,7 @@ export default function App() {
           }}
           onOpenReproduction={openReproduction}
           onTrashEmptied={() => { setSelectedId(null); reload(); }}
+          onReload={reload}
         />
       ) : screen === 'reader' ? (
         <ReaderScreen

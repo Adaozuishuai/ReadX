@@ -483,6 +483,7 @@ export interface ImportCandidate {
   title: string;
   doi: string;
   url: string;
+  arxiv?: string;
   authors: string[];
   venue?: string;
   year?: number;
@@ -492,6 +493,12 @@ export interface ReadingLocation {
   page?: number;
   href?: string;
   index?: number;
+}
+
+export interface ArxivDownloadProgress {
+  message: string;
+  received: number;
+  total: number;
 }
 
 async function authenticatedFetch(
@@ -620,6 +627,37 @@ export const api = {
       `/v1/import/search?q=${encodeURIComponent(q)}`,
       { signal },
     ),
+  attachArxivPDF: async (key: string, arxiv: string, signal?: AbortSignal, onProgress?: (progress: ArxivDownloadProgress) => void) => {
+    const response = await authenticatedFetch(`/v1/documents/${encodeURIComponent(key)}/arxiv-pdf`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({ arxiv }), signal,
+    });
+    if (!response.body) throw new ApiError('arXiv 下载服务没有返回进度流', 502);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: ImportedDocument | undefined;
+    let streamError = '';
+    const processLine = (line: string) => {
+      if (!line.startsWith('data:')) return;
+      const event = JSON.parse(line.slice(5).trim()) as { progress?: ArxivDownloadProgress; result?: ImportedDocument; error?: string };
+      if (event.progress) onProgress?.(event.progress);
+      if (event.result) result = event.result;
+      if (event.error) streamError = event.error;
+    };
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      lines.forEach(processLine);
+    }
+    processLine(buffer + decoder.decode());
+    if (streamError) throw new ApiError(streamError, 502);
+    if (!result) throw new ApiError('arXiv 下载连接中断，未确认 PDF 已关联。', 502);
+    return result;
+  },
   file: async (key: string, signal?: AbortSignal) =>
     (
       await authenticatedFetch(

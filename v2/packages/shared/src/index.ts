@@ -21,6 +21,7 @@ export type WireStatus = DocumentStatus | (string & {});
 
 export interface DocumentSummary {
   format?: 'pdf' | 'epub';
+  hasPdf?: boolean;
   id: string;
   key: string;
   title: string;

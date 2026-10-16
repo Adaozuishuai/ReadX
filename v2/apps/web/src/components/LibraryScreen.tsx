@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
 import { statusLabel } from '@cbct/shared';
 import type { Category, DocumentMeta } from '../api/client';
@@ -20,6 +20,15 @@ function readLayout(): Layout {
   if (typeof localStorage === 'undefined') return 'grid';
   const value = localStorage.getItem(LAYOUT_STORAGE);
   return value === 'list' || value === 'table' ? value : 'grid';
+}
+
+function normalizePaperTitle(value: string): string {
+  return value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function extractArxivId(value: string | undefined): string | null {
+  if (!value) return null;
+  return value.match(/(?:arxiv(?:\.org\/(?:abs|pdf)\/|:)\s*)?(\d{4}\.\d{4,5}(?:v\d+)?|[a-z][a-z.-]*\/\d{7}(?:v\d+)?)/i)?.[1] ?? null;
 }
 
 const STATUS_TONE: Record<string, string> = {
@@ -46,6 +55,7 @@ interface Props {
   onViewChange: (view: ViewId) => void;
   onOpenReproduction: (key: string) => void;
   onTrashEmptied: () => void;
+  onReload: () => void;
 }
 
 /**
@@ -67,6 +77,7 @@ export function LibraryScreen({
   onViewChange,
   onOpenReproduction,
   onTrashEmptied,
+  onReload,
 }: Props) {
   const [emptyTrashKeys, setEmptyTrashKeys] = useState<string[] | null>(null);
   const [input, setInput] = useState(filters.q);
@@ -77,6 +88,10 @@ export function LibraryScreen({
   const [managingCategories, setManagingCategories] = useState(false);
   const [duplicates, setDuplicates] = useState<{ primaryKey: string; keys: string[] }[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+  const [fetchingArxiv, setFetchingArxiv] = useState(false);
+  const [arxivProgress, setArxivProgress] = useState('');
+  const [arxivSummary, setArxivSummary] = useState('');
+  const arxivController = useRef<AbortController | null>(null);
   const debounced = useDebouncedValue(input, 300);
 
   useEffect(() => {
@@ -106,6 +121,57 @@ export function LibraryScreen({
   const trashCount = rawDocuments.filter((doc) => meta.items[doc.key]?.deleted).length;
   const favoriteCount = rawDocuments.filter((doc) => meta.items[doc.key]?.favorite && !meta.items[doc.key]?.deleted).length;
   const toggleTrash = (key: string) => meta.patch(key, { deleted: !meta.items[key]?.deleted });
+  const missingPDFs = useMemo(() => rawDocuments.filter((doc) =>
+    !meta.items[doc.key]?.deleted && doc.title.trim() && doc.format !== 'epub' && !(doc.hasPdf ?? Boolean(doc.pdfPath))),
+  [rawDocuments, meta.items]);
+
+  const fetchMissingArxivPDFs = async () => {
+    if (fetchingArxiv || missingPDFs.length === 0) return;
+    const controller = new AbortController();
+    arxivController.current = controller;
+    setFetchingArxiv(true);
+    setArxivSummary('');
+    const saved: string[] = [];
+    const skipped: string[] = [];
+    const failed: string[] = [];
+    for (let index = 0; index < missingPDFs.length; index++) {
+      const doc = missingPDFs[index]!;
+      if (controller.signal.aborted) break;
+      setArxivProgress(`正在检索 ${index + 1}/${missingPDFs.length}：${doc.title}`);
+      try {
+        const candidates = (await api.searchImport(doc.title, controller.signal)).results;
+        const titleKey = normalizePaperTitle(doc.title);
+        const exactMatches = candidates.filter((candidate) => normalizePaperTitle(candidate.title) === titleKey)
+          .map((candidate) => ({ candidate, arxiv: extractArxivId(candidate.arxiv || candidate.url) }))
+          .filter((item): item is { candidate: typeof candidates[number]; arxiv: string } => Boolean(item.arxiv));
+        const uniqueMatches = [...new Map(exactMatches.map((item) => [item.arxiv.replace(/v\d+$/i, ''), item])).values()];
+        if (uniqueMatches.length !== 1) {
+          skipped.push(doc.title);
+          continue;
+        }
+        const match = uniqueMatches[0]!;
+        setArxivProgress(`正在下载 ${index + 1}/${missingPDFs.length}：${doc.title}`);
+        await api.attachArxivPDF(doc.key, match.arxiv, controller.signal, (progress) => {
+          const size = progress.total ? `（${(progress.received / 1048576).toFixed(1)}/${(progress.total / 1048576).toFixed(1)} MB）` : '';
+          setArxivProgress(`正在下载 ${index + 1}/${missingPDFs.length}：${doc.title}${size}`);
+        });
+        saved.push(doc.title);
+      } catch (cause) {
+        if (controller.signal.aborted) break;
+        failed.push(`${doc.title}：${cause instanceof Error ? cause.message : String(cause)}`);
+      }
+    }
+    arxivController.current = null;
+    setFetchingArxiv(false);
+    setArxivProgress('');
+    const stopped = controller.signal.aborted;
+    const parts = [`已获取 ${saved.length} 篇`];
+    if (skipped.length) parts.push(`${skipped.length} 篇未找到标题完全匹配的 arXiv 版本`);
+    if (failed.length) parts.push(`${failed.length} 篇下载失败`);
+    if (stopped) parts.push('已停止');
+    setArxivSummary(`${parts.join('；')}${skipped.length ? `。未匹配：${skipped.slice(0, 3).join('、')}${skipped.length > 3 ? '等' : ''}` : ''}${failed.length ? `。失败：${failed.slice(0, 2).join('；')}` : ''}`);
+    if (saved.length) onReload();
+  };
 
   const documents = useMemo(() => {
     const filtered = rawDocuments.filter((doc) => {
@@ -226,6 +292,12 @@ export function LibraryScreen({
             <span className="text-[11px] text-ink-faint">{documents.length} 份文档</span>
           </div>
           <div className="flex items-center gap-1">
+            {missingPDFs.length > 0 ? (
+              <button type="button" className="mr-2 rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-accent hover:border-accent disabled:opacity-50" disabled={fetchingArxiv} onClick={() => void fetchMissingArxivPDFs()}>
+                {fetchingArxiv ? '正在自动获取…' : `自动获取缺失 PDF（${missingPDFs.length}）`}
+              </button>
+            ) : null}
+            {fetchingArxiv ? <button type="button" className="mr-2 rounded-md border border-line px-2 py-1 text-[11px] text-bad" onClick={() => arxivController.current?.abort()}>停止</button> : null}
             {view === 'trash' ? (
               <button type="button" className="mr-2 rounded-md border border-line px-2 py-1 text-[11px] text-bad disabled:opacity-40" disabled={!Object.values(meta.items).some(item => item.deleted)} onClick={() => setEmptyTrashKeys(Object.values(meta.items).filter(item => item.deleted).map(item => item.key))}>
                 清空回收站
@@ -246,6 +318,8 @@ export function LibraryScreen({
         </header>
 
         <div className="library-content">
+          {arxivProgress ? <p role="status" className="mb-2 rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">{arxivProgress}</p> : null}
+          {arxivSummary ? <p role="status" className="mb-2 rounded-md bg-surface-sunk px-3 py-2 text-xs text-ink-soft">{arxivSummary}</p> : null}
           {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空仅移除书库条目和关联阅读数据，所有 PDF / EPUB 文件均保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
           <div className="library-controls">
             <label className="search-field">

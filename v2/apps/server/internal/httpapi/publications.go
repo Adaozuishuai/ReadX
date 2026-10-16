@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -515,6 +516,126 @@ func (s *Server) handleImportSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"results": items})
 }
+
+// handleDocumentArxivPDF downloads a title-matched arXiv PDF into the existing
+// library record, preserving its key, notes, status, and other reading data.
+func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) {
+	key, ok := pathKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Arxiv string `json:"arxiv"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		return
+	}
+	id := normalizeArxiv(body.Arxiv)
+	if !arxivID.MatchString(id) {
+		writeError(w, http.StatusBadRequest, "arXiv 编号无效")
+		return
+	}
+	document, err := s.loadDocument(r.Context(), key)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "书库中没有这篇论文")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if document.HasPDF {
+		writeError(w, http.StatusConflict, "这篇论文已经有 PDF")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	emit := func(payload any) {
+		encoded, _ := json.Marshal(payload)
+		fmt.Fprintf(w, "data: %s\n\n", encoded)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+
+	link := "https://arxiv.org/pdf/" + id
+	emit(map[string]any{"progress": map[string]any{"stage": "download", "message": "正在从 arXiv 下载论文 PDF", "received": 0, "total": 0}})
+	download := s.downloadPublication
+	if download == nil {
+		download = fetchPublicProgress
+	}
+	data, _, err := download(r.Context(), link, maxPublicationBytes, func(received, total int64) {
+		emit(map[string]any{"progress": map[string]any{"stage": "download", "message": "正在下载 arXiv PDF", "received": received, "total": total}})
+	})
+	if err != nil && r.Context().Err() == nil {
+		fallback := strings.Replace(link, "https://arxiv.org", "https://export.arxiv.org", 1)
+		data, _, err = download(r.Context(), fallback, maxPublicationBytes, nil)
+	}
+	if err != nil {
+		emit(map[string]any{"error": "arXiv 下载失败: " + err.Error()})
+		return
+	}
+	if !bytes.HasPrefix(data, []byte("%PDF-")) {
+		emit(map[string]any{"error": "arXiv 返回的内容不是有效 PDF"})
+		return
+	}
+
+	paths := legacy.NewPaths(s.cfg.DataRoot)
+	dir := paths.LibraryDir()
+	if err = os.MkdirAll(dir, 0755); err != nil {
+		emit(map[string]any{"error": "无法创建书库文件夹: " + err.Error()})
+		return
+	}
+	target := filepath.Join(dir, key+".pdf")
+	if _, statErr := os.Stat(target); statErr == nil {
+		emit(map[string]any{"error": "书库中已存在该文件，未覆盖"})
+		return
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		emit(map[string]any{"error": "无法检查书库文件: " + statErr.Error()})
+		return
+	}
+	tmp, err := os.CreateTemp(dir, ".arxiv-download-*")
+	if err != nil {
+		emit(map[string]any{"error": "无法创建临时文件: " + err.Error()})
+		return
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err = tmp.Write(data); err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		emit(map[string]any{"error": "保存 PDF 失败: " + err.Error()})
+		return
+	}
+	if err = os.Rename(tmpName, target); err != nil {
+		emit(map[string]any{"error": "移动 PDF 到书库失败: " + err.Error()})
+		return
+	}
+	update, err := s.handle.ExecContext(r.Context(), `UPDATE documents SET pdf_path=?,url=?,format='pdf',updated_at=? WHERE id=? AND pdf_path=?`, target, "https://arxiv.org/abs/"+id, nowStamp(), key, document.PDFPath)
+	if err != nil {
+		_ = os.Remove(target)
+		emit(map[string]any{"error": "PDF 已下载，但关联书库条目失败: " + err.Error()})
+		return
+	}
+	if changed, _ := update.RowsAffected(); changed != 1 {
+		_ = os.Remove(target)
+		emit(map[string]any{"error": "书库条目已被其他操作更新，请刷新后重试"})
+		return
+	}
+	updated, err := s.loadDocument(r.Context(), key)
+	if err != nil {
+		emit(map[string]any{"error": "PDF 已关联，但刷新书目信息失败: " + err.Error()})
+		return
+	}
+	emit(map[string]any{"result": map[string]any{"document": updated, "name": document.Title, "existing": false}})
+}
+
 func (s *Server) handlePublicationURL(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Value        string   `json:"value"`

@@ -277,3 +277,44 @@ func TestOnlineImportStreamsProgressAndCommitsOnlyCompletedFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestAttachArxivPDFToExistingBookEntry(t *testing.T) {
+	_, handle, cfg := newTestServer(t, nil)
+	key := "saved-title-only-paper"
+	if _, err := handle.Exec(`INSERT INTO documents(id,key,title,authors,format) VALUES(?,?,?,?,?)`, key, key, "A Paper With An Exact Title", `[]`, "pdf"); err != nil {
+		t.Fatal(err)
+	}
+	server := New(cfg, handle)
+	server.downloadPublication = func(_ context.Context, raw string, _ int64, progress func(int64, int64)) ([]byte, string, error) {
+		if raw != "https://arxiv.org/pdf/2209.14540v2" {
+			t.Fatalf("unexpected arXiv URL: %s", raw)
+		}
+		progress(8, 16)
+		return []byte("%PDF-1.4\nfixture"), raw, nil
+	}
+	frontend := httptest.NewServer(server.Handler())
+	defer frontend.Close()
+	req, err := http.NewRequest(http.MethodPost, frontend.URL+"/v1/documents/"+key+"/arxiv-pdf", strings.NewReader(`{"arxiv":"2209.14540v2"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	res, err := frontend.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if readErr != nil || res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"received":8`) || !strings.Contains(string(body), `"result"`) {
+		t.Fatalf("download stream failed (%d): %s (%v)", res.StatusCode, body, readErr)
+	}
+	if _, err := os.Stat(filepath.Join(legacy.NewPaths(cfg.DataRoot).LibraryDir(), key+".pdf")); err != nil {
+		t.Fatalf("PDF was not saved into the existing book: %v", err)
+	}
+	var count int
+	if err := handle.QueryRow(`SELECT COUNT(*) FROM documents WHERE key=?`, key).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("existing entry was duplicated: count=%d err=%v", count, err)
+	}
+}

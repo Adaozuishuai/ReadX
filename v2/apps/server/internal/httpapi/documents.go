@@ -106,10 +106,9 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request) {
 		encoded := json.RawMessage(raw)
 		detail.Reading = &encoded
 	}
-	if pdf, found := legacy.NewPaths(s.cfg.DataRoot).PDFFile(key); found {
+	if s.documentHasPDF(key) {
 		detail.HasPDF = true
 		detail.FromOCR = s.pagesLookLikeOCR(r.Context(), key)
-		_ = pdf
 	}
 	writeJSON(w, http.StatusOK, detail)
 }
@@ -278,6 +277,11 @@ func (s *Server) handlePDF(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, resolved)
 }
 
+func (s *Server) documentHasPDF(key string) bool {
+	_, found := legacy.NewPaths(s.cfg.DataRoot).PDFFile(key)
+	return found
+}
+
 // ---- 数据访问 ----
 
 func (s *Server) loadDocument(ctx context.Context, key string) (DocumentSummary, error) {
@@ -299,6 +303,7 @@ func (s *Server) loadDocument(ctx context.Context, key string) (DocumentSummary,
 		parsed := int(year.Int64)
 		item.Year = &parsed
 	}
+	item.HasPDF = s.documentHasPDF(item.Key)
 	return item, nil
 }
 
