@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"cbctv2/server/internal/importer"
 	"cbctv2/server/internal/legacy"
 	"cbctv2/server/internal/publication"
 	"cbctv2/server/internal/safekey"
@@ -49,6 +50,25 @@ type pageSummary struct {
 	Chars     int    `json:"chars"`
 	Hash      string `json:"hash"`
 	UpdatedAt string `json:"updatedAt"`
+}
+
+// handleImport 执行「旧 JSON → SQLite」的一次性导入。幂等，可反复调用。
+func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ForceBackup bool `json:"forceBackup"`
+	}
+	if err := decodeOptionalJSON(w, r, &body); err != nil {
+		return
+	}
+	report, err := importer.Run(r.Context(), s.handle, importer.Options{
+		Paths:       legacy.NewPaths(s.cfg.DataRoot),
+		ForceBackup: body.ForceBackup,
+	})
+	if err != nil {
+		writeError(w, statusForError(err), "导入失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request) {

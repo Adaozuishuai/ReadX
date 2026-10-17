@@ -20,19 +20,38 @@ export function isStructuralLine(line: string): boolean {
   );
 }
 
+/** CJK（含日文假名与扩展 A 区）：中文排版里相邻字符之间不插空格。 */
+const CJK_CHARACTER = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+
+export function isCJKChar(character: string): boolean {
+  return CJK_CHARACTER.test(character);
+}
+
+/**
+ * 续行 / 续块的拼接规则，正文重排、PDF 几何重建与译文分组共用：
+ *
+ *   - 断词连字符：续行以小写字母开头才拼回一个词（"attenu-\nation" → "attenuation"）；
+ *     否则保留连字符，避免把 "state-" + "of-the-art" 粘成 "stateof-the-art"；
+ *   - 任一侧是 CJK 时不插空格：中文 PDF 的文本层按字符切分，插空格会出现「本文提出 了」；
+ *   - 其余情况按调用方意图决定是否插空格（行内小间隙不插，跨行插）。
+ */
+export function joinLineContinuation(left: string, right: string, spaced = true): string {
+  const head = left.replace(/\s+$/, '');
+  const tail = right.trim();
+  if (!head) return tail;
+  if (!tail) return head;
+  if (head.endsWith('-')) return (/^[a-z]/.test(tail) ? head.slice(0, -1) : head) + tail;
+  if (!spaced || isCJKChar(head.charAt(head.length - 1)) || isCJKChar(tail.charAt(0))) return head + tail;
+  return `${head} ${tail}`;
+}
+
 /** 合并续行；连字符结尾的英文断词直接拼接（"attenu-\nation" → "attenuation"）。 */
 export function reflowPaperText(text: string): string {
   const out: string[] = [];
   for (const line of text.split('\n')) {
     const previous = out.length ? out[out.length - 1] : undefined;
     if (previous !== undefined && !isStructuralLine(previous) && !isStructuralLine(line)) {
-      const trimmedPrevious = previous.replace(/\s+$/, '');
-      const trimmedLine = line.trim();
-      if (/-$/.test(trimmedPrevious) && /^[a-z]/.test(trimmedLine)) {
-        out[out.length - 1] = trimmedPrevious.slice(0, -1) + trimmedLine;
-      } else {
-        out[out.length - 1] = `${trimmedPrevious} ${trimmedLine}`;
-      }
+      out[out.length - 1] = joinLineContinuation(previous, line);
     } else {
       out.push(line);
     }
@@ -117,11 +136,11 @@ export function paragraphizePage(text: string): string {
     }
     const trimmed = line.trim();
     const previous = current[current.length - 1];
-    // 段落末行通常没填满列宽；再以句末标点收尾即可判定闭合。
+    // 段落末行通常没填满列宽；再以句末标点收尾即可判定闭合（含中文全角标点）。
     const previousClosed =
       previous !== undefined &&
       previous.trimEnd().length < shortThreshold &&
-      /[.!?:;»”"')\]]\s*$/.test(previous.trimEnd());
+      /(?:[.!?:;»”"')\]]|[。！？；：」』】）》])\s*$/.test(previous.trimEnd());
     // 全大写短行（"ABSTRACT"）是小节标题：自己单独成块。
     const looksLikeHeading = trimmed.length <= 40 && trimmed === trimmed.toUpperCase() && /[A-Z]{3}/.test(trimmed);
     // 编号小节标题常被 PDF 并进上一段末尾（"…Representation 1 Introduction Cone Beam…"），
@@ -136,18 +155,13 @@ export function paragraphizePage(text: string): string {
   return groups.map((group) => joinLines(group)).join('\n\n');
 }
 
-/** 组内合并续行，处理英文断词连字符。 */
+/** 组内合并续行，处理英文断词连字符与中文相邻字符。 */
 function joinLines(lines: string[]): string {
   let out = '';
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
-    if (!out) {
-      out = line;
-      continue;
-    }
-    if (out.endsWith('-') && /^[a-z]/.test(line)) out = out.slice(0, -1) + line;
-    else out = `${out} ${line}`;
+    out = out ? joinLineContinuation(out, line) : line;
   }
   return out;
 }

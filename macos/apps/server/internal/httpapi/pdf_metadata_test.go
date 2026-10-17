@@ -49,6 +49,40 @@ func TestFullTranslationIsCommittedWithImportAndRestoredWithoutModel(t *testing.
 	}
 }
 
+// 每日推荐卡片在导入前已经拿到 OpenAlex 的 DOI/作者：模型没识别出来的字段不能被写空。
+func TestKnownMetadataHintsSurviveModelGaps(t *testing.T) {
+	front, handle, cfg := newTestServer(t, nil)
+	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}
+	upstream := fakeUpstream(t, func(sources []string) (string, int) {
+		if len(sources) == 0 {
+			return `{"title":"Recognized Paper Title","translatedTitle":"识别出的标题","authors":[],"doi":"","year":0}`, 200
+		}
+		return `{"items":[{"i":0,"t":"第一段译文"}]}`, 200
+	})
+	writeAIConfig(t, bundle, upstream.URL)
+	result := uploadPublication(t, bundle, "downloaded.pdf", []byte("%PDF-1.4\nhint"), publicationMetadataHint{
+		Title:     "Seeded Title From Daily Card",
+		Author:    "Ada Lovelace",
+		DOI:       "10.1234/seeded.doi",
+		FirstPage: "Seeded Title From Daily Card\nAda Lovelace\nMICCAI 2026",
+		Pages:     []publicationPageHint{{Page: 1, Text: "First paragraph.", Segments: []string{"First paragraph."}}},
+	})
+	if result["error"] != nil {
+		t.Fatal(result)
+	}
+	document := result["document"].(map[string]any)
+	if document["doi"] != "10.1234/seeded.doi" {
+		t.Errorf("doi = %v, want 10.1234/seeded.doi（模型没给 DOI 时应保留卡片已知值）", document["doi"])
+	}
+	authors, _ := document["authors"].([]any)
+	if len(authors) != 1 || authors[0] != "Ada Lovelace" {
+		t.Errorf("authors = %v, want [Ada Lovelace]", document["authors"])
+	}
+	if document["title"] != "Recognized Paper Title" {
+		t.Errorf("title = %v, want 模型识别结果优先", document["title"])
+	}
+}
+
 func TestMalformedFullTranslationDoesNotBlockPaperImport(t *testing.T) {
 	front, handle, cfg := newTestServer(t, nil)
 	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}

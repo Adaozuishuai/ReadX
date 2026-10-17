@@ -5,7 +5,7 @@ import {
   TextLayer,
   type PDFDocumentProxy,
 } from 'pdfjs-dist';
-import { fitPDFWidth, paragraphAt, mergePaperHeadings, typesetPDFTranslation, type TranslatedPDFBlock, type PaperHeading, type PDFLayout } from '@cbct/shared';
+import { fitPDFWidth, paragraphAt, mergePaperHeadings, typesetPDFTranslation, type TranslatedPDFBlock, type PaperHeading, type PDFLayout, type PDFTranslationPlan } from '@cbct/shared';
 import { headingsFromPDFPage } from '../api/pdfOutline';
 import type { SelectedParagraph } from './ParagraphActions';
 import type { TextContent } from 'pdfjs-dist/types/src/display/api';
@@ -180,6 +180,8 @@ export function PDFPage({
   paragraphMode = false,
   onParagraph,
   headingTarget,
+  visionMode = false,
+  onVisionStatus,
 }: {
   document: PDFDocumentProxy;
   page: number;
@@ -192,8 +194,15 @@ export function PDFPage({
   paragraphMode?: boolean;
   onParagraph?: (paragraph: SelectedParagraph) => void;
   headingTarget?: { page: number; y: number; nonce: number } | null;
+  visionMode?: boolean;
+  onVisionStatus?: (status: VisionStatus, detail?: string) => void;
 }) {
-  const translatedBlocks = useMemo(() => translation ? typesetPDFTranslation(translation.layout, translation.targets) : [], [translation?.layout, translation?.targets]);
+  // 视觉结果只作用于「译文分组」这一展示层（分组/角色/丢弃），因此没有译文时不必出图计费。
+  const visionPlan = useVisionLayout({ document, page, layout: translation?.layout ?? layout ?? null, enabled: visionMode && Boolean(translation), onStatus: onVisionStatus });
+  const translatedBlocks = useMemo(
+    () => (translation ? typesetPDFTranslation(translation.layout, translation.targets, visionPlan ?? undefined) : []),
+    [translation?.layout, translation?.targets, visionPlan],
+  );
   const paragraphLayout = translation ? { ...translation.layout, blocks: translatedBlocks } : layout;
   const container = useRef<HTMLDivElement>(null);
   const paper = useRef<HTMLDivElement>(null);
@@ -441,4 +450,91 @@ export function PDFPage({
       </div>
     </div>
   );
+}
+
+export type VisionStatus = 'idle' | 'rendering' | 'asking' | 'done' | 'cached' | 'failed';
+
+/**
+ * 页级版式校正（AI 视觉试点）。
+ *
+ * 只把整页图像交给模型，换回"哪几块属于同一段、每块什么角色、哪些块该丢弃"的结构计划；
+ * **正文一个字都不来自模型**——段落文本仍逐字取自 PDF 文本层的几何块，所以翻译缓存键不受影响。
+ * 任何失败（渠道不支持图片、模型输出无法校验、超时）都静默回退几何判读，绝不让版式问题挡住阅读。
+ */
+function useVisionLayout({ document, page, layout, enabled, onStatus }: {
+  document: PDFDocumentProxy;
+  page: number;
+  layout: PDFLayout | null;
+  enabled: boolean;
+  onStatus?: (status: VisionStatus, detail?: string) => void;
+}): PDFTranslationPlan | null {
+  const [plan, setPlan] = useState<PDFTranslationPlan | null>(null);
+  const statusRef = useRef(onStatus);
+  statusRef.current = onStatus;
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  // 依赖块指纹而不是 layout 对象：父组件每次渲染都可能换新对象，否则请求会被反复打断。
+  const signature = layout ? `${page}:${layout.blocks.length}:${layout.blocks[0]?.text.slice(0, 24) ?? ''}:${layout.blocks[layout.blocks.length - 1]?.text.slice(-16) ?? ''}` : '';
+  useEffect(() => {
+    if (!enabled || !signature) {
+      setPlan(null);
+      return;
+    }
+    let cancelled = false;
+    const report = (status: VisionStatus, detail?: string) => {
+      if (!cancelled) statusRef.current?.(status, detail);
+    };
+    void (async () => {
+      try {
+        const current = layoutRef.current;
+        if (!current || !current.blocks.length) return;
+        report('rendering');
+        const pdfPage = await document.getPage(page);
+        const viewport = pdfPage.getViewport({ scale: 2 });
+        const canvas = window.document.createElement('canvas');
+        canvas.width = Math.max(1, Math.ceil(viewport.width));
+        canvas.height = Math.max(1, Math.ceil(viewport.height));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('无法创建版式校正画布');
+        await pdfPage.render({ canvasContext: context, viewport }).promise;
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((value) => resolve(value), 'image/png'));
+        canvas.width = 0;
+        canvas.height = 0;
+        if (!blob) throw new Error('无法编码页面图像');
+        const imageBase64 = await blobBase64(blob);
+        if (cancelled) return;
+        report('asking');
+        const result = await api.visionLayout({
+          page,
+          imageBase64,
+          blocks: current.blocks.map((block, index) => ({
+            index, text: block.text, x: block.x, y: block.y,
+            width: block.width, height: block.height, fontSize: block.fontSize,
+          })),
+        });
+        if (cancelled) return;
+        setPlan(result.plan);
+        report(result.cached ? 'cached' : 'done');
+      } catch (cause) {
+        if (cancelled) return;
+        setPlan(null);
+        report('failed', cause instanceof Error ? cause.message : String(cause));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabled, document, page, signature]);
+  return plan;
+}
+
+function blobBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('读取页面图像失败'));
+    reader.onload = () => {
+      const value = typeof reader.result === 'string' ? reader.result : '';
+      const comma = value.indexOf(',');
+      resolve(comma >= 0 ? value.slice(comma + 1) : value);
+    };
+    reader.readAsDataURL(blob);
+  });
 }

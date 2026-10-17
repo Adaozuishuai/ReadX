@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 const ReaderScreen = lazy(() => import('./components/ReaderScreen').then((module) => ({ default: module.ReaderScreen })));
 const ReproductionSection = lazy(() => import('./components/ReproductionSection').then((module) => ({ default: module.ReproductionSection })));
 import { LibraryScreen } from './components/LibraryScreen';
-const TrendsSection = lazy(() => import('./components/TrendsSection').then((module) => ({ default: module.TrendsSection })));
+const KnowledgeGraphSection = lazy(() => import('./components/KnowledgeGraphSection').then((module) => ({ default: module.KnowledgeGraphSection })));
 import { useAnnotations } from './hooks/useAnnotations';
 import { useDocument } from './hooks/useDocument';
 import { useLibraryMeta } from './hooks/useLibraryMeta';
@@ -16,11 +16,11 @@ const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then
  *
  *   书库   LibraryScreen   左侧边栏 + 封面网格/列表/表格（全屏，无边框工作区）
  *   阅读   ReaderScreen    顶部工具栏 + 左目录 + 原文·译文双栏（可切单栏/交换）
- *   趋势   TrendsSection   按系统标签聚合 + 想法工作流
+ *   图谱   KnowledgeGraphSection  概念 / 方法 / 结论 连成网络，跨文献合并，每条关系回到原文依据
  *   复现   ReproductionSection  分析校验 + 五组核对项 + R-11 仓库核对
  *
  * 书库点封面 → 进入阅读页（selected 决定）；阅读页「←」回书库。
- * 趋势/复现是独立入口，从书库侧栏或封面卡上的按钮进入。
+ * 知识图谱/复现是独立入口，从书库侧栏进入。
  */
 export default function App() {
   const {
@@ -30,7 +30,7 @@ export default function App() {
     reload,
   } = useWorkspace();
   const [screen, setScreen] = useState<
-    'library' | 'reader' | 'trends' | 'reproduction'
+    'library' | 'reader' | 'graph' | 'reproduction'
   >('library');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
@@ -86,6 +86,18 @@ export default function App() {
     setCite((current) => ({ page: target, nonce: (current?.nonce ?? 0) + 1 }));
   }, []);
 
+  // 图谱里点某条关系的原文依据：选定该文献 → 进阅读页 → 跳到那一页并闪一下出处。
+  const citeInDocument = useCallback(
+    (target: { key: string; page: number }) => {
+      const doc = documents.find((item) => item.key === target.key);
+      if (doc) setSelectedId(doc.id);
+      setPage(target.page);
+      setCite((current) => ({ page: target.page, nonce: (current?.nonce ?? 0) + 1 }));
+      setScreen('reader');
+    },
+    [documents],
+  );
+
   const focusAnnotation = useCallback(
     (id: string, page: number | null) => {
       setFocusedAnnotationId(id);
@@ -134,7 +146,6 @@ export default function App() {
     >
       <div className="global-document-actions">
         <button onClick={() => setImportFiles([])}>＋ 导入 PDF / EPUB</button>
-        <button onClick={() => setSettingsOpen(true)}>AI 设置</button>
       </div>
       <HeaderBar
         phase={phase}
@@ -153,14 +164,16 @@ export default function App() {
           setFilters={setFilters}
           selectedId={selectedId}
           onOpenDocument={openDocument}
+          onOpenImport={() => setImportFiles([])}
+          onOpenSettings={() => setSettingsOpen(true)}
           meta={libraryMeta}
           view={libraryView}
           onViewChange={(view) => {
             if (view === 'all' || view === 'favorite' || view === 'trash' || view === 'shelves')
               setLibraryView(view);
             setScreen(
-              view === 'trends'
-                ? 'trends'
+              view === 'graph'
+                ? 'graph'
                 : view === 'reproduction'
                   ? 'reproduction'
                   : 'library',
@@ -184,8 +197,13 @@ export default function App() {
           onFocusAnnotation={focusAnnotation}
           focusedAnnotationId={focusedAnnotationId}
         />
-      ) : screen === 'trends' ? (
-        <TrendsSection phase={phase} onBack={() => setScreen('library')} />
+      ) : screen === 'graph' ? (
+        <KnowledgeGraphSection
+          phase={phase}
+          documents={documents}
+          onBack={() => setScreen('library')}
+          onCite={citeInDocument}
+        />
       ) : (
         <ReproductionSection
           document={selected}
@@ -232,8 +250,8 @@ function HeaderBar({
   onThemeChange,
 }: {
   phase: ReturnType<typeof useWorkspace>['phase'];
-  screen: 'library' | 'reader' | 'trends' | 'reproduction';
-  onScreen: (screen: 'library' | 'reader' | 'trends' | 'reproduction') => void;
+  screen: 'library' | 'reader' | 'graph' | 'reproduction';
+  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction') => void;
   onReload: () => void;
   theme: string;
   onThemeChange: (theme: 'light' | 'dark' | 'paper' | 'system') => void;
@@ -254,14 +272,14 @@ function HeaderBar({
       </button>
       <button
         type="button"
-        onClick={() => onScreen('trends')}
+        onClick={() => onScreen('graph')}
         className={
-          screen === 'trends'
+          screen === 'graph'
             ? 'font-medium text-ink'
             : 'text-ink-faint hover:text-ink'
         }
       >
-        趋势
+        图谱
       </button>
       <button
         type="button"

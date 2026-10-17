@@ -6,7 +6,7 @@ import type { DocumentPhase } from '../hooks/useDocument';
 import { useTranslations } from '../hooks/useTranslations';
 import { AssistantSidebar, type AssistantTab } from './AssistantPanels';
 import type { useAnnotations } from '../hooks/useAnnotations';
-import { PDFPage, usePDF, type PendingSelection } from './PDFView';
+import { PDFPage, usePDF, type PendingSelection, type VisionStatus } from './PDFView';
 import { layoutFromPDF } from '../api/pdfLayout';
 import { ResizeHandle } from './ResizeHandle';
 import { EPUBView } from './EPUBView';
@@ -14,6 +14,25 @@ import { ParagraphActions, type SelectedParagraph, type ParagraphQuestion } from
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 type ReadingMode = 'source' | 'parallel' | 'translation';
+
+/** 版式校正的状态文案：失败必须写明"已回退几何判读"，否则用户会以为段落变少是丢内容。 */
+function visionStatusLabel(state: { status: VisionStatus; detail?: string }): string {
+  switch (state.status) {
+    case 'rendering':
+      return '版式校正：渲染页面…';
+    case 'asking':
+      return '版式校正：询问模型…';
+    case 'done':
+      return '版式校正：已应用';
+    case 'cached':
+      return '版式校正：已应用（缓存）';
+    case 'failed':
+      return `版式校正失败，已回退几何判读${state.detail ? `：${state.detail}` : ''}`;
+    default:
+      return '版式校正：待命';
+  }
+}
+
 interface Props {
   detail: DocumentPhase;
   selected: DocumentSummary | null;
@@ -84,6 +103,10 @@ export function ReaderScreen({
   const [error, setError] = useState('');
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [paragraphMode, setParagraphMode] = useState(true);
+  const [visionMode, setVisionMode] = useState(false);
+  const [visionStatus, setVisionStatus] = useState<{ status: VisionStatus; detail?: string }>({ status: 'idle' });
+  // 每次渲染都会换新函数身份；useVisionLayout 把它收在 ref 里，不会因此重启请求。
+  const handleVisionStatus = (status: VisionStatus, detail?: string) => setVisionStatus({ status, detail });
   const [selectedParagraph, setSelectedParagraph] = useState<SelectedParagraph | null>(null);
   const [paragraphQuestion, setParagraphQuestion] = useState<ParagraphQuestion | null>(null);
   const [note, setNote] = useState('');
@@ -94,6 +117,8 @@ export function ReaderScreen({
   const panes = useRef<HTMLDivElement>(null);
   const translations = useTranslations(documentKey);
   const restored = useRef(false);
+  // 由外部出处（图谱证据 / 批注）驱动跳转时置位：不让「恢复上次阅读位置」抢走目标页。
+  const citeTakeover = useRef(false);
   const [locationReady, setLocationReady] = useState(false);
   const sections =
     detail.kind === 'ready' ? (detail.detail.sections ?? []) : [];
@@ -127,11 +152,17 @@ export function ReaderScreen({
   useEffect(() => {
     if (!documentKey || restored.current) return;
     restored.current = true;
+    // 带着出处（cite）进来的：目标是那一页，不能被「上次读到哪」覆盖。
+    // 位置请求是异步的，所以除了这里提前退出，下面的 then 里也要再挡一次。
+    if (citeTakeover.current) {
+      setLocationReady(true);
+      return;
+    }
     let cancelled = false;
     void api
       .location(documentKey)
       .then((result) => {
-        if (!cancelled && result.location)
+        if (!cancelled && !citeTakeover.current && result.location)
           onPage(
             result.location.kind === 'pdf'
               ? (result.location.page ?? 1)
@@ -171,6 +202,8 @@ export function ReaderScreen({
   ]);
   useEffect(() => {
     if (!cite) return;
+    // 标记「本次进入阅读页由出处跳转驱动」：恢复上次阅读位置的异步回填要让位给目标页。
+    citeTakeover.current = true;
     setMode((value) => (value === 'translation' ? 'source' : value));
     onPage(cite.page);
     setFlashing(true);
@@ -334,6 +367,8 @@ export function ReaderScreen({
           layout={pdfLayout}
           paragraphMode={paragraphMode}
           onParagraph={(paragraph) => { setPending(null); setSelectedParagraph(paragraph); }}
+          visionMode={visionMode}
+          onVisionStatus={handleVisionStatus}
         />
       ) : (
         <div className="translation-document">
@@ -369,6 +404,8 @@ export function ReaderScreen({
           paragraphMode={paragraphMode}
           onParagraph={(paragraph) => { setPending(null); setSelectedParagraph(paragraph); }}
           headingTarget={headingTarget}
+          visionMode={visionMode}
+          onVisionStatus={handleVisionStatus}
           translation={{ layout: pdfLayout, targets: translations.phase.targets }} />
       ) : <div className="translation-document">
         {translations.phase.kind === 'ready' && translations.activePage === current ? (
@@ -418,6 +455,14 @@ export function ReaderScreen({
         </div>
         <div className="toolbar-actions">
           <button aria-pressed={paragraphMode} onClick={() => { setParagraphMode((value) => !value); setSelectedParagraph(null); }} title="开启后点击原文段落可翻译或提问，拖选文字仍可批注">段落识别</button>
+          <button
+            aria-pressed={visionMode}
+            onClick={() => { setVisionMode((value) => !value); setVisionStatus({ status: 'idle' }); }}
+            title="用 AI 视觉核对本页版面：只判定段落分组与图注/标题角色，正文仍来自文本层。失败自动回退几何判读。"
+          >
+            AI 版式校正
+          </button>
+          {visionMode ? <small className="text-ink-faint" role="status">{visionStatusLabel(visionStatus)}</small> : null}
           <span className="mode-pills">
             {(['source', 'parallel', 'translation'] as const).map((item) => (
               <button

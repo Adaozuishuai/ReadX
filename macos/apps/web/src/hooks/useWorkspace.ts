@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { DocumentsResponse, MetaResponse } from '@cbct/shared';
+import type { DocumentsResponse, ImportReport, MetaResponse } from '@cbct/shared';
 import { ApiError, api } from '../api/client';
 
 export type WorkspacePhase =
@@ -28,10 +28,18 @@ export function useWorkspace(): {
   filters: Filters;
   setFilters: (next: Partial<Filters>) => void;
   reload: () => void;
+  importReport: ImportReport | null;
+  importing: boolean;
+  importError: string | null;
+  runImport: () => void;
+  clearImportNotice: () => void;
 } {
   const [phase, setPhase] = useState<WorkspacePhase>({ kind: 'loading' });
   const [filters, setFiltersState] = useState<Filters>({ status: '', q: '' });
   const [attempt, setAttempt] = useState(0);
+  const [importing, setImporting] = useState(false);
+  const [importReport, setImportReport] = useState<ImportReport | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const reload = useCallback(() => setAttempt((value) => value + 1), []);
 
@@ -67,11 +75,31 @@ export function useWorkspace(): {
 
   // 搜索输入的去抖在组件层用 useDebouncedValue 处理，这里只按「已提交的 filters」发请求。
 
+  const runImport = useCallback(() => {
+    setImporting(true);
+    setImportError(null);
+    api
+      .importLegacy()
+      .then((report) => {
+        setImportReport(report);
+        setAttempt((value) => value + 1);
+      })
+      .catch((error: unknown) => {
+        setImportError(`${error instanceof Error ? error.message : String(error)}｜${hintFor(error)}`);
+      })
+      .finally(() => setImporting(false));
+  }, []);
+
   return {
     phase,
     filters,
     setFilters,
     reload,
+    importReport,
+    importing,
+    importError,
+    runImport,
+    clearImportNotice: () => setImportReport(null),
   };
 }
 

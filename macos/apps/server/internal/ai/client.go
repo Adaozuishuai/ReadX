@@ -61,6 +61,15 @@ func NewClient(cfg Config) *Client {
 }
 
 func (c *Client) post(ctx context.Context, payload chatRequest, timeout time.Duration) (*http.Response, error) {
+	return c.postRaw(ctx, payload, timeout)
+}
+
+// postRaw 是出站 POST 的唯一入口：只要 payload 能序列化成 JSON 就能走，
+// 这样多模态的「content 为部件数组」请求也能复用同一套超时与脱敏处理。
+//
+// 与 post 的关系：post 只是它接受 chatRequest 的窄化封装。Generate/Stream 是唯一的
+// 既有调用方，收窄成 chatRequest 能让纯文本路径保持编译期同形，不必到处传 any。
+func (c *Client) postRaw(ctx context.Context, payload any, timeout time.Duration) (*http.Response, error) {
 	endpoint, err := c.cfg.Endpoint()
 	if err != nil {
 		return nil, err
@@ -77,29 +86,39 @@ func (c *Client) post(ctx context.Context, payload chatRequest, timeout time.Dur
 	request.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	response, err := c.http.Do(request)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) ||
-			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return nil, fmt.Errorf("请求超时（%s），未保存，请重试。", timeout.Round(time.Second))
-		}
-		return nil, fmt.Errorf("请求失败：%s", err.Error())
+		return nil, requestFailure(err, ctx, timeout)
 	}
 	if response.StatusCode != http.StatusOK {
-		defer response.Body.Close()
-		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		text := string(detail)
-		if c.cfg.APIKey != "" {
-			text = strings.ReplaceAll(text, c.cfg.APIKey, "[redacted]")
-		}
-		if len([]rune(text)) > 200 {
-			text = string([]rune(text)[:200])
-		}
-		message := fmt.Sprintf("接口返回 %d，请检查 API 地址、模型与访问权限。", response.StatusCode)
-		if text != "" {
-			message += "\n服务端返回：" + text
-		}
-		return nil, fmt.Errorf("%s", message)
+		return nil, statusFailure(response, c.cfg.APIKey)
 	}
 	return response, nil
+}
+
+// requestFailure 把底层网络错误翻译成可执行的提示：超时与其它失败要能区分开。
+func requestFailure(err error, ctx context.Context, timeout time.Duration) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return fmt.Errorf("请求超时（%s），未保存，请重试。", timeout.Round(time.Second))
+	}
+	return fmt.Errorf("请求失败：%s", err.Error())
+}
+
+// statusFailure 读取错误响应并脱敏：上游常把 Key 回显在错误体里，直接透传会写进日志与界面。
+func statusFailure(response *http.Response, apiKey string) error {
+	defer response.Body.Close()
+	detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	text := string(detail)
+	if apiKey != "" {
+		text = strings.ReplaceAll(text, apiKey, "[redacted]")
+	}
+	if len([]rune(text)) > 200 {
+		text = string([]rune(text)[:200])
+	}
+	message := fmt.Sprintf("接口返回 %d，请检查 API 地址、模型与访问权限。", response.StatusCode)
+	if text != "" {
+		message += "\n服务端返回：" + text
+	}
+	return fmt.Errorf("%s", message)
 }
 
 // Generate 是非流式生成：结构化精读要整段 JSON，流式拼接无收益。

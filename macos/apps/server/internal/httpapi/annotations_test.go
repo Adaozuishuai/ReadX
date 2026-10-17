@@ -9,7 +9,8 @@ import (
 
 func newAnnotationServer(t *testing.T) *httptestServerBundle {
 	t.Helper()
-	bundle, _ := newSeededServer(t)
+	bundle, _ := newImportServer(t)
+	post(t, bundle, http.MethodPost, "/v1/import", "")
 	return bundle
 }
 
