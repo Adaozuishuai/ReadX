@@ -240,7 +240,7 @@ export function LibraryScreen({
     <div className={`app-shell${dailyOpen ? ' daily-open' : ''}`}>
       <aside className={`library-sidebar${collapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-brand">
-          <span>CBCT 精读</span>
+          <span>ReadX</span>
           <span className="rounded-pill bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">v2</span>
         </div>
 

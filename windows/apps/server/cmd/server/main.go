@@ -1,4 +1,4 @@
-// Command server 是 CBCT 精读 v2 的本地后端：只绑定回环地址、每次启动随机 bearer token、
+// Command server 是 ReadX 的本地后端：只绑定回环地址、每次启动随机 bearer token、
 // SQLite 持久化，并把就绪信息（端口 + token）按行打印到 stdout 供 Electron 壳解析。
 package main
 

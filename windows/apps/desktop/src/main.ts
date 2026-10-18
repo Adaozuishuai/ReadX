@@ -1,6 +1,8 @@
 import { app, BrowserWindow, dialog, shell } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { BootstrapInfo, ReadyInfo } from '@cbct/shared';
@@ -71,7 +73,7 @@ async function bootstrap(): Promise<void> {
     server = await startServer();
     allowedOrigin = originOf(startUrl(server));
   } catch (error) {
-    dialog.showErrorBox('CBCT 精读 v2 启动失败', describe(error));
+    dialog.showErrorBox('ReadX 启动失败', describe(error));
     app.quit();
     return;
   }
@@ -213,7 +215,7 @@ function createWindow(): void {
     minHeight: 660,
     show: false,
     backgroundColor: '#f6f2ea',
-    title: 'CBCT 精读 v2',
+    title: 'ReadX',
     // 应用图标（书页 + 锥束射线母题）：dist/main.js 的 __dirname 是 apps/desktop/dist，
     // ico 放在 apps/desktop/ 下，源码运行与打包后都按这个相对位置解析。
     icon: path.join(__dirname, '..', 'icon.ico'),
@@ -274,9 +276,29 @@ function serverBinary(): string {
   ].filter((item): item is string => Boolean(item));
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+    if (fs.existsSync(candidate)) return prepareServerRuntime(candidate);
   }
   throw new Error(`找不到 Go server 可执行文件。请先执行 npm run build:go，或设置 CBCT_V2_SERVER。\n已尝试：\n${candidates.join('\n')}`);
+}
+
+function prepareServerRuntime(source: string): string {
+  if (process.platform !== 'win32') return source;
+  const body = fs.readFileSync(source);
+  const hash = createHash('sha256').update(body).digest('hex');
+  const local = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  const dir = path.join(local, 'CBCTReading', 'runtime', hash);
+  const target = path.join(dir, 'server.exe');
+  fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(target)) {
+    const staging = path.join(dir, `server-${process.pid}.tmp`);
+    try {
+      fs.writeFileSync(staging, body, { flag: 'wx' });
+      fs.renameSync(staging, target);
+    } finally {
+      if (fs.existsSync(staging)) fs.unlinkSync(staging);
+    }
+  }
+  return target;
 }
 
 function readDevInfo(): ReadyInfo | null {

@@ -3,21 +3,16 @@
  * 从旧三栏工作区的 SideColumn 原样迁移——交互与文案保持一致，
  * 只是把「对照」面板换成了阅读页工具栏上的双栏模式切换。
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ReadingKind } from '../hooks/useReadings';
-import { parseExperimentEntries, useReadings } from '../hooks/useReadings';
-import type { AIStatus } from '../api/client';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
-import { useChat } from '../hooks/useChat';
 import type { useAnnotations } from '../hooks/useAnnotations';
 import type { DocumentSummary } from '@cbct/shared';
-import { ResearchNotesBlock, DetailedResultsBlock, ReproductionNotesBlock } from './DeepReadingBlocks';
-import { ReproductionSection } from './ReproductionSection';
 import type { ParagraphQuestion } from './ParagraphActions';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { usePaperVisuals } from '../hooks/usePaperVisuals';
-import { PaperVisualGallery } from './PaperVisualGallery';
-import { MathText } from './FormulaContent';
+
+import { useAIPreferences } from '../hooks/useAIPreferences';
+import { ChatWorkspace } from './ChatWorkspace';
+import { PrecisionReading } from './PrecisionReading';
 
 export type AssistantTab = 'chat' | 'reading' | 'notes';
 
@@ -39,7 +34,11 @@ export function AssistantSidebar({
   paragraphQuestion,
   document,
   pdfDocument,
+  expanded,
+  onExpand,
 }: {
+  expanded?: boolean;
+  onExpand?: () => void;
   apiKey: string | null;
   onCite: (page: number) => void;
   annotations: ReturnType<typeof useAnnotations>;
@@ -51,7 +50,9 @@ export function AssistantSidebar({
   pdfDocument?: PDFDocumentProxy | null;
   paragraphQuestion?: ParagraphQuestion | null;
 }) {
-  const [status, setStatus] = useState<AIStatus | null>(null);
+  const preferences = useAIPreferences();
+  const status = preferences.settings?.status;
+  const [followup, setFollowup] = useState<{ text: string; nonce: number } | null>(null);
   const [quote, setQuote] = useState('');
   useEffect(() => {
     const accept = (event: Event) => {
@@ -63,22 +64,6 @@ export function AssistantSidebar({
     return () => window.removeEventListener('cbct-quote', accept);
   }, [apiKey]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    const reload = () =>
-      api
-        .aiStatus(controller.signal)
-        .then(setStatus)
-        .catch(() =>
-          setStatus({ configured: false, error: '读取 AI 配置状态失败' }),
-        );
-    void reload();
-    window.addEventListener('cbct-ai-settings', reload);
-    return () => {
-      controller.abort();
-      window.removeEventListener('cbct-ai-settings', reload);
-    };
-  }, []);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -107,6 +92,7 @@ export function AssistantSidebar({
         <span className="ml-auto pr-1 text-[10px] text-ink-faint">
           {status?.configured ? status.model || status.provider : '未配置'}
         </span>
+        <button className="assistant-expand precision-button" onClick={onExpand} aria-label={expanded ? '返回并排阅读' : '展开助教工作区'}>{expanded ? '返回原文 ↙' : '展开 ↗'}</button>
       </div>
 
       {status && !status.configured ? (
@@ -119,8 +105,12 @@ export function AssistantSidebar({
       <div
         className={tab === 'chat' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
       >
-        <ChatPane
-          apiKey={apiKey}
+        <ChatWorkspace
+          documentKey={apiKey}
+          title={document?.title || ''}
+          preferences={preferences}
+          followup={followup}
+          onReading={format === 'pdf' ? () => onTabChange('reading') : undefined}
           onCite={onCite}
           disabled={!status?.configured}
           quote={quote}
@@ -128,7 +118,9 @@ export function AssistantSidebar({
         />
       </div>
       {format !== 'epub' && <div className={tab === 'reading' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
-        <ReadingPane
+        <PrecisionReading
+          preferences={preferences}
+          onAsk={(text) => { setFollowup({ text, nonce: Date.now() }); onTabChange('chat'); }}
           document={document}
           pdfDocument={pdfDocument}
           enabled={tab === 'reading'}
@@ -146,277 +138,6 @@ export function AssistantSidebar({
         />
       ) : null}
     </div>
-  );
-}
-
-function ChatPane({
-  apiKey,
-  onCite,
-  disabled,
-  quote,
-  paragraphQuestion,
-}: {
-  apiKey: string | null;
-  onCite: (page: number) => void;
-  disabled: boolean;
-  quote: string;
-  paragraphQuestion?: ParagraphQuestion | null;
-}) {
-  const { turns, busy, send, stop } = useChat(apiKey);
-  const [draft, setDraft] = useState('');
-  const [paragraph, setParagraph] = useState<ParagraphQuestion | null>(null);
-  const input = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (!paragraphQuestion) return;
-    setParagraph(paragraphQuestion);
-    input.current?.focus();
-  }, [paragraphQuestion]);
-  const scroller = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (quote) { setDraft(quote); setParagraph(null); }
-  }, [quote]);
-
-  useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
-  }, [turns]);
-
-  const submit = () => {
-    if (busy || !apiKey || disabled) return;
-    let question = draft.trim();
-    if (paragraph) {
-      question = `请围绕以下原文段落回答，区分原文依据与解释推断。\n出处：${paragraph.kind === 'pdf' ? 'Page' : 'Chapter'} ${paragraph.position}\n原文段落：\n${paragraph.text}\n\n问题：${question || '这一段在讲什么？请解释关键概念及其与上下文的关系。'}`;
-    }
-    if (!question) return;
-    setDraft('');
-    void send(question);
-  };
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        ref={scroller}
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3"
-      >
-        {turns.length === 0 ? (
-          <p className="pt-6 text-center text-[13px] leading-relaxed text-ink-soft">
-            {apiKey
-              ? '就这篇文档提问。回答里的出处可点击跳到原文。'
-              : '先选一篇文档。'}
-          </p>
-        ) : null}
-        {turns.map((turn, index) => (
-          <div
-            key={index}
-            className={turn.role === 'user' ? 'flex justify-end' : 'flex'}
-          >
-            <div
-              className={[
-                'max-w-[88%] rounded-card px-3 py-2 text-[13px] leading-relaxed',
-                turn.role === 'user'
-                  ? 'bg-accent-soft text-ink'
-                  : 'card-surface',
-              ].join(' ')}
-            >
-              {turn.scope && turn.scope.included < turn.scope.total ? (
-                <p className="mb-1 text-[11px] text-ink-faint">
-                  材料为相关 {turn.scope.included}/{turn.scope.total}{' '}
-                  {turn.scope.unit ?? '页'}
-                </p>
-              ) : null}
-              <p className="whitespace-pre-wrap">
-                <CitedText text={turn.text} onCite={onCite} />
-              </p>
-              {turn.error ? (
-                <p className="mt-1.5 text-[12px] leading-relaxed text-bad">
-                  {turn.error}
-                </p>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </div>
-      {paragraph && <div className="chat-paragraph-context" aria-label="提问段落">
-        <div><strong>{paragraph.kind === 'pdf' ? 'Page' : 'Chapter'} {paragraph.position} · 已选段落</strong>
-          <button onClick={() => setParagraph(null)} aria-label="清除提问段落">×</button></div>
-        <p>{paragraph.text}</p>
-      </div>}
-      <div className="flex items-end gap-2 border-t border-line p-3">
-        <textarea
-          ref={input}
-          aria-label="AI 提问"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              submit();
-            }
-          }}
-          rows={2}
-          disabled={!apiKey || disabled}
-          placeholder={
-            !apiKey ? '先选一篇论文' : disabled ? 'API 未配置' : paragraph ? '输入关于此段的问题，或直接发送以解释此段…' : '提问这篇论文…'
-          }
-          className="flex-1 resize-none rounded-lg border border-line bg-surface px-2.5 py-2 text-[13px] placeholder:text-ink-faint focus:border-accent focus:outline-none"
-        />
-        {busy ? (
-          <button
-            type="button"
-            onClick={stop}
-            className="rounded-lg border border-line px-3 py-2 text-[13px] text-ink-soft"
-          >
-            停止
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!apiKey || disabled || (!draft.trim() && !paragraph)}
-            className="rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-surface shadow-sm transition hover:brightness-105 disabled:opacity-40"
-          >
-            发送
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** 把 (Page N) 变成可点击的跳转入口；这是「出处跳原文」的最小实现。 */
-function CitedText({
-  text,
-  onCite,
-}: {
-  text: string;
-  onCite: (page: number) => void;
-}) {
-  const parts: React.ReactNode[] = [];
-  const pattern = /\b(Page|Chapter)\s+(\d+)/g;
-  let last = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > last) parts.push(text.slice(last, match.index));
-    const page = Number(match[2]);
-    parts.push(
-      <button
-        key={`${page}-${match.index}`}
-        type="button"
-        onClick={() => onCite(page)}
-        className="mx-0.5 rounded-pill bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent hover:bg-accent hover:text-surface"
-      >
-        {match[1]} {page}
-      </button>,
-    );
-    last = match.index + match[0].length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-  return <>{parts}</>;
-}
-
-const READING_STEPS: { kind: ReadingKind; label: string }[] = [
-  { kind: 'motivation', label: '实验动机' }, { kind: 'method', label: '方法公式' },
-  { kind: 'experiment', label: '实验配置' }, { kind: 'results', label: '结果分析' },
-  { kind: 'reproduction', label: '代码复现' },
-];
-function ReadingPane({ apiKey, onCite, disabled, document, pdfDocument, enabled }: {
-  apiKey: string | null; onCite: (page: number) => void; disabled: boolean; document?: DocumentSummary | null;
-  pdfDocument?: PDFDocumentProxy | null; enabled: boolean;
-}) {
-  const { entries, loading, error, generating, progress: generationProgress, generate } = useReadings(apiKey);
-  const { visuals, progress: visualProgress, error: visualError } = usePaperVisuals(pdfDocument ?? null, enabled);
-  const waitingPDF = enabled && !pdfDocument;
-  const [active, setActive] = useState<ReadingKind>('motivation');
-  const [revision, setRevision] = useState(0);
-  const [saveError, setSaveError] = useState('');
-  const entry = entries[active];
-  const label = READING_STEPS.find((step) => step.kind === active)!.label;
-  const saveChecklist = async () => {
-    if (!apiKey || !entry) return;
-    try { await api.analyzeReproduction(apiKey, entry.value); setRevision((value) => value + 1); setSaveError(''); }
-    catch (cause) { setSaveError(String(cause)); }
-  };
-  return <div className="min-h-0 flex-1 overflow-y-auto p-3" aria-label="五重奏精读">
-    <div className="reading-steps" role="tablist" aria-label="精读步骤">{READING_STEPS.map((step, index) => <button key={step.kind} role="tab" aria-selected={active === step.kind} onClick={() => setActive(step.kind)}>{index + 1}. {step.label}</button>)}</div>
-    <div className="reading-generate"><strong>{label}</strong><button disabled={!apiKey || disabled || generating !== null || visualProgress !== null || waitingPDF} onClick={() => void generate(active, visuals.map(({ id, kind, page, caption, suggestedStep }) => ({ id, kind, page, caption, suggestedStep })))}>{generating === active ? '生成中…' : waitingPDF || visualProgress ? '图表识别中…' : `${entry ? '重新生成' : '生成'}${label}`}</button></div>
-    {generationProgress && <div className="reading-generation-progress" role="status" aria-live="polite">
-      <div className="reading-generation-progress-track" role="progressbar" aria-label="精读生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={generationProgress.percent} aria-valuetext={generationProgress.message}>
-        <span style={{ width: `${generationProgress.percent}%` }} />
-      </div>
-      <span>{generationProgress.message}</span>
-    </div>}
-    {loading && <p>读取精读产物…</p>}
-    {error && <p role="alert" className="text-bad">{error}</p>}
-    {!loading && !entry && <p className="text-[13px] text-ink-soft">尚无{label}记录。生成后自动保存，可点击页码回到原文核对。</p>}
-    {entry && (active === 'motivation' || active === 'method') && <ResearchNotesBlock entry={entry} onCite={onCite} />}
-    {entry && active === 'experiment' && <ExperimentBlock entry={entry} onCite={onCite} />}
-    {entry && active === 'results' && <DetailedResultsBlock entry={entry} onCite={onCite} />}
-    {active === 'reproduction' && <>
-      {entry && <><ReproductionNotesBlock entry={entry} onCite={onCite} /><button className="reading-save-checklist" disabled={!!entry.validationError} onClick={() => void saveChecklist()}>保存为复现核对清单</button></>}
-      {saveError && <p role="alert" className="text-bad">{saveError}</p>}
-      {document && <ReproductionSection document={document} documents={[document]} onPick={() => undefined} refreshToken={revision} />}
-    </>}
-    <PaperVisualGallery visuals={visuals} entries={entries} activeStep={active} progress={visualProgress} error={visualError} waitingPDF={waitingPDF} onCite={onCite} />
-  </div>;
-}
-
-function ExperimentBlock({
-  entry,
-  onCite,
-}: {
-  entry: import('../api/client').ReadingEntry;
-  onCite: (page: number) => void;
-}) {
-  const groups = parseExperimentEntries(entry.value);
-  if (!groups) {
-    return (
-      <section>
-        <h3 className="mb-1 text-[13px] font-semibold">实验配置</h3>
-        <pre className="overflow-x-auto rounded-lg bg-surface-sunk p-2 text-[11px]">
-          {entry.value.slice(0, 400)}
-        </pre>
-      </section>
-    );
-  }
-  return (
-    <section>
-      <h3 className="mb-1 text-[13px] font-semibold">实验配置</h3>
-      <div className="space-y-2">
-        {groups
-          .filter((group) => group.fields.length)
-          .map((group) => (
-            <div
-              key={group.group}
-              className="rounded-lg border border-line px-2.5 py-2"
-            >
-              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                {group.group}
-              </p>
-              <dl className="mt-1 space-y-1">
-                {group.fields.map((field, index) => (
-                  <div
-                    key={`${field.k}-${index}`}
-                    className="flex gap-2 text-[12px] leading-snug"
-                  >
-                    <dt className="w-24 shrink-0 text-ink-soft"><MathText text={field.k} /></dt>
-                    <dd className="min-w-0 flex-1">
-                      <MathText text={field.v} />
-                      {field.page != null ? (
-                        <button
-                          type="button"
-                          onClick={() => onCite(field.page as number)}
-                          className="ml-1.5 rounded-pill bg-accent-soft px-1.5 text-[10px] text-accent hover:bg-accent hover:text-surface"
-                        >
-                          P{field.page}
-                        </button>
-                      ) : null}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          ))}
-      </div>
-    </section>
   );
 }
 

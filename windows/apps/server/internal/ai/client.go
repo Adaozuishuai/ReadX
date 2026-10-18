@@ -20,6 +20,19 @@ const RequestTimeout = 180 * time.Second
 // its structured output without extending the deadline for other AI actions.
 const ResultsRequestTimeout = 8 * time.Minute
 
+// Codex reasoning-heavy turns need a larger bounded window, and remain cancellable.
+func (c *Client) operationTimeout(requested time.Duration) time.Duration {
+	if c.cfg.ProviderName() == "codex" {
+		switch c.cfg.ReasoningEffort {
+		case "high", "xhigh", "max", "ultra":
+			if requested < 10*time.Minute {
+				return 10 * time.Minute
+			}
+		}
+	}
+	return requested
+}
+
 // Message 是一条对话消息；Role 用 OpenAI 的 system/user/assistant。
 type Message struct {
 	Role    string `json:"role"`
@@ -132,6 +145,7 @@ func (c *Client) GenerateWithTimeout(ctx context.Context, system, user string, t
 	if timeout <= 0 {
 		timeout = RequestTimeout
 	}
+	timeout = c.operationTimeout(timeout)
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if c.cfg.ProviderName() != "openai" {
@@ -188,6 +202,7 @@ func (c *Client) StreamWithTimeout(ctx context.Context, messages []Message, temp
 	if timeout <= 0 {
 		timeout = RequestTimeout
 	}
+	timeout = c.operationTimeout(timeout)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if c.cfg.IsCLI() {

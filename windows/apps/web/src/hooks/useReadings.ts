@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { GenerateProgress, GenerateResponse, ReadingEntry, ReadingVisualReference } from '../api/client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { GenerateProgress, GenerateResponse, ReadingEntry, ReadingVisualReference, ReadingGenerationInput } from '../api/client';
 import { api } from '../api/client';
 
 export type ReadingKind = 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
@@ -8,16 +8,22 @@ export interface ReadingState {
   entries: Partial<Record<ReadingKind, ReadingEntry>>;
   loading: boolean;
   error: string | null;
+  visualAnalysis?: ReadingEntry;
 }
 
-/** 精读产物：读取已存条目 + 触发结构化生成（服务端负责校验与四层兜底）。 */
+/** Load durable readings and apply completed subsection updates during generation. */
 export function useReadings(key: string | null) {
   const [state, setState] = useState<ReadingState>({ entries: {}, loading: false, error: null });
-  const [generating, setGenerating] = useState<ReadingKind | null>(null);
+  const [generating, setGenerating] = useState<ReadingKind | 'visuals' | null>(null);
   const [progress, setProgress] = useState<GenerateProgress | null>(null);
   const [notice, setNotice] = useState<GenerateResponse | null>(null);
+  const epoch = useRef(0);
+  const request = useRef<AbortController | null>(null);
+  const loadSequence = useRef(0);
 
   const reload = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    const generation = epoch.current;
     if (!key) {
       setState({ entries: {}, loading: false, error: null });
       return;
@@ -25,6 +31,7 @@ export function useReadings(key: string | null) {
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
       const response = await api.readings(key);
+      if (generation !== epoch.current || sequence !== loadSequence.current) return;
       const entries: ReadingState['entries'] = {};
       for (const kind of ['motivation', 'method', 'experiment', 'results', 'reproduction'] as ReadingKind[]) {
         const legacyKey = kind === 'experiment' ? 'experimentJSON' : kind === 'results' ? 'resultsJSON' : kind;
@@ -32,41 +39,64 @@ export function useReadings(key: string | null) {
         if (typeof raw === 'string' && raw.trim()) {
           entries[kind] = { value: raw, demoted: [], validationError: '旧版记录，尚未按当前规则重新核验', updatedAt: '' };
         }
-        if (raw && typeof raw === 'object' && 'value' in (raw as Record<string, unknown>)) {
-          entries[kind] = raw as ReadingEntry;
+        if (raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).value === 'string') {
+          const item = raw as Partial<ReadingEntry> & { value: string };
+          entries[kind] = { ...item, demoted: Array.isArray(item.demoted) ? item.demoted.filter((v) => typeof v === 'string') : [], validationError: typeof item.validationError === 'string' ? item.validationError : null, updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '' };
         }
       }
-      setState({ entries, loading: false, error: null });
+      const visualRaw = response.entries.visualAnalysis as ReadingEntry | undefined;
+      const visualAnalysis = visualRaw && typeof visualRaw === 'object' && Array.isArray(visualRaw.visuals) ? visualRaw : undefined;
+      setState({ entries, loading: false, error: null, visualAnalysis });
     } catch (error) {
-      setState({ entries: {}, loading: false, error: error instanceof Error ? error.message : String(error) });
+      if (generation === epoch.current && sequence === loadSequence.current) setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) }));
     }
   }, [key]);
 
   useEffect(() => {
+    ++epoch.current;
+    request.current?.abort(); request.current = null;
+    setState({ entries: {}, loading: true, error: null });
+    setGenerating(null); setProgress(null); setNotice(null);
     void reload();
+    return () => { ++epoch.current; request.current?.abort(); request.current = null; };
   }, [reload]);
 
   const generate = useCallback(
-    async (kind: ReadingKind, visuals: ReadingVisualReference[] = []) => {
-      if (!key) return;
+    async (kind: ReadingKind | 'visuals', visuals: ReadingVisualReference[] | ((signal: AbortSignal, progress: (value: GenerateProgress) => void) => Promise<ReadingVisualReference[] | ReadingGenerationInput>) = []) => {
+      if (!key || request.current) return false;
+      const generation = epoch.current;
+      const controller = new AbortController();
+      request.current = controller;
       setGenerating(kind);
+      setState((current) => ({ ...current, error: null }));
       setProgress({ percent: 2, message: '正在准备精读任务…' });
       setNotice(null);
       try {
-        const result = await api.generate(key, kind, visuals, setProgress);
+        const report = (value: GenerateProgress) => { if (epoch.current === generation) setProgress(value); };
+        const input = typeof visuals === 'function' ? await visuals(controller.signal, report) : visuals;
+        const references = Array.isArray(input) ? input : input.visuals;
+        const paper = Array.isArray(input) ? undefined : { workflow: input.workflow, fingerprint: input.fingerprint, pageCount: input.pageCount, unavailableVisuals: input.unavailableVisuals };
+        controller.signal.throwIfAborted();
+        const result = await api.generate(key, kind, references, report, controller.signal, (savedKind, entry) => {
+          if (epoch.current === generation && savedKind === kind && kind !== 'visuals') setState((current) => ({ ...current, entries: { ...current.entries, [kind]: entry } }));
+        }, paper);
+        if (epoch.current !== generation) return false;
         setNotice(result);
         await reload();
+        return result.saved;
       } catch (error) {
-        setState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
+        // The image stage may have completed before prose generation failed.
+        if (epoch.current === generation && !controller.signal.aborted) await reload();
+        if (epoch.current === generation) setState((current) => ({ ...current, error: controller.signal.aborted ? '已取消本次生成；已保存的记录仍可查看。' : error instanceof Error ? error.message : String(error) }));
+        return false;
       } finally {
-        setGenerating(null);
-        setProgress(null);
+        if (epoch.current === generation) { request.current = null; setGenerating(null); setProgress(null); }
       }
     },
     [key, reload],
   );
 
-  return { ...state, generating, progress, notice, generate, clearNotice: () => setNotice(null), reload };
+  return { ...state, generating, progress, notice, generate, cancel: () => request.current?.abort(), clearNotice: () => setNotice(null), reload };
 }
 
 /** 把条目 JSON 解析成「分组 → 字段」结构供界面渲染；解析失败时原样给出错误。 */
@@ -94,7 +124,7 @@ export function parseExperimentEntries(value: string): { group: string; fields: 
       });
       groups.push({ group: label, fields });
     }
-    return groups;
+    return groups.length ? groups : null;
   } catch {
     return null;
   }

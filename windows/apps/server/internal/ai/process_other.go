@@ -12,6 +12,8 @@ func configureCLIProcess(cmd *exec.Cmd) {
 	cmd.Cancel = func() error { return terminateCLIProcess(cmd) }
 }
 
+func configureCLIEnvironment(_ *exec.Cmd) {}
+
 func terminateCLIProcess(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil

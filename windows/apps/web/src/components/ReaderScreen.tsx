@@ -65,10 +65,11 @@ export function ReaderScreen({
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 1000);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth >= 1200);
   const [tab, setTab] = useState<AssistantTab>('chat');
+  const [assistantExpanded, setAssistantExpanded] = useState(false);
   const [swapped, setSwapped] = useState(false);
   const [divider, setDivider] = useState(50);
   const [leftWidth, setLeftWidth] = useState(() => readPanelWidth('toc', 220));
-  const [rightWidth, setRightWidth] = useState(() => readPanelWidth('assistant', 360));
+  const [rightWidth, setRightWidth] = useState(() => readPanelWidth('assistant', 440));
   const [panelSpace, setPanelSpace] = useState(window.innerWidth);
   const panelRoot = useRef<HTMLDivElement>(null);
   const [headingTarget, setHeadingTarget] = useState<{ page: number; y: number; nonce: number } | null>(null);
@@ -501,6 +502,8 @@ export function ReaderScreen({
           >
             助读
           </button>
+          <button aria-pressed={assistantExpanded && rightOpen} onClick={() => { setRightOpen(true); setAssistantExpanded((value) => !value); setTab('chat'); }}>AI 助教 ↗</button>
+          {!epub && <button onClick={() => { setRightOpen(true); setAssistantExpanded(true); setTab('reading'); }}>精读五重奏 ↗</button>}
         </div>
       </header>
       <div className="reader-panels" ref={panelRoot}>
@@ -605,15 +608,17 @@ export function ReaderScreen({
         </div>
         <ResizeHandle label="调整助读宽度" value={visibleRight}
           onStart={() => { const start = visibleRight; return (delta) => resizeRight(start - delta); }}
-          onStep={(delta) => resizeRight(visibleRight - delta)} onReset={() => { setRightWidth(360); setRightOpen(true); }} />
-        <aside className="assistant-sidebar" data-open={rightOpen} style={{ width: visibleRight, flexBasis: visibleRight }}>
+          onStep={(delta) => resizeRight(visibleRight - delta)} onReset={() => { setRightWidth(440); setRightOpen(true); }} />
+        <aside className={`assistant-sidebar${assistantExpanded && rightOpen ? ' expanded' : ''}`} data-open={rightOpen} style={{ width: visibleRight, flexBasis: visibleRight }}>
           <AssistantSidebar
             key={documentKey}
             apiKey={documentKey}
             document={selected}
             pdfDocument={pdf.document as PDFDocumentProxy | null}
             format={epub ? 'epub' : 'pdf'}
-            onCite={onCite}
+            onCite={(position) => { setAssistantExpanded(false); onCite(position); }}
+            expanded={assistantExpanded}
+            onExpand={() => setAssistantExpanded((value) => !value)}
             annotations={annotations}
             onFocusAnnotation={focus}
             tab={tab}

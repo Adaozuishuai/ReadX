@@ -1,5 +1,5 @@
 @echo off
-REM CBCT Jingdu v2 Windows launcher.
+REM ReadX Windows launcher.
 REM Incremental build (shared -> web -> desktop -> Go server), then start the Electron shell
 REM in production mode. The shell starts the Go server and serves the built web dist itself.
 REM Launched detached so no console window stays open.
@@ -12,7 +12,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Starting CBCT Jingdu v2 ...
+echo Starting ReadX ...
 node scripts\ensure-built.mjs
 if errorlevel 1 (
   echo [ERROR] Build failed. See the output above.

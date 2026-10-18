@@ -71,7 +71,7 @@ async function bootstrap(): Promise<void> {
     server = await startServer();
     allowedOrigin = originOf(startUrl(server));
   } catch (error) {
-    dialog.showErrorBox('CBCT 精读 v2 启动失败', describe(error));
+    dialog.showErrorBox('ReadX 启动失败', describe(error));
     app.quit();
     return;
   }
@@ -213,7 +213,7 @@ function createWindow(): void {
     minHeight: 660,
     show: false,
     backgroundColor: '#f6f2ea',
-    title: 'CBCT 精读 v2',
+    title: 'ReadX',
     // 应用图标（书页 + 锥束射线母题）：dist/main.js 的 __dirname 是 apps/desktop/dist，
     // ico 放在 apps/desktop/ 下，源码运行与打包后都按这个相对位置解析。
     icon: path.join(__dirname, '..', 'icon.ico'),

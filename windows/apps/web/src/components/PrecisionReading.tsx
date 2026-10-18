@@ -1,0 +1,146 @@
+import { useEffect, useRef, useState } from 'react';
+import type { DocumentSummary } from '@cbct/shared';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { api, type ReadingEntry, type GenerateProgress, type ReadingVisualAnalysis } from '../api/client';
+import { parseExperimentEntries, useReadings, type ReadingKind } from '../hooks/useReadings';
+import { usePaperVisuals } from '../hooks/usePaperVisuals';
+import type { AIPreferences } from '../hooks/useAIPreferences';
+import { ResearchNotesBlock, DetailedResultsBlock, ReproductionNotesBlock, EvidenceField, parseJSONPayload } from './DeepReadingBlocks';
+import { ReproductionSection } from './ReproductionSection';
+import { PaperVisualGallery } from './PaperVisualGallery';
+import { AIModelControls } from './AIModelControls';
+import { copyText } from './ChatWorkspace';
+import { currentVisualAnalyses } from '../lib/readingVisuals';
+import { preparePaperReading } from '../lib/paperReader';
+import { NarrativeReading } from './NarrativeReading';
+import { ReadingVisuals } from './ReadingVisuals';
+import type { ReactNode } from 'react';
+
+export const READING_STEPS: { kind: ReadingKind; label: string; questions: string[]; outline: string[] }[] = [
+  { kind: 'motivation', label: '实验动机', questions: ['作者究竟要解决什么具体问题？', '既有方法的局限是否有原文依据？', '什么实验能够证伪研究假设？'], outline: ['问题与应用场景', '既有方法局限', '研究假设', '贡献与适用边界'] },
+  { kind: 'method', label: '方法公式', questions: ['每个模块的输入、输出是什么？', '几何约束与损失如何进入优化？', '公式依赖什么假设，符号是否齐全？'], outline: ['输入与输出', '体积表示与模块流程', '投影约束与优化', '关键公式、符号与条件'] },
+  { kind: 'experiment', label: '实验配置', questions: ['模拟与真实数据分别采用什么协议？', '对比方法是否使用一致的数据与预算？', '哪些参数原文未报告？'], outline: ['数据集与划分', '采集几何与预处理', '训练与损失', '基线与评价指标'] },
+  { kind: 'results', label: '结果分析', questions: ['指标对应哪一组数据与采集协议？', '消融实验能否单独支持模块贡献？', '是否报告误差、重复实验或统计检验？'], outline: ['结果表与实验协议', '稳定性与消融', '泛化与效率', '统计报告与证据边界'] },
+  { kind: 'reproduction', label: '代码复现', questions: ['代码、数据、权重是否实际公开？', '环境、特殊算子与计算成本是否明确？', '还需要向作者或仓库核对什么？'], outline: ['代码、数据与权重', '环境与依赖', '时间与显存成本', '缺失项与复现核对清单'] },
+];
+
+const LABELS: Record<string, string> = { sections: '章节', fields: '证据条目', title: '标题', k: '要点', v: '事实', page: 'Page', excerpt: '逐字依据', formulas: '公式', latex: 'LaTeX', explanation: '解释与条件', dataset: '数据集', acquisition: '采集几何', training: '训练', loss: '损失', metrics: '指标', baselines: '基线', tables: '结果表', caption: '表题', header: '表头', protocol: '协议', columns: '指标列', rows: '结果行', method: '方法', cells: '数值', valueText: '原始数值', uncertaintyText: '误差', stability: '稳定性', ablation: '消融', generalization: '泛化', efficiency: '效率', statistics: '统计报告', missing: '缺失信息', resources: '代码、数据与权重', environment: '环境', cost: '计算成本', risks: '风险', finding: '论文依据', assessment: '分析与推断', action: '核对行动', interpretation: '有条件的解读', evidence: '证据' };
+function markdownValue(value: unknown, depth = 0): string {
+  if (value == null) return '论文未说明';
+  if (typeof value !== 'object') return String(value);
+  if (Array.isArray(value)) return value.map((v) => markdownValue(v, depth)).join('\n\n');
+  const item = value as Record<string, unknown>;
+  if (typeof item.k === 'string' && typeof item.v === 'string') return `- **${item.k}**：${item.v}${typeof item.page === 'number' ? ` (Page ${item.page})` : ''}${typeof item.excerpt === 'string' ? `\n  > ${item.excerpt.replace(/\n/g, '\n  > ')}` : ''}`;
+  return Object.entries(item).filter(([key]) => !['id', 'tableID', 'visualID', 'primaryMethodID'].includes(key)).map(([key, v]) => `${'#'.repeat(Math.min(6, depth + 3))} ${LABELS[key] ?? key}\n\n${markdownValue(v, depth + 1)}`).join('\n\n');
+}
+function entryMarkdown(label: string, entry: ReadingEntry, visuals = entry.visuals ?? []): string {
+  let body = entry.narrative || entry.value;
+  if (!entry.narrative) try { body = markdownValue(JSON.parse(body)); } catch { /* Preserve legacy prose without truncation. */ }
+  body = body.replace(/\[\[visual:([^\]\n]+)\]\]/g, (_, id: string) => { const visual = visuals.find((v) => v.id === id); return visual ? `**${visual.caption}** (Page ${visual.page})` : ''; });
+  const visualText = visuals.filter((v) => v.step === READING_STEPS.find((s) => s.label === label)?.kind).map((v: ReadingVisualAnalysis) => '\n\n### ' + v.section + ' (Page ' + v.page + ')\n\n**' + v.caption + '**\n\n图内观察：' + v.observation + '\n\nAI 解读：' + v.analysis + (v.limitations ? '\n\n证据边界：' + v.limitations : '') + (v.evidence ? '\n\n> ' + v.evidence.excerpt : '')).join('');
+  return `## ${label}\n\n生成：${entry.updatedAt || '旧版记录'} · ${entry.model || entry.provider || '未记录模型'} · ${entry.reasoningEffort || '默认推理强度'}\n\n${body}${visualText}`;
+}
+
+function ExperimentBlock({ entry, onCite, renderVisuals }: { entry: ReadingEntry; onCite: (page: number) => void; renderVisuals?: (section: string) => ReactNode }) {
+  const groups = parseExperimentEntries(entry.value);
+  if (!groups) return <ResearchNotesBlock entry={entry} onCite={onCite} renderVisuals={renderVisuals} />;
+  return <>{groups.filter((group) => group.group !== '结果').map((group) => <section className="reading-section" key={group.group}><h3>{group.group}</h3>{group.fields.length ? group.fields.map((field, i) => <EvidenceField key={i} field={field} onCite={onCite} />) : <p className="precision-muted">暂无配置</p>}{renderVisuals?.(group.group)}</section>)}</>;
+}
+
+export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pdfDocument, enabled, preferences }: {
+  apiKey: string | null; onCite: (page: number) => void; onAsk: (text: string) => void; disabled: boolean; document?: DocumentSummary | null;
+  pdfDocument?: PDFDocumentProxy | null; enabled: boolean; preferences: AIPreferences;
+}) {
+  const reading = useReadings(apiKey);
+  const [visualsEnabled, setVisualsEnabled] = useState(enabled);
+  useEffect(() => { if (enabled) setVisualsEnabled(true); }, [enabled]);
+  // Keep extracted object URLs alive while the user follows a note into chat.
+  const { visuals, progress: visualProgress, error: visualError, unlocated, ignoredCount, dismissVisual, restoreIgnored, saveSelection, resetSelection, redetect } = usePaperVisuals(pdfDocument ?? null, visualsEnabled, apiKey);
+  const [textOnly, setTextOnly] = useState(false);
+  const [active, setActive] = useState<ReadingKind>('motivation');
+  const [batch, setBatch] = useState(false);
+  const batchLock = useRef(false);
+  const batchCancelled = useRef(false);
+  const batchEpoch = useRef(0);
+  const [revision, setRevision] = useState(0);
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+  const saveLock = useRef(false);
+  const [checklistOpen, setChecklistOpen] = useState(false);
+  useEffect(() => { ++batchEpoch.current; batchCancelled.current = false; batchLock.current = false; setBatch(false); setActive('motivation'); setTextOnly(false); setNotice(''); return () => { ++batchEpoch.current; batchCancelled.current = true; }; }, [apiKey]);
+  const step = READING_STEPS.find((s) => s.kind === active)!;
+  const index = READING_STEPS.indexOf(step);
+  const entry = reading.entries[active];
+  const waitingPDF = enabled && !pdfDocument;
+  const blocked = disabled || !apiKey || preferences.saving || reading.loading || !!reading.generating || batch || (!textOnly && (!!visualProgress || waitingPDF));
+  const savedCount = Object.keys(reading.entries).length;
+  const readingLabel = (kind: ReadingKind) => reading.generating === kind ? '正在生成…' : reading.entries[kind]?.readerStatus === 'partial' ? '部分已保存' : reading.entries[kind] ? reading.entries[kind]!.validationError ? '待核对' : '已保存' : '尚未生成';
+  const remaining = READING_STEPS.filter((s) => !reading.entries[s.kind] || reading.entries[s.kind]?.readerStatus === 'partial');
+  const visualReferences = (signal: AbortSignal, report: (value: GenerateProgress) => void) => preparePaperReading(apiKey!, pdfDocument ?? null, visuals, textOnly, signal, report);
+  const sharedAnalyses = currentVisualAnalyses(entry?.visuals ?? reading.visualAnalysis?.visuals, visuals);
+  const inlineItems = sharedAnalyses.filter((item) => item.step === active);
+  let sectionNames: string[] = [];
+  try {
+    const parsed = parseJSONPayload(entry?.value || '{}');
+    const raw = (parsed.ok ? parsed.value : {}) as Record<string, unknown>;
+    if (active === 'motivation' || active === 'method') sectionNames = Array.isArray(raw.sections) ? raw.sections.filter((s) => s && typeof s.title === 'string' && Array.isArray(s.fields) && s.fields.every((f: { k?: unknown; v?: unknown } | null) => f && typeof f.k === 'string' && typeof f.v === 'string')).map((s: { title: string }) => s.title) : [];
+    else if (active === 'experiment') sectionNames = parseExperimentEntries(entry?.value || '')?.filter((g) => g.group !== '结果').map((g) => g.group) ?? [];
+    else if (active === 'results' && Array.isArray(raw.tables)) sectionNames = ['结果表', '稳定性', '消融实验', '泛化能力', '效率', '统计报告', '缺失与待核对'];
+    else if (active === 'reproduction' && Array.isArray(raw.resources)) sectionNames = ['代码、数据与权重', '环境与依赖', '训练成本', '实现缺失', '风险与评测协议'];
+  } catch { /* Older prose receives an illustrated supplement below it. */ }
+  const renderVisuals = (section: string) => <ReadingVisuals items={inlineItems.filter((item) => item.section === section)} visuals={visuals} onCite={onCite} />;
+  const unplacedSections = entry?.narrative ? [] : [...new Set(inlineItems.filter((item) => !sectionNames.includes(item.section)).map((item) => item.section))];
+  const generateRemaining = async () => {
+    if (blocked || batchLock.current) return;
+    const epoch = batchEpoch.current;
+    batchLock.current = true; batchCancelled.current = false; setBatch(true); setNotice('');
+    try {
+      for (const s of remaining) {
+        if (batchCancelled.current || epoch !== batchEpoch.current) break;
+        setActive(s.kind);
+        if (!await reading.generate(s.kind, visualReferences)) break;
+      }
+    } finally { if (epoch === batchEpoch.current) { batchLock.current = false; setBatch(false); } }
+  };
+  const exportAll = () => {
+    const text = `# ${document?.title || '论文'} · 精读五重奏\n\n${READING_STEPS.map((s) => reading.entries[s.kind] ? entryMarkdown(s.label, reading.entries[s.kind]!, sharedAnalyses) : `## ${s.label}\n\n尚未生成。`).join('\n\n---\n\n')}`;
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+    const link = window.document.createElement('a'); link.href = url; link.download = `${(document?.title || '精读五重奏').replace(/[\\/:*?"<>|]/g, '_').slice(0, 90)}.md`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const saveChecklist = async () => {
+    if (!apiKey || !entry || saveLock.current) return;
+    saveLock.current = true; setSaving(true); setNotice('');
+    try { await api.analyzeReproduction(apiKey, entry.value); setRevision((n) => n + 1); setChecklistOpen(true); setNotice('已保存复现核对清单'); }
+    catch (cause) { setNotice(cause instanceof Error ? cause.message : String(cause)); }
+    finally { saveLock.current = false; setSaving(false); }
+  };
+  return <div className="precision-workspace" aria-label="五重奏精读">
+    <nav className="precision-rail" aria-label="精读步骤"><div className="precision-rail-head"><span className="precision-overline">PAPER WORKBOOK</span><h2>精读五重奏</h2><p>{savedCount} / 5 项已保存</p></div>
+      <div className="precision-step-list" role="tablist">{READING_STEPS.map((s, i) => <button key={s.kind} id={`reading-tab-${s.kind}`} role="tab" aria-selected={active === s.kind} aria-controls={`reading-panel-${s.kind}`} tabIndex={active === s.kind ? 0 : -1} onClick={() => setActive(s.kind)} onKeyDown={(e) => { if (['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(e.key)) { e.preventDefault(); const next = e.key === 'Home' ? 0 : e.key === 'End' ? 4 : (i + (['ArrowDown', 'ArrowRight'].includes(e.key) ? 1 : 4)) % 5; setActive(READING_STEPS[next]!.kind); window.document.getElementById(`reading-tab-${READING_STEPS[next]!.kind}`)?.focus(); } }}><span className="precision-step-number">0{i + 1}</span><span><strong>{s.label}</strong><small>{readingLabel(s.kind)}</small></span><span className="precision-step-mark">{reading.entries[s.kind]?.readerStatus === 'partial' ? '◐' : reading.entries[s.kind] ? reading.entries[s.kind]!.validationError ? '!' : '✓' : '↗'}</span></button>)}</div>
+      <div className="precision-rail-actions"><button className="precision-button primary" disabled={blocked || !remaining.length} onClick={() => void generateRemaining()}>生成剩余 {remaining.length} 项</button><button className="precision-button" disabled={remaining.length === 5} onClick={exportAll}>导出五重奏 ↓</button></div>
+    </nav>
+    <main className="precision-content" role="tabpanel" id={`reading-panel-${active}`} aria-labelledby={`reading-tab-${active}`}>
+      <header className="precision-heading"><div><span className="precision-overline">0{index + 1} / 05 · PAPER WORKBOOK</span><h2>{step.label}</h2></div><AIModelControls preferences={preferences} compact /></header>
+      <div className="precision-actions"><button className="precision-button primary" disabled={blocked} onClick={() => { setNotice(''); void reading.generate(active, visualReferences); }}>{reading.generating === active ? '生成中…' : entry?.readerStatus === 'partial' ? '继续本节' : entry ? '重新生成' : '生成本节'}</button><button className="precision-button" disabled={!entry} onClick={() => entry && onAsk(`请针对「${step.label}」精读笔记继续分析。\n\n${entryMarkdown(step.label, entry!, sharedAnalyses).slice(0, 12000)}\n\n我的问题：${step.questions[0]}`)}>向助教追问 ↗</button><button className="precision-button" disabled={!entry} onClick={() => entry && void copyText(entryMarkdown(step.label, entry, sharedAnalyses)).then(setNotice)}>复制本节</button></div>
+      {(waitingPDF || visualProgress) && <p className="precision-muted" role="status">{waitingPDF ? '正在准备 PDF…' : '正在识别图表 · Page ' + visualProgress!.page + ' / ' + visualProgress!.total}</p>}
+      {visualError && <div className="precision-alert" role="alert">{visualError}</div>}
+      {(waitingPDF || visualProgress || visualError || textOnly) && <label className="precision-text-mode"><input type="checkbox" checked={textOnly} disabled={!!reading.generating || batch} onChange={(e) => setTextOnly(e.target.checked)} /><span>仅依据正文先生成</span></label>}
+      {(reading.generating || batch) && <div className="precision-progress" role="status"><div><strong>{READING_STEPS.find((s) => s.kind === reading.generating)?.label || (reading.generating === 'visuals' ? '图表助读' : '准备下一项')}</strong><span>{reading.progress?.message || '准备生成…'}</span><button className="precision-button" onClick={() => { batchCancelled.current = true; reading.cancel(); }}>停止生成</button></div>{reading.progress && <progress value={reading.progress.percent} max={100} aria-label="精读生成进度" />}</div>}
+      {reading.error && <div className="precision-alert" role="alert">{reading.error}</div>}
+      {notice && <p className="precision-notice" role="status">{notice}</p>}
+      {reading.notice && !reading.notice.saved && <div className="precision-alert" role="alert">生成失败，已保留原记录。{reading.notice.validationError && <details><summary>错误详情</summary>{reading.notice.validationError}</details>}</div>}
+      {entry && <p className="precision-provenance">{entry.updatedAt ? new Date(entry.updatedAt).toLocaleString() : '旧版记录'} · {entry.model || entry.provider || '模型未记录'} · {entry.reasoningEffort || '默认推理强度'}</p>}
+      {reading.loading && <p className="precision-muted">读取已保存的精读记录…</p>}
+      {!entry && !reading.loading && <section className="precision-empty"><span>0{index + 1}</span><h3>尚未生成</h3><ul>{step.outline.map((item) => <li key={item}>{item}</li>)}</ul>{waitingPDF || visualProgress ? <small>正在准备 PDF 与图表目录…</small> : null}</section>}
+      {entry?.narrative && <NarrativeReading entry={entry} analyses={inlineItems} visuals={visuals} onCite={onCite} />}
+      {entry && !entry.narrative && (active === 'motivation' || active === 'method') && <ResearchNotesBlock entry={entry} onCite={onCite} renderVisuals={renderVisuals} />}
+      {entry && !entry.narrative && active === 'experiment' && <ExperimentBlock entry={entry} onCite={onCite} renderVisuals={renderVisuals} />}
+      {entry && active === 'results' && (!entry.narrative ? <DetailedResultsBlock entry={entry} onCite={onCite} renderVisuals={renderVisuals} /> : entry.value.trim().startsWith('{') && <details className="precision-checklist"><summary>结果数据与对比</summary><DetailedResultsBlock entry={entry} onCite={onCite} /></details>)}
+      {active === 'reproduction' && <>{entry && <>{!entry.narrative && <ReproductionNotesBlock entry={entry} onCite={onCite} renderVisuals={renderVisuals} />}{entry.value.trim().startsWith('{') && <button className="precision-button primary" disabled={!!entry.validationError || saving} onClick={() => void saveChecklist()}>{saving ? '保存中…' : '保存为复现核对清单'}</button>}</>}{document && <details className="precision-checklist" open={checklistOpen} onToggle={(e) => setChecklistOpen(e.currentTarget.open)}><summary>复现核对清单 · 追踪行动进度</summary><ReproductionSection document={document} documents={[document]} onPick={() => undefined} refreshToken={revision} /></details>}</>}
+      {!!entry?.readerIssues?.length && <details className="precision-local-issues"><summary>未完成的页面或小节 · {entry.readerIssues.length}</summary><ul>{entry.readerIssues.map((issue, i) => <li key={i}>{issue}</li>)}</ul></details>}
+      {unplacedSections.map((section) => <section className="reading-section" key={section}><h3>{section}</h3>{renderVisuals(section)}</section>)}
+      <details className="precision-visual-catalog" id="reading-visual-catalog"><summary>图表区 · 全部 {visuals.length} 项 · 识别与选区管理</summary><PaperVisualGallery visuals={visuals} analyses={sharedAnalyses} activeStep={active} progress={visualProgress} error={visualError} waitingPDF={waitingPDF} onCite={onCite} unlocated={unlocated} ignoredCount={ignoredCount} onDismiss={dismissVisual} onRestoreIgnored={restoreIgnored} pdfDocument={pdfDocument} onSaveSelection={saveSelection} onResetSelection={resetSelection} onRedetect={redetect} /></details>
+      <footer className="precision-step-footer"><button className="precision-button" disabled={index === 0} onClick={() => setActive(READING_STEPS[index - 1]!.kind)}>← 上一节</button><span>{index + 1} / 5</span><button className="precision-button" disabled={index === 4} onClick={() => setActive(READING_STEPS[index + 1]!.kind)}>下一节 →</button></footer>
+    </main>
+  </div>;
+}

@@ -2,7 +2,7 @@
   "name": "cbct-reading-v2",
   "version": "0.0.0",
   "private": true,
-  "description": "CBCT 精读 v2 — Go 后端 + React 前端 + Electron 壳（npm workspaces）",
+  "description": "ReadX — Go 后端 + React 前端 + Electron 壳（npm workspaces）",
   "workspaces": [
     "packages/shared",
     "apps/web",

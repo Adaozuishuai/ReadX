@@ -17,22 +17,29 @@ export function useImportProgress() {
     // Byte counters update the bar continuously, while the activity list records
     // upload/download stage changes rather than filling with network chunks.
     const changed = last.current?.message !== next.message || last.current?.name !== next.name;
-    if (changed) setHistory(items => [...items.slice(-29), next]);
+    if (changed) setHistory(items => [...items.slice(-119), next]);
     last.current = next;
     setCurrent(next);
   }, []);
+  /**
+   * 开始一次新的导入。
+   *
+   * 刻意**不清空** history：弹弓式上传是一篇一篇投的，每投一篇都会 begin 一次，
+   * 若在这里清空，处理记录就永远只剩当前这一条（用户看不到前面几篇的结果）。
+   * 记录改为按篇累积；清空由用户显式点「清空记录」或在对话框重开时发生。
+   */
   const begin = useCallback((stage: string, message: string) => {
-    setHistory([]);
     setStartedAt(Date.now());
     setServerAt(0);
     last.current = null;
     update({ stage, message, completed: 0, total: 0 });
   }, [update]);
+  const clearHistory = useCallback(() => setHistory([]), []);
   const receive = useCallback((event: ImportStreamEvent) => {
     if (event.heartbeat || event.progress) setServerAt(Date.now());
     if (event.progress) update(event.progress);
   }, [update]);
-  return { current, history, startedAt, stageStartedAt, serverAt, update, begin, receive };
+  return { current, history, startedAt, stageStartedAt, serverAt, update, begin, clearHistory, receive };
 }
 
 function duration(ms: number) {
@@ -75,10 +82,24 @@ export function ImportProgressPanel({ activity, busy }: { activity: ReturnType<t
       </div>
       {busy && serverAt > 0 && current.stage !== 'upload' ? <p className="mt-2 text-[11px] text-ink-faint">{now - serverAt < 10000 ? '服务连接正常' : '等待服务下一条消息'} · 上次消息 {duration(now - serverAt)}前</p> : null}
       <details className="mt-3" open>
-        <summary className="cursor-pointer text-xs text-ink-soft">处理记录</summary>
-        <ol className="mt-2 max-h-36 overflow-y-auto text-[11px] text-ink-faint" aria-label="导入处理记录">
-          {[...history].reverse().map((item, index) => <li key={`${item.at}-${index}`} className="mb-1 leading-relaxed"><time>{new Date(item.at).toLocaleTimeString([], { hour12: false })}</time> · {item.name ? `${item.name}：` : ''}{item.message}</li>)}
+        <summary className="cursor-pointer text-xs text-ink-soft">
+          处理记录{history.length ? `（${history.length} 条）` : ''}
+        </summary>
+        <ol className="mt-2 max-h-40 overflow-y-auto text-[11px] text-ink-faint" aria-label="导入处理记录">
+          {[...history].reverse().map((item, index) => (
+            <li key={`${item.at}-${index}`} className="mb-1 leading-relaxed">
+              <time>{new Date(item.at).toLocaleTimeString([], { hour12: false })}</time>
+              {item.name ? ` · ${item.name}：` : ' · '}
+              {item.message}
+            </li>
+          ))}
+          {!history.length ? <li className="leading-relaxed">还没有记录。</li> : null}
         </ol>
+        {history.length ? (
+          <button type="button" className="mt-2 text-[11px] text-ink-faint hover:text-bad" onClick={activity.clearHistory}>
+            清空记录
+          </button>
+        ) : null}
       </details>
     </section>
   );

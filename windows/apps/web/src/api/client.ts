@@ -101,6 +101,7 @@ export interface AIStatus {
   provider?: string;
   configured: boolean;
   model?: string;
+  reasoningEffort?: string;
   host?: string;
   error?: string;
 }
@@ -110,6 +111,37 @@ export interface ReadingEntry {
   demoted: string[];
   validationError: string | null;
   updatedAt: string;
+  provider?: string;
+  model?: string;
+  reasoningEffort?: string;
+  visuals?: ReadingVisualAnalysis[];
+  visualSourceHash?: string;
+  narrative?: string;
+  narrativeSections?: { title: string; body: string; status: 'ready' | 'partial' | 'reviewing' }[];
+  readerStatus?: 'ready' | 'partial' | 'reviewing';
+  readerIssues?: string[];
+}
+
+export interface ReadingGenerationInput {
+  visuals: ReadingVisualReference[];
+  workflow: 'paper-reader';
+  fingerprint?: string;
+  pageCount?: number;
+  unavailableVisuals?: string[];
+}
+
+export interface ReadingVisualAnalysis {
+  id: string;
+  revision: string;
+  kind: 'figure' | 'table';
+  page: number;
+  caption: string;
+  step: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
+  section: string;
+  observation: string;
+  analysis: string;
+  limitations: string;
+  evidence: { k: string; v: string; page: number; excerpt: string } | null;
 }
 
 export interface ReadingVisualReference {
@@ -118,6 +150,8 @@ export interface ReadingVisualReference {
   page: number;
   caption: string;
   suggestedStep: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
+  revision: string;
+  imagePNG: string;
 }
 
 export interface ReadingsResponse {
@@ -140,7 +174,7 @@ export interface GenerateProgress {
 }
 
 export interface ChatChunk {
-  meta?: { included: number; total: number; scope: string; unit?: string };
+  meta?: { included: number; total: number; scope: string; unit?: string; provider?: string; model?: string; reasoningEffort?: string };
   delta?: string;
   done?: boolean;
   text?: string;
@@ -348,6 +382,30 @@ export interface TagListResponse {
   total: number;
 }
 
+/** 阅读日历：某天里的一篇论文（落在它最近一次被阅读的那天）。 */
+export interface CalendarPaper {
+  key: string;
+  title: string;
+  format: string;
+  page?: number;
+  updatedAt: string;
+  hasReading?: boolean;
+  hasAnnotation?: boolean;
+}
+
+export interface CalendarDay {
+  date: string;
+  count: number;
+  papers: CalendarPaper[];
+}
+
+export interface CalendarResponse {
+  days: CalendarDay[];
+  totalPapers: number;
+  /** 数据口径说明，直接展示给用户，避免误解为完整阅读历史。 */
+  basis: string;
+}
+
 /** 图谱节点的三类实体：概念 / 方法 / 结论。 */
 export type GraphNodeKind = 'concept' | 'method' | 'conclusion';
 
@@ -414,9 +472,20 @@ export interface AISettings {
   provider: string;
   baseURL: string;
   model: string;
+  reasoningEffort?: string;
   keyConfigured: boolean;
   status: AIStatus;
   cli: Record<string, boolean>;
+  codex?: { available: boolean; authenticated: boolean; source: string; message: string };
+}
+export interface CodexModel {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  defaultReasoningEffort: string;
+  supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
+  isDefault: boolean;
 }
 export interface ImportedDocument {
   document?: import('@cbct/shared').DocumentSummary;
@@ -624,6 +693,7 @@ export const api = {
     provider: string;
     baseURL: string;
     model: string;
+    reasoningEffort?: string;
     apiKey?: string;
     clearKey?: boolean;
   }) => request<AISettings>('/v1/ai/settings', { method: 'PUT', body }),
@@ -633,8 +703,8 @@ export const api = {
       body: {},
     }),
   /** 读取当前地址可用的模型列表：Key 可传刚输入的（未保存也能先看），否则用该地址已保存的。 */
-  listModels: (body: { provider: string; baseURL: string; apiKey?: string }) =>
-    request<{ models: string[] }>('/v1/ai/models', { method: 'POST', body }),
+  listModels: (body: { provider: string; baseURL: string; apiKey?: string; refresh?: boolean }) =>
+    request<{ models: string[]; catalog?: CodexModel[]; source?: string; notice?: string }>('/v1/ai/models', { method: 'POST', body }),
   upload: uploadPublications,
   importURL: importRemotePublication,
   dailyRecommendations: (signal?: AbortSignal) => request<{ papers: DailyRecommendation[]; fetchedAt: string }>('/v1/discovery/daily', { signal }),
@@ -806,11 +876,16 @@ export const api = {
    */
   visionLayout: (body: { page: number; imageBase64: string; blocks: VisionLayoutBlock[] }, signal?: AbortSignal) =>
     request<VisionLayoutResponse>('/v1/layout/vision', { method: 'POST', body, signal }),
+  readPaperPage: (body: { key: string; page: number; fingerprint: string; cachedOnly?: boolean; images?: string[] }, signal?: AbortSignal) =>
+    request<{ cached: boolean; ready: boolean; page: number; issues?: string[] }>('/v1/ai/paper-page', { method: 'POST', body, signal }),
   generate: async (
     key: string,
-    kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction',
+    kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction' | 'visuals',
     visuals: ReadingVisualReference[] = [],
     onProgress?: (progress: GenerateProgress) => void,
+    signal?: AbortSignal,
+    onEntry?: (kind: string, entry: ReadingEntry) => void,
+    paper?: Omit<ReadingGenerationInput, 'visuals'>,
   ): Promise<GenerateResponse> => {
     const { apiBase, token } = bootstrap();
     const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
@@ -818,9 +893,10 @@ export const api = {
     let response: Response;
     try {
       response = await fetch(`${apiBase}/v1/ai/generate`, {
-        method: 'POST', headers, body: JSON.stringify({ key, kind, visuals }), credentials: 'omit',
+        method: 'POST', headers, body: JSON.stringify({ key, kind, visuals, ...paper }), credentials: 'omit', signal,
       });
     } catch (error) {
+      if (signal?.aborted) throw error;
       throw new ApiError(error instanceof Error ? error.message : '本地服务未响应', 0);
     }
     if (!response.ok) {
@@ -840,8 +916,9 @@ export const api = {
       const line = raw.trim();
       if (!line.startsWith('data:')) return;
       try {
-        const event = JSON.parse(line.slice(5).trim()) as { progress?: GenerateProgress; result?: GenerateResponse; error?: string };
+        const event = JSON.parse(line.slice(5).trim()) as { progress?: GenerateProgress; result?: GenerateResponse; error?: string; entry?: ReadingEntry; kind?: string };
         if (event.progress) onProgress?.(event.progress);
+        if (event.entry && event.kind) onEntry?.(event.kind, event.entry);
         if (event.result) result = event.result;
         if (event.error) streamError = event.error;
       } catch { /* Ignore incomplete or malformed progress events. */ }
@@ -971,6 +1048,9 @@ export const api = {
     }>('/v1/duplicates', { signal }),
   graph: (signal?: AbortSignal) =>
     request<KnowledgeGraphResponse>('/v1/graph', { signal }),
+  /** 阅读日历：按"每篇最近一次阅读"聚合，覆盖面见 basis。 */
+  calendar: (signal?: AbortSignal) =>
+    request<CalendarResponse>('/v1/calendar', { signal }),
   /** 对一篇论文跑图谱抽取；已有结果时 force=true 才会重新调模型。 */
   graphExtract: (key: string, force = false) =>
     request<{ skipped: boolean; paper: GraphPaper }>(

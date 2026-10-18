@@ -3,11 +3,13 @@ const ReaderScreen = lazy(() => import('./components/ReaderScreen').then((module
 const ReproductionSection = lazy(() => import('./components/ReproductionSection').then((module) => ({ default: module.ReproductionSection })));
 import { LibraryScreen } from './components/LibraryScreen';
 const KnowledgeGraphSection = lazy(() => import('./components/KnowledgeGraphSection').then((module) => ({ default: module.KnowledgeGraphSection })));
+const ReadingCalendarSection = lazy(() => import('./components/ReadingCalendarSection').then((module) => ({ default: module.ReadingCalendarSection })));
 import { useAnnotations } from './hooks/useAnnotations';
 import { useDocument } from './hooks/useDocument';
 import { useLibraryMeta } from './hooks/useLibraryMeta';
 import { useTheme } from './hooks/useTheme';
 import { useWorkspace } from './hooks/useWorkspace';
+import { WorkspaceIcon } from './components/WorkspaceIcon';
 const ImportDialog = lazy(() => import('./components/ImportDialog').then((module) => ({ default: module.ImportDialog })));
 const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then((module) => ({ default: module.AISettingsDialog })));
 
@@ -30,7 +32,7 @@ export default function App() {
     reload,
   } = useWorkspace();
   const [screen, setScreen] = useState<
-    'library' | 'reader' | 'graph' | 'reproduction'
+    'library' | 'reader' | 'graph' | 'reproduction' | 'calendar'
   >('library');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
@@ -144,14 +146,12 @@ export default function App() {
         }
       }}
     >
-      <div className="global-document-actions">
-        <button onClick={() => setImportFiles([])}>＋ 导入 PDF / EPUB</button>
-      </div>
       <HeaderBar
         phase={phase}
         screen={screen}
         onScreen={setScreen}
         onReload={reload}
+        onImport={() => setImportFiles([])}
         theme={theme.choice}
         onThemeChange={theme.setTheme}
       />
@@ -174,8 +174,8 @@ export default function App() {
             setScreen(
               view === 'graph'
                 ? 'graph'
-                : view === 'reproduction'
-                  ? 'reproduction'
+                : view === 'calendar'
+                  ? 'calendar'
                   : 'library',
             );
           }}
@@ -203,6 +203,13 @@ export default function App() {
           documents={documents}
           onBack={() => setScreen('library')}
           onCite={citeInDocument}
+        />
+      ) : screen === 'calendar' ? (
+        <ReadingCalendarSection
+          phase={phase}
+          documents={documents}
+          onBack={() => setScreen('library')}
+          onOpenDocument={openDocument}
         />
       ) : (
         <ReproductionSection
@@ -238,69 +245,66 @@ export default function App() {
 }
 
 /**
- * 顶栏：参考实现没有全局顶栏（导航在书库侧栏里），这里保留一条极细的状态条——
- * 连接状态与主题切换是本仓库的既有能力，用户在阅读页也需要够到主题。
+ * 全局工作区导航：书库、图谱、日历、主题与导入入口在各页面保持一致。
  */
 function HeaderBar({
   phase,
   screen,
   onScreen,
   onReload,
+  onImport,
   theme,
   onThemeChange,
 }: {
   phase: ReturnType<typeof useWorkspace>['phase'];
-  screen: 'library' | 'reader' | 'graph' | 'reproduction';
-  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction') => void;
+  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar';
+  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar') => void;
   onReload: () => void;
+  onImport: () => void;
   theme: string;
   onThemeChange: (theme: 'light' | 'dark' | 'paper' | 'system') => void;
 }) {
   const ready = phase.kind === 'ready';
   return (
-    <header className="flex h-10 shrink-0 items-center gap-3 border-b border-line bg-surface px-4 text-[11px]">
+    <header className="app-header">
+      <button type="button" className="app-brand" onClick={() => onScreen('library')} aria-label="ReadX，返回书库">
+        <span className="brand-mark" aria-hidden="true">◈</span><span>ReadX</span>
+      </button>
+      <nav className="app-navigation" aria-label="工作区导航">
       <button
         type="button"
         onClick={() => onScreen('library')}
-        className={
-          screen === 'library'
-            ? 'font-medium text-ink'
-            : 'text-ink-faint hover:text-ink'
-        }
+        aria-current={screen === 'library' || screen === 'reader' ? 'page' : undefined}
+        className={screen === 'library' || screen === 'reader' ? 'active' : ''}
       >
-        书库
+        <WorkspaceIcon name="library" size={16} /><span>书库</span>
       </button>
       <button
         type="button"
         onClick={() => onScreen('graph')}
-        className={
-          screen === 'graph'
-            ? 'font-medium text-ink'
-            : 'text-ink-faint hover:text-ink'
-        }
+        aria-current={screen === 'graph' ? 'page' : undefined}
+        className={screen === 'graph' ? 'active' : ''}
       >
-        图谱
+        <WorkspaceIcon name="graph" size={16} /><span>图谱</span>
       </button>
       <button
         type="button"
-        onClick={() => onScreen('reproduction')}
-        className={
-          screen === 'reproduction'
-            ? 'font-medium text-ink'
-            : 'text-ink-faint hover:text-ink'
-        }
+        onClick={() => onScreen('calendar')}
+        aria-current={screen === 'calendar' ? 'page' : undefined}
+        className={screen === 'calendar' ? 'active' : ''}
       >
-        复现
+        <WorkspaceIcon name="calendar" size={16} /><span>日历</span>
       </button>
-      <span className="ml-auto flex items-center gap-2">
-        <span className="flex items-center gap-0.5 rounded-pill bg-surface-sunk p-0.5">
+      </nav>
+      <div className="app-header-actions">
+        <div className="theme-switch" role="group" aria-label="界面主题">
           {(['light', 'dark', 'paper', 'system'] as const).map((item) => (
             <button
               key={item}
               type="button"
               onClick={() => onThemeChange(item)}
               aria-pressed={theme === item}
-              className={`rounded-pill px-1.5 py-0.5 text-[10px] transition ${theme === item ? 'bg-surface font-medium text-ink shadow-sm' : 'text-ink-faint hover:text-ink'}`}
+              className={theme === item ? 'active' : ''}
             >
               {
                 {
@@ -312,19 +316,22 @@ function HeaderBar({
               }
             </button>
           ))}
-        </span>
+        </div>
+        <select className="theme-select" aria-label="界面主题" value={theme} onChange={event => onThemeChange(event.target.value as 'light' | 'dark' | 'paper' | 'system')}>
+          <option value="light">浅色</option><option value="dark">深色</option><option value="paper">纸张</option><option value="system">跟随系统</option>
+        </select>
         <button
           type="button"
           onClick={onReload}
-          className={[
-            'rounded-pill px-2 py-0.5 font-medium transition',
-            ready ? 'bg-good/10 text-good' : 'bg-bad/10 text-bad',
-          ].join(' ')}
+          className={`connection-button${ready ? ' ready' : ''}`}
           title={ready ? '后端已连接，点按重连' : '后端未连接，点按重试'}
         >
-          {ready ? '已连接' : '未连接 · 重试'}
+          <span aria-hidden="true" />{ready ? '已连接' : '未连接 · 重试'}
         </button>
-      </span>
+        <button type="button" className="primary-button global-import" onClick={onImport}>
+          <span>＋ 导入 PDF / EPUB</span>
+        </button>
+      </div>
     </header>
   );
 }

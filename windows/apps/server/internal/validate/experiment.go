@@ -8,22 +8,16 @@ import (
 
 var experimentGroups = []string{"dataset", "acquisition", "training", "loss", "metrics", "results"}
 
-func stripFence(text string) string {
-	raw := strings.TrimSpace(text)
-	if strings.HasPrefix(raw, "```") {
-		lines := strings.Split(raw, "\n")
-		if len(lines) >= 2 {
-			raw = strings.Join(lines[1:len(lines)-1], "\n")
-		}
-	}
-	return raw
-}
-
 // DecodeExperiment 与 TS decodeExperiment 一致：解码期检查六组必需数组。
 // baselines 与旧 macOS 版一致为可选（缺省按空数组处理）。
 func DecodeExperiment(text string) (ExperimentExtraction, error) {
+	canonical, err := NormalizeJSONObject(text)
+	if err != nil {
+		return ExperimentExtraction{}, fmt.Errorf("实验抽取不是合法 JSON：%w", err)
+	}
+	text = canonical
 	var probe any
-	if err := json.Unmarshal([]byte(stripFence(text)), &probe); err != nil {
+	if err := json.Unmarshal([]byte(text), &probe); err != nil {
 		return ExperimentExtraction{}, fmt.Errorf("实验抽取不是合法 JSON：%w", err)
 	}
 	obj, ok := probe.(map[string]any)
@@ -40,7 +34,7 @@ func DecodeExperiment(text string) (ExperimentExtraction, error) {
 		return ExperimentExtraction{}, fmt.Errorf("实验抽取缺少必需的组（或不是数组）：%s。（baselines 可选，其余六组都必须给出）", strings.Join(missing, "、"))
 	}
 	var out ExperimentExtraction
-	if err := json.Unmarshal([]byte(stripFence(text)), &out); err != nil {
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
 		return ExperimentExtraction{}, fmt.Errorf("实验抽取字段类型异常：%w", err)
 	}
 	return out, nil

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
 import { statusLabel } from '@cbct/shared';
 import type { Category, DocumentMeta } from '../api/client';
@@ -12,13 +12,14 @@ import { LibraryTrashButton } from './LibraryTrashButton';
 import { EmptyTrashDialog } from './EmptyTrashDialog';
 import { DailyRecommendations } from './DailyRecommendations';
 import { ResizeHandle } from './ResizeHandle';
+import { WorkspaceIcon, type WorkspaceIconName } from './WorkspaceIcon';
 
 type Layout = 'grid' | 'list' | 'table';
 type SortKey = 'title' | 'year' | 'status';
 
 /** 每日推荐的独立侧栏：开合与宽度都按用户上次的选择保存。 */
 const DAILY_STORAGE = 'cbct-v2-library-daily';
-const DAILY_DEFAULT_WIDTH = 360;
+const DAILY_DEFAULT_WIDTH = 316;
 const DAILY_MIN_WIDTH = 260;
 const DAILY_MAX_WIDTH = 720;
 
@@ -64,7 +65,7 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 /** 左侧导航的视图项（复刻参考实现：全部文档 / 收藏 / 回收站）。 */
-type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'reproduction' | 'graph';
+type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'calendar' | 'graph';
 
 interface Props {
   phase: WorkspacePhase;
@@ -227,24 +228,37 @@ export function LibraryScreen({
   const toggleSort = (key: SortKey) =>
     setSort((current) => (current.key === key ? { key, reverse: !current.reverse } : { key, reverse: false }));
 
-  const VIEWS: { id: ViewId; label: string; count?: number }[] = [
-    { id: 'all', label: '全部文档', count: total - trashCount },
-    { id: 'shelves', label: '书架', count: activeDocuments.length },
-    { id: 'favorite', label: '收藏', count: favoriteCount },
-    { id: 'trash', label: '回收站', count: trashCount },
-    { id: 'graph', label: '知识图谱' },
-    { id: 'reproduction', label: '复现准备' },
+  // 书架计数按**论文**算：只数真的被归入某个书架的非回收站论文。
+  // 原先用的是 activeDocuments.length（全部未删除论文），数字看起来像"书架个数"，
+  // 也把没归类的论文算了进去。
+  const shelfNames = useMemo(() => new Set(meta.categories.map((item) => item.name)), [meta.categories]);
+  const shelvedDocuments = useMemo(
+    () => activeDocuments.filter((doc) => (meta.items[doc.key]?.categories ?? []).some((name) => shelfNames.has(name))),
+    [activeDocuments, meta.items, shelfNames],
+  );
+  const countInShelf = useCallback(
+    (name: string) => activeDocuments.filter((doc) => (meta.items[doc.key]?.categories ?? []).includes(name)).length,
+    [activeDocuments, meta.items],
+  );
+
+  const VIEWS: { id: ViewId; label: string; icon: WorkspaceIconName; count?: number }[] = [
+    { id: 'all', label: '全部文档', icon: 'library', count: total - trashCount },
+    { id: 'shelves', label: '书架', icon: 'shelves', count: shelvedDocuments.length },
+    { id: 'favorite', label: '收藏', icon: 'star', count: favoriteCount },
+    { id: 'trash', label: '回收站', icon: 'trash', count: trashCount },
+    { id: 'graph', label: '知识图谱', icon: 'graph' },
+    { id: 'calendar', label: '阅读日历', icon: 'calendar' },
   ];
 
   return (
     <div className={`app-shell${dailyOpen ? ' daily-open' : ''}`}>
       <aside className={`library-sidebar${collapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-brand">
-          <span>CBCT 精读</span>
-          <span className="rounded-pill bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">v2</span>
+          <strong>个人书库</strong>
+          <span>RESEARCH LIBRARY</span>
         </div>
 
-        <nav className="flex flex-col gap-0.5">
+        <nav className="flex flex-col gap-1" aria-label="书库视图">
           {VIEWS.map((item) => (
             <button
               key={item.id}
@@ -254,16 +268,17 @@ export function LibraryScreen({
                 onViewChange(item.id);
               }}
               aria-current={view === item.id ? 'page' : undefined}
+              title={item.label}
               className={`nav-item${view === item.id ? ' active' : ''}`}
             >
-              {item.label}
+              <WorkspaceIcon name={item.icon} /><span className="nav-label">{item.label}</span>
               {item.count != null && item.count > 0 ? <span className="nav-count">{item.count}</span> : null}
             </button>
           ))}
         </nav>
 
         {meta.categories.length || managingCategories ? (
-          <div className="flex flex-col gap-1 px-1">
+          <div className="sidebar-shelves flex flex-col gap-1 px-1">
               <span className="px-2 text-[10px] uppercase tracking-wide text-ink-faint">我的书架</span>
             {meta.categories.map((item) => (
               <button
@@ -274,7 +289,8 @@ export function LibraryScreen({
                 style={{ minHeight: 32 }}
               >
                 <span className="ann-color-dot" style={{ background: categoryDot(item.color) }} />
-                {item.name}
+                <span className="min-w-0 flex-1 truncate text-left">{item.name}</span>
+                {countInShelf(item.name) > 0 ? <span className="nav-count">{countInShelf(item.name)}</span> : null}
               </button>
             ))}
             <button
@@ -289,7 +305,7 @@ export function LibraryScreen({
           <button
             type="button"
             onClick={() => setManagingCategories(true)}
-            className="px-3 py-1 text-left text-[11px] text-ink-faint hover:text-accent"
+            className="sidebar-shelves px-3 py-1 text-left text-[11px] text-ink-faint hover:text-accent"
           >
             + 新建书架
           </button>
@@ -299,8 +315,8 @@ export function LibraryScreen({
 
         <div className="sidebar-bottom">
           {/* 左下角：AI 助手设置。放在持久可见的侧栏底部，不再占顶栏空间。 */}
-          <button type="button" className="nav-item" onClick={onOpenSettings}>
-            AI 助手设置
+          <button type="button" className="nav-item" onClick={onOpenSettings} title="AI 助手设置">
+            <WorkspaceIcon name="settings" /><span className="nav-label">AI 助手设置</span>
           </button>
           {meta.error ? <p className="px-3 text-[10px] leading-relaxed text-bad">{meta.error}</p> : null}
         </div>
@@ -308,21 +324,26 @@ export function LibraryScreen({
 
       <section className="library-main">
         <header className="library-topbar">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="library-heading">
             <button
               type="button"
               onClick={() => setCollapsed((value) => !value)}
-              className="rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-ink-soft transition hover:text-ink"
+              className="sidebar-toggle"
               title={collapsed ? '展开侧栏' : '收起侧栏'}
+              aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+              aria-expanded={!collapsed}
             >
-              {collapsed ? '»' : '«'}
+              <WorkspaceIcon name="panel" size={17} />
             </button>
-            <h1 className="truncate text-[15px] font-medium">
-              {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'shelves' ? '我的书架' : view === 'graph' ? '知识图谱' : '复现准备'}
+            <div className="min-w-0">
+            <p className="section-eyebrow">MY LIBRARY</p>
+            <h1>
+              {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'shelves' ? '我的书架' : view === 'graph' ? '知识图谱' : '阅读日历'}
             </h1>
-            <span className="text-[11px] text-ink-faint">{documents.length} 份文档</span>
+            <p className="library-description">集中管理论文、精读笔记与复现计划。</p>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="library-view-actions">
             {missingPDFs.length > 0 ? (
               <button type="button" className="mr-2 rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-accent hover:border-accent disabled:opacity-50" disabled={fetchingArxiv} onClick={() => void fetchMissingArxivPDFs()}>
                 {fetchingArxiv ? '正在自动获取…' : `自动获取缺失 PDF（${missingPDFs.length}）`}
@@ -334,25 +355,27 @@ export function LibraryScreen({
                 清空回收站
               </button>
             ) : null}
+            <div className="view-switch" role="group" aria-label="文献布局">
             {(['grid', 'list', 'table'] as Layout[]).map((item) => (
               <button
                 key={item}
                 type="button"
                 onClick={() => setLayout(item)}
                 aria-pressed={layout === item}
-                className={`rounded-md px-2 py-1 text-[11px] transition ${layout === item ? 'bg-surface-sunk font-medium text-ink' : 'text-ink-faint hover:text-ink'}`}
+                className={layout === item ? 'active' : ''}
               >
-                {item === 'grid' ? '网格' : item === 'list' ? '列表' : '表格'}
+                <WorkspaceIcon name={item} size={15} /><span>{item === 'grid' ? '网格' : item === 'list' ? '列表' : '表格'}</span>
               </button>
             ))}
+            </div>
             <button
               type="button"
               onClick={() => setDailyOpen((value) => !value)}
               aria-pressed={dailyOpen}
               title="每日论文推荐单独占一个侧栏；宽度可拖拽，双击分隔线复位"
-              className={`rounded-md px-2 py-1 text-[11px] transition ${dailyOpen ? 'bg-surface-sunk font-medium text-ink' : 'text-ink-faint hover:text-ink'}`}
+              className={`discovery-toggle${dailyOpen ? ' active' : ''}`}
             >
-              每日推荐
+              <WorkspaceIcon name="sparkles" size={15} /><span>每日推荐</span>
             </button>
           </div>
         </header>
@@ -361,6 +384,13 @@ export function LibraryScreen({
           {arxivProgress ? <p role="status" className="mb-2 rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">{arxivProgress}</p> : null}
           {arxivSummary ? <p role="status" className="mb-2 rounded-md bg-surface-sunk px-3 py-2 text-xs text-ink-soft">{arxivSummary}</p> : null}
           {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空仅移除书库条目和关联阅读数据，所有 PDF / EPUB 文件均保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
+          {phase.kind === 'ready' && view !== 'trash' ? (
+            <div className="library-metrics" aria-label="当前列表概览">
+              <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="file" /></span><strong>{documents.length}</strong><span>当前文献</span></div>
+              <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="library" /></span><strong>{documents.filter(doc => doc.status === 'reading').length}</strong><span>正在阅读</span></div>
+              <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="check" /></span><strong>{documents.filter(doc => doc.status === 'done').length}</strong><span>已精读</span></div>
+            </div>
+          ) : null}
           <div className="library-controls">
             <label className="search-field">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -371,6 +401,7 @@ export function LibraryScreen({
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 placeholder="搜索标题 / 作者 / 会场"
+                aria-label="搜索文献标题、作者或会场"
               />
             </label>
             <span style={{ flex: 1 }} />
@@ -507,7 +538,7 @@ export function LibraryScreen({
           />
           <aside className="daily-sidebar" style={{ width: dailyWidth }} aria-label="每日论文推荐">
             <header className="daily-sidebar-head">
-              <span className="truncate text-[12px] font-medium text-ink">每日论文推荐</span>
+              <span className="flex items-center gap-2 truncate text-[14px] font-semibold text-ink"><WorkspaceIcon name="sparkles" size={17} />每日论文推荐</span>
               <button
                 type="button"
                 onClick={() => setDailyOpen(false)}

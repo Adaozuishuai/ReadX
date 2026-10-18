@@ -26,11 +26,12 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		s.settingsMu.Lock()
 		defer s.settingsMu.Unlock()
 		var body struct {
-			Provider string `json:"provider"`
-			BaseURL  string `json:"baseURL"`
-			Model    string `json:"model"`
-			APIKey   string `json:"apiKey"`
-			ClearKey bool   `json:"clearKey"`
+			Provider        string  `json:"provider"`
+			BaseURL         string  `json:"baseURL"`
+			Model           string  `json:"model"`
+			APIKey          string  `json:"apiKey"`
+			ClearKey        bool    `json:"clearKey"`
+			ReasoningEffort *string `json:"reasoningEffort"`
 		}
 		if decodeJSON(w, r, &body) != nil {
 			return
@@ -61,6 +62,7 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 			previousProvider = "openai"
 		}
 		previousURL, _ := raw["baseURL"].(string)
+		previousModel, _ := raw["model"].(string)
 		previousKey, _ := raw["apiKey"].(string)
 		connections[previousProvider+"|"+strings.TrimRight(previousURL, "/")] = previousKey
 		destination := body.Provider + "|" + strings.TrimRight(strings.TrimSpace(body.BaseURL), "/")
@@ -75,10 +77,22 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		raw["provider"] = body.Provider
 		raw["baseURL"] = strings.TrimSpace(body.BaseURL)
 		raw["model"] = strings.TrimSpace(body.Model)
+		if body.ReasoningEffort != nil {
+			raw["reasoningEffort"] = strings.TrimSpace(*body.ReasoningEffort)
+		} else if previousProvider != body.Provider || previousModel != strings.TrimSpace(body.Model) {
+			raw["reasoningEffort"] = ""
+		}
+		if body.Provider != "codex" {
+			raw["reasoningEffort"] = ""
+		}
 		raw["apiKey"] = savedKey
 		encoded, _ := json.MarshalIndent(raw, "", "  ")
 		var cfg ai.Config
 		_ = json.Unmarshal(encoded, &cfg)
+		if err := cfg.ValidateCodexSelection(r.Context()); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
 		if !cfg.IsCLI() {
 			check := cfg
 			check.APIKey = "validate"
@@ -113,8 +127,9 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg, _ := ai.LoadConfig(path)
-	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}})
+	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "reasoningEffort": cfg.ReasoningEffort, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}, "codex": ai.CodexStatus(r.Context())})
 }
+
 // handleAIModels 读取当前地址可用的模型列表：OpenAI 兼容与 Anthropic 都提供 GET /models。
 //
 // Key 优先用请求里刚输入的（还没保存也能先看看有哪些模型），否则回落到该「渠道|地址」已保存的 Key。
@@ -124,11 +139,26 @@ func (s *Server) handleAIModels(w http.ResponseWriter, r *http.Request) {
 		Provider string `json:"provider"`
 		BaseURL  string `json:"baseURL"`
 		APIKey   string `json:"apiKey"`
+		Refresh  bool   `json:"refresh"`
 	}
 	if decodeJSON(w, r, &body) != nil {
 		return
 	}
 	provider := strings.TrimSpace(body.Provider)
+	if provider == "codex" {
+		cfg, _ := s.aiConfig()
+		models, err := cfg.CodexModels(r.Context(), body.Refresh)
+		if err != nil {
+			writeError(w, 502, err.Error())
+			return
+		}
+		names := make([]string, 0, len(models))
+		for _, model := range models {
+			names = append(names, model.Model)
+		}
+		writeJSON(w, 200, map[string]any{"models": names, "catalog": models, "source": "codex", "notice": "目录来自本机 Codex；账号实际访问能力以请求结果为准"})
+		return
+	}
 	if provider != "openai" && provider != "anthropic" {
 		writeError(w, 400, "只有 API 渠道能获取模型列表；CLI 渠道留空即使用它自己的默认模型")
 		return

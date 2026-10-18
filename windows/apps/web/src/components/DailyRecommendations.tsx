@@ -124,10 +124,10 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
 
   return (
     // 侧栏里由外层提供卡片外观与滚动，这里只要一列铺满高度；嵌在列表里时仍是原来的卡片。
-    <section className={embedded ? 'flex h-full min-h-0 flex-col' : 'mb-4 rounded-xl border border-line bg-surface p-3'}>
+    <section className={embedded ? 'recommendations embedded flex h-full min-h-0 flex-col' : 'recommendations mb-4 rounded-xl border border-line bg-surface p-3'}>
       <div className="flex flex-wrap items-center gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-ink">每日论文推荐</h2>
+          {!embedded ? <h2 className="text-sm font-semibold text-ink">每日论文推荐</h2> : null}
           <p className="mt-0.5 text-[11px] text-ink-faint">优先展示 MICCAI、CVPR、ICCV、ECCV、NeurIPS、ICLR、AAAI、TMI 与 Medical Image Analysis</p>
         </div>
         {fetchedAt ? <span className="text-[10px] text-ink-faint">更新于 {fetchedAt.slice(0, 16).replace('T', ' ')}</span> : null}
@@ -139,7 +139,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       {progress ? <p role="status" className="mt-2 text-xs text-accent">{progress}</p> : null}
       <div className={`mt-2 grid gap-2${embedded ? '' : ' xl:grid-cols-2'}`}>
         {visible.map((paper) => (
-          <article key={paper.id} className="rounded-lg border border-line bg-surface-sunk/40 px-3 py-2">
+          <article key={paper.id} className="recommendation-card rounded-lg border border-line bg-surface-sunk/40 px-3 py-2">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <h3 className="text-[13px] font-medium leading-snug text-ink">{paper.title}</h3>

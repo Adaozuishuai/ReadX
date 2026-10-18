@@ -1,4 +1,4 @@
-# CBCT 精读 Windows 版
+# ReadX macOS 版
 
 React + Go + Electron 的本地阅读与研究工作区。
 

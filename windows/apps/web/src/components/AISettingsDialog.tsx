@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type AISettings } from '../api/client';
+import { api, type AISettings, type CodexModel } from '../api/client';
+import { effortLabel } from './AIModelControls';
 import { ProviderLogo } from './providerLogos';
 
 /**
@@ -17,6 +18,11 @@ interface ProviderPreset {
   model?: string;
   local?: boolean;
   logo?: string;
+  /**
+   * 自定义服务商：不预设地址与模型，由用户自己填。
+   * 它的 baseURL 为空，所以 presetOf 必须显式跳过，否则任何自填地址都会被它"认领"。
+   */
+  custom?: boolean;
 }
 
 const PRESETS: ProviderPreset[] = [
@@ -31,15 +37,19 @@ const PRESETS: ProviderPreset[] = [
   { id: 'openrouter', name: 'OpenRouter', kind: 'openai', baseURL: 'https://openrouter.ai/api/v1' },
   { id: 'ollama', name: '本机 Ollama', kind: 'openai', baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5:7b', local: true },
   { id: 'lmstudio', name: '本机 LM Studio', kind: 'openai', baseURL: 'http://127.0.0.1:1234/v1', local: true },
-  { id: 'codex', name: 'Codex CLI', kind: 'codex', logo: 'openai' },
+  { id: 'codex', name: 'Codex Desktop / CLI', kind: 'codex', logo: 'openai' },
   { id: 'claude-cli', name: 'Claude Code CLI', kind: 'claude', logo: 'claude' },
   { id: 'kimi-cli', name: 'Kimi Code CLI', kind: 'kimi', logo: 'kimi' },
+  // 自定义放最后：它是个"空模板"，不是某家厂商。
+  { id: 'custom', name: '自定义服务商', kind: 'openai', custom: true },
 ];
 
 /** 用「渠道 + 地址」反推当前是哪家预设，供标题与徽标显示。 */
 function presetOf(provider: string, baseURL: string): ProviderPreset | undefined {
   const normalized = baseURL.trim().replace(/\/+$/, '').toLowerCase();
   return PRESETS.find((item) => {
+    // 自定义没有固定地址，永远不该被"反推"命中——否则自填的任何地址都会显示成它。
+    if (item.custom) return false;
     if (item.kind !== provider) return false;
     if (!item.baseURL) return !normalized;
     return item.baseURL.replace(/\/+$/, '').toLowerCase() === normalized;
@@ -54,6 +64,8 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   const [provider, setProvider] = useState('openai');
   const [baseURL, setBaseURL] = useState('');
   const [model, setModel] = useState('');
+  const [reasoningEffort, setReasoningEffort] = useState('');
+  const [catalog, setCatalog] = useState<CodexModel[]>([]);
   const [key, setKey] = useState('');
   const [clearKey, setClearKey] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -64,6 +76,16 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   const [modelError, setModelError] = useState('');
   const [modelOpen, setModelOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState('');
+  const modelRequest = useRef(0);
+  const saveLock = useRef(false);
+  const testLock = useRef(false);
+  /**
+   * 是否处于「自定义服务商」。
+   *
+   * presetOf 是靠地址反推的，而自定义没有固定地址，所以它推不出来——
+   * 必须单独记一个标记，否则点了自定义之后按钮不会亮、标题也会显示成别家。
+   */
+  const [customMode, setCustomMode] = useState(false);
   const modelBox = useRef<HTMLDivElement>(null);
   const filteredModels = modelQuery.trim()
     ? models.filter((item) => item.toLowerCase().includes(modelQuery.trim().toLowerCase()))
@@ -87,6 +109,13 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   }, [modelOpen]);
   const cli = ['codex', 'claude', 'kimi'].includes(provider);
   const active = presetOf(provider, baseURL);
+  /** 界面统一用这个判断"当前是哪家"：自定义优先，否则靠地址反推。 */
+  const activeId = customMode ? 'custom' : active?.id;
+  /**
+   * 标题：认识的服务商显示名字；不认识的地址**显示地址本身**，
+   * 而不是硬套一个"自定义服务商"——后者会让人以为配置被改了。
+   */
+  const activeName = customMode ? '自定义服务商' : (active?.name ?? (cli ? provider.toUpperCase() : null));
 
   useEffect(() => {
     dialog.current?.showModal();
@@ -99,6 +128,15 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
         setProvider(value.provider);
         setBaseURL(value.baseURL);
         setModel(value.model);
+        setReasoningEffort(value.reasoningEffort ?? '');
+        /*
+         * 刻意不靠"地址对不上预设"来推断自定义。
+         * 任何 OpenAI 兼容地址都是合法配置（例如网关 https://api.llm.ustc.edu.cn，
+         * 它不带 /v1，本来就不该匹配 deepseek 等预设），把它标成"自定义服务商"
+         * 是在对用户的意图瞎猜，还会让内置服务商看起来被换掉了。
+         * 只有用户自己点了自定义、并且还没保存过时，才算自定义态。
+         */
+        setCustomMode(false);
       })
       .catch((cause) => {
         if (alive) setNotice(String(cause));
@@ -108,38 +146,65 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
+  useEffect(() => {
+    const sequence = ++modelRequest.current;
+    setModels([]); setCatalog([]); setModelError(''); setModelOpen(false);
+    setLoadingModels(false);
+    if (provider !== 'codex') return;
+    let alive = true;
+    setLoadingModels(true);
+    void api.listModels({ provider: 'codex', baseURL: '' }).then((result) => {
+      if (alive && sequence === modelRequest.current) { setModels(result.models); setCatalog(result.catalog ?? []); }
+    }).catch((cause) => { if (alive && sequence === modelRequest.current) setModelError(cause instanceof Error ? cause.message : String(cause)); })
+      .finally(() => { if (alive && sequence === modelRequest.current) setLoadingModels(false); });
+    return () => { alive = false; ++modelRequest.current; };
+  }, [provider, baseURL]);
+  const selectedCodexModel = catalog.find((item) => model ? item.model === model || item.id === model : item.isDefault);
+
   const pick = (preset: ProviderPreset) => {
+    setReasoningEffort('');
     setProvider(preset.kind);
+    setCustomMode(Boolean(preset.custom));
     setClearKey(false);
     setNotice('');
     setTest({ state: 'idle', detail: '' });
     setKey('');
-    setBaseURL(preset.baseURL ?? '');
-    setModel(preset.model ?? '');
+    // 自定义保留用户已填的地址与模型：切过去常常是为了改一个字段，
+    // 清空会让人白填一遍。其余预设照旧用它的默认值。
+    if (!preset.custom) {
+      setBaseURL(preset.baseURL ?? '');
+      setModel(preset.model ?? '');
+    }
   };
 
   const save = async () => {
+    if (saveLock.current) return false;
+    saveLock.current = true;
     setBusy(true);
     setNotice('');
     try {
-      const value = await api.saveSettings({ provider, baseURL, model, apiKey: key, clearKey });
+      const value = await api.saveSettings({ provider, baseURL, model, reasoningEffort, apiKey: key, clearKey });
       setSettings(value);
       setKey('');
       setClearKey(false);
       setNotice('已保存');
-      window.dispatchEvent(new Event('cbct-ai-settings'));
+      window.dispatchEvent(new CustomEvent('cbct-ai-settings', { detail: { settings: value } }));
       return true;
     } catch (cause) {
       setNotice(String(cause));
       return false;
     } finally {
+      saveLock.current = false;
       setBusy(false);
     }
   };
 
   // 与参考实现一致：测试前先把当前输入（含 Key）保存，测完给出明确状态而不是只丢一行文字。
   const runTest = async () => {
+    if (testLock.current) return;
+    testLock.current = true;
     if (!(await save())) {
+      testLock.current = false;
       setTest({ state: 'fail', detail: '保存失败，请先修正上方提示' });
       return;
     }
@@ -150,23 +215,29 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
       setTest({ state: 'ok', detail: result.answer.slice(0, 120) });
     } catch (cause) {
       setTest({ state: 'fail', detail: String(cause) });
+    } finally {
+      testLock.current = false;
     }
   };
 
   // 获取当前地址的模型列表：用刚输入的 Key（未保存也能先看），服务端会回落到该地址已保存的 Key。
   const loadModels = async () => {
+    const sequence = ++modelRequest.current;
     setLoadingModels(true);
     setModelError('');
     try {
       const result = await api.listModels({ provider, baseURL, apiKey: key });
+      if (sequence !== modelRequest.current) return;
       setModels(result.models);
+      setCatalog(result.catalog ?? []);
       if (!result.models.length) setModelError('该地址没有返回任何模型，请确认地址与权限。');
-      else if (!model.trim()) setModel(result.models[0] ?? '');
+      else if (!model.trim() && provider !== 'codex') setModel(result.models[0] ?? '');
     } catch (cause) {
+      if (sequence !== modelRequest.current) return;
       setModels([]);
       setModelError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setLoadingModels(false);
+      if (sequence === modelRequest.current) setLoadingModels(false);
     }
   };
 
@@ -188,12 +259,15 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
       <div className="ai-settings-body">
         <div className="ai-service-row">
           <span className="ai-service-badge">
-            <ProviderLogo id={active?.logo ?? active?.id ?? (cli ? provider : 'openai')} size={18} />
+            {/* 认识的服务商显示其标识；自定义用中性符号；都不是就别硬套别家 logo。 */}
+            <ProviderLogo id={activeId ?? active?.logo ?? (cli ? provider : 'custom')} size={18} />
           </span>
           <div className="min-w-0">
-            <strong>{active?.name ?? (cli ? provider.toUpperCase() : '自定义服务商')}</strong>
+            <strong>{activeName ?? baseURL ?? '尚未填写地址'}</strong>
             <small>
-              {cli ? `本机 CLI · ${settings?.cli[provider] ? '已检测到' : '未检测到'}` : baseURL || '尚未填写地址'}
+              {provider === 'codex'
+                ? `${settings?.codex?.source === 'desktop' ? 'Codex Desktop' : '本机 Codex'} · ${settings?.codex?.authenticated ? '已登录' : settings?.cli.codex ? '待确认登录' : '未检测到'}`
+                : cli ? `本机 CLI · ${settings?.cli[provider] ? '已检测到' : '未检测到'}` : baseURL || '尚未填写地址'}
               {model ? ` · ${model}` : ''}
             </small>
           </div>
@@ -209,20 +283,29 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
             常用服务商
           </header>
           <div className="ai-presets">
-            {PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                disabled={busy}
-                aria-pressed={preset.id === active?.id && provider === preset.kind}
-                onClick={() => pick(preset)}
-                className={`ai-preset${preset.id === active?.id && provider === preset.kind ? ' active' : ''}`}
-                title={preset.local ? `${preset.baseURL}（本机服务）` : preset.baseURL ?? '使用本机 CLI 已登录的账户'}
-              >
-                <ProviderLogo id={preset.logo ?? preset.id} size={15} />
-                {preset.name}
-              </button>
-            ))}
+            {PRESETS.map((preset) => {
+              const on = preset.id === activeId;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  disabled={busy}
+                  aria-pressed={on}
+                  onClick={() => pick(preset)}
+                  className={`ai-preset${on ? ' active' : ''}${preset.custom ? ' custom' : ''}`}
+                  title={
+                    preset.custom
+                      ? '自己填服务地址与模型（OpenAI 兼容接口）'
+                      : preset.local
+                        ? `${preset.baseURL}（本机服务）`
+                        : preset.id === 'codex' ? '自动识别 Codex Desktop 或 CLI，使用已有登录' : preset.baseURL ?? '使用本机 CLI 已登录的账户'
+                  }
+                >
+                  <ProviderLogo id={preset.custom ? 'custom' : (preset.logo ?? preset.id)} size={15} />
+                  {preset.name}
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -232,12 +315,19 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
               <span className="ai-card-icon" aria-hidden="true">
                 ⌘
               </span>
-              本机 CLI
+              {provider === 'codex' ? '连接 Codex' : '本机 CLI'}
             </header>
             <p className="ai-hint">
-              {settings?.cli[provider] ? '已检测到 CLI。' : '未检测到 CLI，请安装后重新打开设置。'}
-              请先在终端执行 <code>{provider} {provider === 'claude' ? 'auth login' : 'login'}</code>。
-              程序使用 CLI 已登录的账户，调用在临时目录中进行，并关闭文档工具访问。
+              {provider === 'codex' ? (
+                <>{settings?.codex?.message ?? '自动查找 Codex Desktop 自带程序或独立 CLI。请先在 Codex Desktop 登录，再重新打开设置。'}
+                  {' '}无需另外安装 CLI；连接时使用 Codex 自身的登录凭据。
+                </>
+              ) : (
+                <>{settings?.cli[provider] ? '已检测到 CLI。' : '未检测到 CLI，请安装后重新打开设置。'}
+                  请先在终端执行 <code>{provider} {provider === 'claude' ? 'auth login' : 'login'}</code>。
+                </>
+              )}
+              {' '}调用在临时目录中进行，并关闭文档工具访问。
             </p>
           </section>
         ) : (
@@ -257,9 +347,11 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
                 aria-label="服务地址"
               />
               <p className="ai-hint">
-                {provider === 'anthropic'
-                  ? 'Anthropic Messages API 地址，通常以 /v1 结尾。'
-                  : 'OpenAI 兼容地址，通常以 /v1 结尾；本机模型填回环地址。'}
+                {customMode
+                  ? '填你要接的 OpenAI 兼容地址（通常以 /v1 结尾）。模型名按该服务的命名填，可点下面的「获取模型列表」拉取。'
+                  : provider === 'anthropic'
+                    ? 'Anthropic Messages API 地址，通常以 /v1 结尾。'
+                    : 'OpenAI 兼容地址，通常以 /v1 结尾；本机模型填回环地址。'}
               </p>
             </section>
 
@@ -303,7 +395,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
             <input
               value={model}
               disabled={busy}
-              onChange={(event) => setModel(event.target.value)}
+              onChange={(event) => { setModel(event.target.value); setReasoningEffort(''); }}
               onFocus={() => setModelOpen(true)}
               onKeyDown={(event) => {
                 if (event.key === 'Escape') setModelOpen(false);
@@ -317,9 +409,9 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               className="ai-model-button"
-              disabled={busy || cli || loadingModels}
+              disabled={busy || (cli && provider !== 'codex') || loadingModels}
               onClick={() => void loadModels()}
-              title={cli ? 'CLI 渠道使用它自己的默认模型' : '读取当前地址 /models 与 /model/info 返回的可用模型'}
+              title={provider === 'codex' ? '读取本机 Codex 模型和推理强度目录' : cli ? 'CLI 渠道使用它自己的默认模型' : '读取当前地址的可用模型'}
             >
               {loadingModels ? '获取中…' : '获取模型列表'}
             </button>
@@ -359,6 +451,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
                       className={`ai-model-item${item === model ? ' active' : ''}`}
                       onClick={() => {
                         setModel(item);
+                        setReasoningEffort('');
                         setModelOpen(false);
                         setModelQuery('');
                       }}
@@ -380,6 +473,8 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
           </p>
         </section>
 
+        {provider === 'codex' && <section className="ai-card"><header>推理强度</header><label className="ai-model-controls"><select aria-label="Codex 推理强度" value={reasoningEffort} disabled={busy || loadingModels || !selectedCodexModel} onChange={(e) => setReasoningEffort(e.target.value)}><option value="">跟随模型默认{selectedCodexModel ? ` · ${effortLabel(selectedCodexModel.defaultReasoningEffort)}` : ''}</option>{reasoningEffort && !selectedCodexModel?.supportedReasoningEfforts.some((e) => e.reasoningEffort === reasoningEffort) && <option value={reasoningEffort}>{reasoningEffort} · 待校验</option>}{selectedCodexModel?.supportedReasoningEfforts.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{effortLabel(option.reasoningEffort)}</option>)}</select></label><p className="ai-hint">选项来自本机 Codex，不同模型支持的等级不同。保存后供后续提问与精读生成使用；更高等级通常需要更长时间。</p></section>}
+
         <section className="ai-card ai-test-card">
           <header>
             <span className="ai-card-icon" aria-hidden="true">
@@ -389,12 +484,12 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
           </header>
           <div className="ai-test-row">
             <p className="ai-hint">
-              请先填写 API Key；测试会使用当前输入的密钥，保存设置后才会加密保存在本机。
+              {cli ? '使用本机已登录账户和当前模型配置确认连接。' : '测试前会保存当前输入的服务地址、模型与密钥。'}
             </p>
             <span className={`ai-chip${test.state === 'ok' ? ' ok' : test.state === 'fail' ? ' bad' : ''}`}>
               {test.state === 'testing' ? '正在测试…' : test.state === 'ok' ? '连接可用' : test.state === 'fail' ? '连接失败' : '待测试'}
             </span>
-            <button type="button" className="ai-test-button" disabled={busy || !settings} onClick={() => void runTest()}>
+            <button type="button" className="ai-test-button" disabled={busy || test.state === 'testing' || !settings} onClick={() => void runTest()}>
               {busy ? '处理中…' : '测试连接'}
             </button>
           </div>
