@@ -69,6 +69,8 @@ type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'calendar' | 'graph';
 
 interface Props {
   phase: WorkspacePhase;
+  /** 不受搜索影响的文献全集：侧栏计数与「自动补缺失 PDF」都按它算。 */
+  allDocuments: DocumentSummary[];
   filters: Filters;
   setFilters: (next: Partial<Filters>) => void;
   selectedId: string | null;
@@ -90,6 +92,7 @@ interface Props {
  */
 export function LibraryScreen({
   phase,
+  allDocuments,
   filters,
   setFilters,
   selectedId,
@@ -149,13 +152,14 @@ export function LibraryScreen({
 
   const rawDocuments = phase.kind === 'ready' ? phase.documents.documents : [];
   const total = phase.kind === 'ready' ? phase.meta.documentsTotal : 0;
-  const trashCount = rawDocuments.filter((doc) => meta.items[doc.key]?.deleted).length;
+  // 计数基于全集：搜索只缩小列表，不该让「回收站/收藏」的数字跟着缩水。
+  const trashCount = allDocuments.filter((doc) => meta.items[doc.key]?.deleted).length;
   const activeDocuments = rawDocuments.filter((doc) => !meta.items[doc.key]?.deleted);
-  const favoriteCount = rawDocuments.filter((doc) => meta.items[doc.key]?.favorite && !meta.items[doc.key]?.deleted).length;
+  const favoriteCount = allDocuments.filter((doc) => meta.items[doc.key]?.favorite && !meta.items[doc.key]?.deleted).length;
   const toggleTrash = (key: string) => meta.patch(key, { deleted: !meta.items[key]?.deleted });
-  const missingPDFs = useMemo(() => rawDocuments.filter((doc) =>
+  const missingPDFs = useMemo(() => allDocuments.filter((doc) =>
     !meta.items[doc.key]?.deleted && doc.title.trim() && doc.format !== 'epub' && !(doc.hasPdf ?? Boolean(doc.pdfPath))),
-  [rawDocuments, meta.items]);
+  [allDocuments, meta.items]);
 
   const fetchMissingArxivPDFs = async () => {
     if (fetchingArxiv || missingPDFs.length === 0) return;

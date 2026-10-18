@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows · Go + web + desktop
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: windows/apps/server/go.mod
+          cache-dependency-path: windows/apps/server/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19'
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - name: 安装依赖
+        working-directory: windows
+        run: npm ci
+
+      - name: gofmt（源码统一 LF，见 .gitattributes）
+        working-directory: windows/apps/server
+        shell: bash
+        run: test -z "$(gofmt -l .)"
+
+      # npm test = go test ./... + shared 单测 + 三个包的 typecheck
+      - name: 测试与类型检查
+        working-directory: windows
+        run: npm test
+
+  macos-tree:
+    name: macOS 源码树 · Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: macos/apps/server/go.mod
+          cache-dependency-path: macos/apps/server/go.sum
+
+      # macOS 前端仍是旧副本（见审查报告），先只保证其后端可构建、测试通过，
+      # 避免它继续悄悄腐坏。
+      - name: go test
+        working-directory: macos/apps/server
+        run: go test ./...
+
+      - name: gofmt
+        working-directory: macos/apps/server
+        shell: bash
+        run: test -z "$(gofmt -l .)"

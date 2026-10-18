@@ -14,12 +14,13 @@ import (
 )
 
 type Config struct {
-	Provider        string `json:"provider,omitempty"`
-	BaseURL         string `json:"baseURL"`
-	Model           string `json:"model"`
-	APIKey          string `json:"apiKey"`
-	ReasoningEffort string `json:"reasoningEffort,omitempty"`
-	tempRoot        string
+	Provider               string `json:"provider,omitempty"`
+	BaseURL                string `json:"baseURL"`
+	Model                  string `json:"model"`
+	APIKey                 string `json:"apiKey"`
+	ReasoningEffort        string `json:"reasoningEffort,omitempty"`
+	TranslationPreparation string `json:"translationPreparation,omitempty"`
+	tempRoot               string
 }
 
 func (c Config) ProviderName() string {

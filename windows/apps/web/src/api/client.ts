@@ -8,7 +8,6 @@ import type {
   MetaResponse,
   PageListResponse,
   PageText,
-  PDFTranslationPlan,
   WireStatus,
 } from '@cbct/shared';
 import { isApiFailure } from '@cbct/shared';
@@ -279,36 +278,71 @@ export interface AnnotationListResponse {
   total: number;
 }
 
-export interface TranslationItem {
-  hash: string;
-  source: string;
-  target: string;
-}
-
-export interface TranslationResponse {
-  key: string;
-  items: TranslationItem[];
-  total: number;
-  cached: number;
-  newly: number;
-  distinct: number;
-}
-
-/** 页级版式校正的输入块：文本与坐标都来自 PDF 文本层的几何重建。 */
-export interface VisionLayoutBlock {
-  index: number;
-  text: string;
-  x: number;
-  y: number;
+export interface TranslatedPDFPageInput {
+  page: number;
   width: number;
   height: number;
-  fontSize: number;
+  /** 仅作旧客户端兼容；服务端只按 OCR 结果渲染，不再接受文本层块。 */
+  blocks: unknown[];
 }
 
-export interface VisionLayoutResponse {
-  plan: PDFTranslationPlan;
-  cached: boolean;
+export interface TranslatedPDFResponse {
+  key: string;
+  pages: number;
+  blocks: number;
+  skipped: number;
+  overflow: number;
+  collisions: number;
+  failedMath: number;
+  bytes: number;
+  download: string;
+}
+
+export interface RenderStatus {
+  available: boolean;
+  error: string;
+  ocrConfigured: boolean;
+  ocrError: string;
+}
+
+export interface OCRSettings {
+  provider: string;
+  baseURL: string;
   model: string;
+  configured: boolean;
+  documentation?: string;
+}
+
+/** 导入任务的一个阶段（OCR / 翻译 / 渲染）。 */
+export interface JobStage {
+  key: 'ocr' | 'translate' | 'render' | string;
+  label: string;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | string;
+  message: string;
+  completed: number;
+  total: number;
+  unit?: string;
+}
+
+export interface JobRun {
+  id: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: string;
+  pages: number;
+  error?: string;
+}
+
+export interface DocumentJob {
+  key: string;
+  name: string;
+  status: 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted' | string;
+  startedAt: string;
+  updatedAt: string;
+  error?: string;
+  pages: number;
+  stages: JobStage[];
+  runs: JobRun[];
 }
 
 export interface DocumentMeta {
@@ -473,6 +507,7 @@ export interface AISettings {
   baseURL: string;
   model: string;
   reasoningEffort?: string;
+  translationPreparation?: 'off' | 'artifacts_only' | 'terms' | 'terms+style' | 'editorial';
   keyConfigured: boolean;
   status: AIStatus;
   cli: Record<string, boolean>;
@@ -515,6 +550,8 @@ export interface ImportProgress {
   files?: number;
   completed: number;
   total: number;
+  /** 服务端为这次导入创建的任务键：前端据此轮询任务面板。 */
+  jobKey?: string;
 }
 export interface ImportStreamEvent {
   progress?: ImportProgress;
@@ -694,6 +731,7 @@ export const api = {
     baseURL: string;
     model: string;
     reasoningEffort?: string;
+    translationPreparation?: 'off' | 'artifacts_only' | 'terms' | 'terms+style' | 'editorial';
     apiKey?: string;
     clearKey?: boolean;
   }) => request<AISettings>('/v1/ai/settings', { method: 'PUT', body }),
@@ -861,21 +899,89 @@ export const api = {
     request<ReadingsResponse>(`/v1/readings/${encodeURIComponent(key)}`, {
       signal,
     }),
-  translate: (key: string, segments: string[], signal?: AbortSignal, cachedOnly = false) =>
-    request<TranslationResponse & { complete?: boolean }>(
-      `/v1/translations/${encodeURIComponent(key)}`,
-      {
-        method: 'POST',
-        body: { segments, cachedOnly },
-        signal,
-      },
-    ),
+  /** 生成保留排版的译文 PDF：服务端统一走 OCR → 翻译 → rpr 排版。 */
+  translatedPDF: (key: string, body: { pages: TranslatedPDFPageInput[]; ocr?: boolean }, signal?: AbortSignal) =>
+    request<TranslatedPDFResponse>(`/v1/documents/${encodeURIComponent(key)}/translated-pdf`, {
+      method: 'POST',
+      body,
+      signal,
+    }),
+  downloadTranslatedPDF: async (key: string, signal?: AbortSignal): Promise<Blob> => {
+    const { apiBase, token } = bootstrap();
+    const headers = new Headers();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(`${apiBase}/v1/documents/${encodeURIComponent(key)}/translated-pdf`, {
+      headers,
+      signal,
+      credentials: 'omit',
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let message = `HTTP ${response.status}`;
+      try {
+        const parsed = JSON.parse(text) as ApiFailure;
+        if (isApiFailure(parsed)) message = parsed.error;
+      } catch {
+        /* 非 JSON 错误体：保留兜底文案 */
+      }
+      throw new ApiError(message, response.status);
+    }
+    return response.blob();
+  },
   /**
-   * 页级版式校正：把整页图像交给视觉模型，换回结构计划（分组合并、角色、丢弃）。
-   * 文本仍来自几何块，模型不产出正文；服务端按图像与块指纹缓存，重复调用不再计费。
+   * 单页排版译文：服务端先用 PaddleOCR 识别段落，再翻译并由 rpr 引擎按原页坐标回填，
+   * 返回只含这一页的 PDF（原图 + 译文叠加层）。扫描件没有文本层时用它。
    */
-  visionLayout: (body: { page: number; imageBase64: string; blocks: VisionLayoutBlock[] }, signal?: AbortSignal) =>
-    request<VisionLayoutResponse>('/v1/layout/vision', { method: 'POST', body, signal }),
+  translatedPage: async (
+    key: string,
+    page: number,
+    body: { width: number; height: number; force?: boolean },
+    signal?: AbortSignal,
+  ): Promise<{ data: ArrayBuffer; extracted: boolean }> => {
+    const { apiBase, token } = bootstrap();
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(
+      `${apiBase}/v1/documents/${encodeURIComponent(key)}/pages/${page}/translated-page`,
+      { method: 'POST', headers, body: JSON.stringify(body), credentials: 'omit', signal },
+    );
+    if (!response.ok) {
+      const text = await response.text();
+      let message = `HTTP ${response.status}`;
+      try {
+        const parsed = JSON.parse(text) as ApiFailure;
+        if (isApiFailure(parsed)) message = parsed.error;
+      } catch {
+        /* 非 JSON 错误体：保留兜底文案 */
+      }
+      throw new ApiError(message, response.status);
+    }
+    return {
+      data: await response.arrayBuffer(),
+      extracted: response.headers.get('X-CBCT-Page-Extracted') === 'true',
+    };
+  },
+  /** 这篇文档是否带导入时生成的 OCR 版式数据（阅读器据此自动显示排版译文）。 */
+  layoutStatus: (key: string, signal?: AbortSignal) =>
+    request<{ available: boolean; pages: number }>(
+      `/v1/documents/${encodeURIComponent(key)}/layout`,
+      { signal },
+    ),
+  /** 这篇文档最近一次导入任务（OCR → 翻译 → 渲染），供任务进度面板轮询。 */
+  documentJob: (key: string, signal?: AbortSignal) =>
+    request<{ available: boolean; job?: DocumentJob }>(
+      `/v1/documents/${encodeURIComponent(key)}/job`,
+      { signal },
+    ),
+  cancelDocumentJob: (key: string, signal?: AbortSignal) =>
+    request<{ cancelled: boolean }>(
+      `/v1/documents/${encodeURIComponent(key)}/job/cancel`,
+      { method: 'POST', signal },
+    ),
+  renderStatus: (signal?: AbortSignal) => request<RenderStatus>('/v1/render/status', { signal }),
+  ocrSettings: (signal?: AbortSignal) => request<OCRSettings>('/v1/ocr/settings', { signal }),
+  saveOCRSettings: (body: { token?: string; clearToken?: boolean; baseURL?: string; model?: string }, signal?: AbortSignal) =>
+    request<OCRSettings>('/v1/ocr/settings', { method: 'PUT', body, signal }),
   readPaperPage: (body: { key: string; page: number; fingerprint: string; cachedOnly?: boolean; images?: string[] }, signal?: AbortSignal) =>
     request<{ cached: boolean; ready: boolean; page: number; issues?: string[] }>('/v1/ai/paper-page', { method: 'POST', body, signal }),
   generate: async (

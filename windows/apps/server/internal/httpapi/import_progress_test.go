@@ -24,12 +24,16 @@ func progressUploadRequest(t *testing.T, bundle *httptestServerBundle, count int
 	}
 	file.Write([]byte("%PDF-1.4\nprogress fixture"))
 	segments := []string{}
+	pages := []publicationPageHint{}
 	for i := 0; i < count; i++ {
-		segments = append(segments, fmt.Sprintf("Original source paragraph number %d.", i))
+		segment := fmt.Sprintf("Original source paragraph number %d.", i)
+		segments = append(segments, segment)
+		pages = append(pages, publicationPageHint{Page: i + 1, Text: segment, Segments: []string{segment}, Width: 595, Height: 842})
 	}
-	hints, _ := json.Marshal([]publicationMetadataHint{{FirstPage: "Real paper title and authors", Pages: []publicationPageHint{{Page: 1, Text: strings.Join(segments, "\n"), Segments: segments}}}})
+	hints, _ := json.Marshal([]publicationMetadataHint{{FirstPage: "Real paper title and authors", Pages: pages}})
 	form.WriteField("metadata", string(hints))
 	form.Close()
+	ensureTestOCRPages(t, bundle, count)
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	t.Cleanup(cancel)
 	req, err := http.NewRequestWithContext(ctx, "POST", bundle.frontend.URL+"/v1/import/files", &body)

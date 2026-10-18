@@ -1,0 +1,38 @@
+# 统一换行：源码一律 LF 检出，Windows 上 gofmt / 格式检查才有意义。
+# 需要一次性把既有工作区重写成 LF：git add --renormalize .
+* text=auto
+
+*.go      text eol=lf
+*.ts      text eol=lf
+*.tsx     text eol=lf
+*.js      text eol=lf
+*.jsx     text eol=lf
+*.mjs     text eol=lf
+*.cjs     text eol=lf
+*.css     text eol=lf
+*.html    text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.sql     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.svg     text eol=lf
+
+# Windows 启动脚本必须是 CRLF，否则 cmd.exe 的标签解析会出错。
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
+
+# 二进制资源不做换行转换。
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.ico     binary
+*.ttf     binary
+*.otf     binary
+*.ttc     binary
+*.woff    binary
+*.woff2   binary
+*.pdf     binary
+*.bcmap   binary
+*.pfb     binary
+*.asar    binary

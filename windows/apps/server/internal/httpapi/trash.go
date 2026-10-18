@@ -72,6 +72,10 @@ func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, err.Error())
 			return
 		}
+		if _, err = tx.ExecContext(r.Context(), `DELETE FROM app_state WHERE key = ?`, translationQAKey(key)); err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
 		prefix := paperCachePrefix(key)
 		if _, err = tx.ExecContext(r.Context(), `DELETE FROM app_state WHERE substr(key,1,length(?))=?`, prefix, prefix); err != nil {
 			writeError(w, 500, err.Error())

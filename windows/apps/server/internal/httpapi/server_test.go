@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"cbctv2/server/internal/config"
 	"cbctv2/server/internal/db"
@@ -37,6 +38,22 @@ func serve(t *testing.T, cfg config.Config, handle *sql.DB) *httptestServerBundl
 	t.Cleanup(func() {
 		frontend.Close()
 		_ = handle.Close()
+		// Windows 上 SQLite 的 WAL/SHM 偶尔比连接晚一步释放，会让 t.TempDir 的
+		// RemoveAll 偶发失败；这里带退避重试地把整棵临时目录收掉（本函数的 cleanup
+		// 先于 TempDir 的 cleanup 执行），避免把测试抖动带到整条测试链。
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			for _, suffix := range []string{"", "-wal", "-shm"} {
+				_ = os.Remove(cfg.DBPath() + suffix)
+			}
+			if err := os.RemoveAll(cfg.DataRoot); err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 	})
 	return bundle
 }
@@ -93,7 +110,7 @@ func TestHealthzNeedsNoToken(t *testing.T) {
 		t.Fatalf("healthz 应公开可访问，实际 %d", res.StatusCode)
 	}
 	payload := decode(t, res)
-	if payload["ok"] != true || payload["schemaVersion"] != float64(4) {
+	if payload["ok"] != true || payload["schemaVersion"] != float64(5) {
 		t.Fatalf("healthz 内容异常: %v", payload)
 	}
 }
@@ -137,11 +154,19 @@ func TestMetaWithToken(t *testing.T) {
 	if payload["dbPath"] != cfg.DBPath() {
 		t.Fatalf("meta.dbPath 异常: %v", payload["dbPath"])
 	}
-	if payload["schemaVersion"] != float64(4) || payload["documentsTotal"] != float64(0) {
+	if payload["schemaVersion"] != float64(5) || payload["documentsTotal"] != float64(0) {
 		t.Fatalf("meta 计数异常: %v", payload)
 	}
 	if started, _ := payload["startedAt"].(string); started == "" {
 		t.Fatal("meta.startedAt 不应为空")
+	}
+	// 启动器靠 build 判断后端是否过期：字段缺失或恒为空都会让「重启到新构建」失效。
+	build, _ := payload["build"].(string)
+	if len(build) != 64 {
+		t.Fatalf("meta.build 应是 64 位十六进制指纹，实际 %q", build)
+	}
+	if pid, _ := payload["pid"].(float64); pid != float64(os.Getpid()) {
+		t.Fatalf("meta.pid 应是当前进程号 %d，实际 %v", os.Getpid(), payload["pid"])
 	}
 }
 

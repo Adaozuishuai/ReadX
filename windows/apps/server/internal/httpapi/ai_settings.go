@@ -3,10 +3,12 @@ package httpapi
 import (
 	"cbctv2/server/internal/ai"
 	"cbctv2/server/internal/legacy"
+	"cbctv2/server/internal/securefile"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,12 +28,13 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		s.settingsMu.Lock()
 		defer s.settingsMu.Unlock()
 		var body struct {
-			Provider        string  `json:"provider"`
-			BaseURL         string  `json:"baseURL"`
-			Model           string  `json:"model"`
-			APIKey          string  `json:"apiKey"`
-			ClearKey        bool    `json:"clearKey"`
-			ReasoningEffort *string `json:"reasoningEffort"`
+			Provider               string  `json:"provider"`
+			BaseURL                string  `json:"baseURL"`
+			Model                  string  `json:"model"`
+			APIKey                 string  `json:"apiKey"`
+			ClearKey               bool    `json:"clearKey"`
+			ReasoningEffort        *string `json:"reasoningEffort"`
+			TranslationPreparation string  `json:"translationPreparation"`
 		}
 		if decodeJSON(w, r, &body) != nil {
 			return
@@ -57,6 +60,11 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		if connections == nil {
 			connections = map[string]any{}
 		}
+		// 「清除 Key」必须清掉所有历史渠道：切换过服务商之后旧 Key 仍留在 connections 里，
+		// 用户以为删干净了，磁盘上却还留着明文。
+		if body.ClearKey {
+			connections = map[string]any{}
+		}
 		previousProvider, _ := raw["provider"].(string)
 		if previousProvider == "" {
 			previousProvider = "openai"
@@ -77,6 +85,11 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		raw["provider"] = body.Provider
 		raw["baseURL"] = strings.TrimSpace(body.BaseURL)
 		raw["model"] = strings.TrimSpace(body.Model)
+		preparation := strings.TrimSpace(body.TranslationPreparation)
+		if preparation != "terms" && preparation != "terms+style" && preparation != "artifacts_only" && preparation != "editorial" {
+			preparation = "off"
+		}
+		raw["translationPreparation"] = preparation
 		if body.ReasoningEffort != nil {
 			raw["reasoningEffort"] = strings.TrimSpace(*body.ReasoningEffort)
 		} else if previousProvider != body.Provider || previousModel != strings.TrimSpace(body.Model) {
@@ -125,9 +138,17 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "保存配置失败")
 			return
 		}
+		// 配置里有明文 API Key：Windows 上 os.Chmod 不设置 DACL，文件会继承检出目录的
+		// ACL（可能含 Authenticated Users）。这里显式收紧到当前用户 + SYSTEM + 管理员。
+		if err := securefile.RestrictToCurrentUser(filepath.Dir(path)); err != nil {
+			log.Printf("收紧配置目录权限失败（不影响保存）: %v", err)
+		}
+		if err := securefile.RestrictToCurrentUser(path); err != nil {
+			log.Printf("收紧配置文件权限失败（不影响保存）: %v", err)
+		}
 	}
 	cfg, _ := ai.LoadConfig(path)
-	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "reasoningEffort": cfg.ReasoningEffort, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}, "codex": ai.CodexStatus(r.Context())})
+	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "reasoningEffort": cfg.ReasoningEffort, "translationPreparation": cfg.TranslationPreparation, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}, "codex": ai.CodexStatus(r.Context())})
 }
 
 // handleAIModels 读取当前地址可用的模型列表：OpenAI 兼容与 Anthropic 都提供 GET /models。

@@ -1,0 +1,332 @@
+// import_jobs.go：导入任务的持久化进度（OCR → 翻译 → 渲染）。
+//
+// 对齐 RetainPDF 的任务进度面板：一次导入是一条可查询、可取消、可回看的任务，
+// 三个阶段分别记录状态、消息与计数；页面刷新或应用重启后仍能从 app_state 读回。
+package httpapi
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+
+	"cbctv2/server/internal/render"
+)
+
+const jobStatePrefix = "import-job:"
+
+// JobStage 是任务里的一个阶段（ocr / translate / render）。
+type JobStage struct {
+	Key       string `json:"key"`
+	Label     string `json:"label"`
+	Status    string `json:"status"` // pending / running / done / failed / skipped
+	Message   string `json:"message"`
+	Completed int    `json:"completed"`
+	Total     int    `json:"total"`
+	Unit      string `json:"unit,omitempty"`
+}
+
+// JobRun 是一次历史执行的摘要。
+type JobRun struct {
+	ID         string `json:"id"`
+	StartedAt  string `json:"startedAt"`
+	FinishedAt string `json:"finishedAt,omitempty"`
+	Status     string `json:"status"`
+	Pages      int    `json:"pages"`
+	Error      string `json:"error,omitempty"`
+}
+
+// DocumentJob 是一篇文档最近一次导入任务的状态。
+type DocumentJob struct {
+	Key       string     `json:"key"`
+	Name      string     `json:"name"`
+	Status    string     `json:"status"` // running / done / failed / cancelled
+	StartedAt string     `json:"startedAt"`
+	UpdatedAt string     `json:"updatedAt"`
+	Error     string     `json:"error,omitempty"`
+	Pages     int        `json:"pages"`
+	Stages    []JobStage `json:"stages"`
+	Runs      []JobRun   `json:"runs"`
+}
+
+type jobRuntime struct {
+	job    *DocumentJob
+	cancel context.CancelFunc
+}
+
+func newDocumentJob(key, name string, pages int) *DocumentJob {
+	stamp := nowStamp()
+	return &DocumentJob{
+		Key:       key,
+		Name:      name,
+		Status:    "running",
+		StartedAt: stamp,
+		UpdatedAt: stamp,
+		Pages:     pages,
+		Stages: []JobStage{
+			{Key: "ocr", Label: "OCR", Status: "pending", Unit: "页"},
+			{Key: "translate", Label: "翻译", Status: "pending", Unit: "段"},
+			{Key: "render", Label: "渲染", Status: "pending", Unit: "页"},
+		},
+		Runs: []JobRun{{ID: stamp, StartedAt: stamp, Status: "running", Pages: pages}},
+	}
+}
+
+func (job *DocumentJob) stage(key string) *JobStage {
+	for index := range job.Stages {
+		if job.Stages[index].Key == key {
+			return &job.Stages[index]
+		}
+	}
+	return nil
+}
+
+// setStage 更新一个阶段；空字段保持不变，避免每次都要重传全部信息。
+func (job *DocumentJob) setStage(key, status, message string, completed, total int) {
+	stage := job.stage(key)
+	if stage == nil {
+		return
+	}
+	if status != "" {
+		stage.Status = status
+	}
+	if message != "" {
+		stage.Message = message
+	}
+	if total >= 0 {
+		stage.Total = total
+	}
+	if completed >= 0 {
+		stage.Completed = completed
+	}
+	job.UpdatedAt = nowStamp()
+}
+
+// beginImportJob 为新导入建立任务并登记可取消的上下文。
+func (s *Server) beginImportJob(key, name string, pages int, cancel context.CancelFunc) *DocumentJob {
+	job := newDocumentJob(key, name, pages)
+	s.jobsMu.Lock()
+	if previous, ok := s.importJobs[key]; ok && previous.job != nil {
+		job.Runs = append(job.Runs, previous.job.Runs...)
+		if len(job.Runs) > 10 {
+			job.Runs = job.Runs[len(job.Runs)-10:]
+		}
+	}
+	s.importJobs[key] = &jobRuntime{job: job, cancel: cancel}
+	s.jobsMu.Unlock()
+	s.persistImportJob(job)
+	return job
+}
+
+// updateImportJob 在锁内改任务，再在锁外落盘，避免持锁做数据库 IO。
+func (s *Server) updateImportJob(key string, mutate func(*DocumentJob)) {
+	s.jobsMu.Lock()
+	runtime := s.importJobs[key]
+	if runtime == nil || runtime.job == nil {
+		s.jobsMu.Unlock()
+		return
+	}
+	mutate(runtime.job)
+	runtime.job.UpdatedAt = nowStamp()
+	snapshot := *runtime.job
+	s.jobsMu.Unlock()
+	s.persistImportJob(&snapshot)
+}
+
+// jobStage 是阶段更新的便捷入口。
+func (s *Server) jobStage(key, stage, status, message string, completed, total int) {
+	s.updateImportJob(key, func(job *DocumentJob) {
+		job.setStage(stage, status, message, completed, total)
+	})
+}
+
+// finishImportJob 结束当前运行并同步最后一次执行摘要。
+func (s *Server) finishImportJob(key, status, message string) {
+	s.updateImportJob(key, func(job *DocumentJob) {
+		// 显式取消已是终态；OCR/翻译库返回 context.Canceled 时不能覆盖成失败。
+		if job.Status == "cancelled" && status != "cancelled" {
+			return
+		}
+		job.Status = status
+		if message != "" {
+			job.Error = message
+		}
+		if len(job.Runs) > 0 {
+			last := &job.Runs[len(job.Runs)-1]
+			last.Status = status
+			last.FinishedAt = nowStamp()
+			last.Error = job.Error
+			last.Pages = job.Pages
+		}
+	})
+}
+
+func importFailureStatus(ctx context.Context, err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return "cancelled"
+	}
+	return "failed"
+}
+
+func (s *Server) persistImportJob(job *DocumentJob) {
+	encoded, err := json.Marshal(job)
+	if err != nil {
+		return
+	}
+	_, _ = s.handle.Exec(
+		`INSERT INTO app_state(key, value_json, updated_at) VALUES(?,?,?)
+		 ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
+		jobStatePrefix+job.Key, string(encoded), nowStamp())
+}
+
+func (s *Server) loadImportJob(ctx context.Context, key string) (*DocumentJob, bool) {
+	s.jobsMu.Lock()
+	if runtime := s.importJobs[key]; runtime != nil && runtime.job != nil {
+		copy := *runtime.job
+		s.jobsMu.Unlock()
+		return &copy, true
+	}
+	s.jobsMu.Unlock()
+	var body string
+	err := s.handle.QueryRowContext(ctx, `SELECT value_json FROM app_state WHERE key = ?`, jobStatePrefix+key).Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false
+	}
+	if err != nil {
+		return nil, false
+	}
+	var job DocumentJob
+	if json.Unmarshal([]byte(body), &job) != nil {
+		return nil, false
+	}
+	// 进程重启后没有运行中的句柄：上次没收尾的任务标记为「已中断」，不要一直转圈。
+	if job.Status == "running" {
+		job.Status = "interrupted"
+	}
+	return &job, true
+}
+
+func (s *Server) cancelImportJob(key string) bool {
+	s.jobsMu.Lock()
+	runtime := s.importJobs[key]
+	if runtime == nil || runtime.cancel == nil || runtime.job == nil || runtime.job.Status != "running" {
+		s.jobsMu.Unlock()
+		return false
+	}
+	cancel := runtime.cancel
+	job := runtime.job
+	job.Status = "cancelled"
+	job.Error = "已取消"
+	job.UpdatedAt = nowStamp()
+	if len(job.Runs) > 0 {
+		last := &job.Runs[len(job.Runs)-1]
+		last.Status = "cancelled"
+		last.FinishedAt = job.UpdatedAt
+		last.Error = job.Error
+		last.Pages = job.Pages
+	}
+	copy := *job
+	copy.Stages = append([]JobStage(nil), job.Stages...)
+	copy.Runs = append([]JobRun(nil), job.Runs...)
+	s.jobsMu.Unlock()
+	// 先持久化终态，再中断运行中的网络或渲染请求，避免 worker 抢先写回 failed。
+	s.persistImportJob(&copy)
+	cancel()
+	return true
+}
+
+// setJobCancel 让后台渲染接替导入请求的取消句柄：取消按钮在导入完成后仍有效。
+func (s *Server) setJobCancel(key string, cancel context.CancelFunc) {
+	s.jobsMu.Lock()
+	if runtime := s.importJobs[key]; runtime != nil {
+		runtime.cancel = cancel
+	}
+	s.jobsMu.Unlock()
+}
+
+// startDocumentRender 在导入提交后按页生成排版译文：每页完成后写入渲染缓存，
+// 阅读器打开即用；任务面板能看到「渲染 X / N 页」，取消按钮同样生效。
+func (s *Server) startDocumentRender(key, sourcePath string, pages []layoutPage) {
+	renderer := render.New(s.cfg.DataRoot)
+	if err := renderer.Available(); err != nil {
+		s.jobStage(key, "render", "skipped", "渲染不可用："+err.Error(), -1, -1)
+		s.finishImportJob(key, "done", "")
+		return
+	}
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		s.jobStage(key, "render", "failed", "读取原 PDF 失败: "+err.Error(), 0, len(pages))
+		s.finishImportJob(key, "failed", err.Error())
+		return
+	}
+	ocrPages := layoutOCRPages(layoutDoc{Pages: pages})
+	s.jobStage(key, "render", "running", "正在按页生成排版译文", 0, len(ocrPages))
+	ctx, cancel := context.WithCancel(context.Background())
+	s.setJobCancel(key, cancel)
+	go func() {
+		defer cancel()
+		rendered, extracted, failed := 0, 0, 0
+		for index := range ocrPages {
+			if ctx.Err() != nil {
+				s.jobStage(key, "render", "failed", "已取消", index, len(ocrPages))
+				s.finishImportJob(key, "cancelled", "已取消")
+				return
+			}
+			stats, _, err := s.renderTranslatedPage(ctx, key, source, index+1, ocrPages[index],
+				neighbor(ocrPages, index-1), neighbor(ocrPages, index+1), false, renderer)
+			if err != nil {
+				failed++
+				s.jobStage(key, "render", "running",
+					fmt.Sprintf("第 %d 页失败，已保留原页：%v", index+1, err), index+1, len(ocrPages))
+				continue
+			}
+			if stats.Extracted {
+				extracted++
+			} else {
+				rendered++
+			}
+			s.jobStage(key, "render", "running",
+				fmt.Sprintf("已处理 %d / %d 页", index+1, len(ocrPages)), index+1, len(ocrPages))
+		}
+		message := fmt.Sprintf("已渲染 %d 页", rendered)
+		if extracted > 0 {
+			message += fmt.Sprintf("，%d 页保留原页", extracted)
+		}
+		if failed > 0 {
+			message += fmt.Sprintf("，%d 页失败", failed)
+		}
+		s.jobStage(key, "render", "done", message, len(ocrPages), len(ocrPages))
+		if failed == len(ocrPages) && rendered == 0 && extracted == 0 {
+			s.finishImportJob(key, "failed", "所有页面渲染失败")
+			return
+		}
+		s.finishImportJob(key, "done", "")
+	}()
+}
+
+// handleDocumentJob 返回文档最近一次导入任务（含历史执行摘要）。
+func (s *Server) handleDocumentJob(w http.ResponseWriter, r *http.Request) {
+	key, ok := pathKey(w, r)
+	if !ok {
+		return
+	}
+	job, found := s.loadImportJob(r.Context(), key)
+	if !found {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "job": job})
+}
+
+// handleCancelDocumentJob 取消正在运行的任务（导入或后台渲染）。
+func (s *Server) handleCancelDocumentJob(w http.ResponseWriter, r *http.Request) {
+	key, ok := pathKey(w, r)
+	if !ok {
+		return
+	}
+	cancelled := s.cancelImportJob(key)
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled": cancelled})
+}

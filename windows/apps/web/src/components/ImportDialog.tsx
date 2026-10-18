@@ -4,19 +4,26 @@ import {
   type ImportCandidate,
   type ImportedDocument,
 } from '../api/client';
-import { ImportProgressPanel, useImportProgress } from './ImportProgressPanel';
+import { useImportProgress } from './ImportProgressPanel';
 import { UploadShotStage, type ActiveImport } from './UploadShotStage';
+import { DocumentJobDialog } from './DocumentJobDialog';
 const readPDFMetadata: typeof import('../api/pdfMetadata').readPDFMetadata = async (...args) =>
   (await import('../api/pdfMetadata')).readPDFMetadata(...args);
+
+const MAX_PDF_BYTES = 50 * 1048576;
+const MAX_EPUB_BYTES = 100 * 1048576;
+const MAX_OCR_PAGES = 1000;
 
 export function ImportDialog({
   files,
   onClose,
   onImported,
+  onOpenDocument,
 }: {
   files: File[];
   onClose: () => void;
   onImported: () => void;
+  onOpenDocument?: (id: string) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const started = useRef(false);
@@ -29,12 +36,30 @@ export function ImportDialog({
   // 弹弓式导入：选中的文件先落进队列，用户逐个投进篮筐才开始导入。
   const [queue, setQueue] = useState<File[]>([]);
   const [active, setActive] = useState<ActiveImport | null>(null);
+  // 文件进篮筐就切到任务面板：先显示上传/准备，拿到 jobKey 后轮询 OCR/翻译/渲染。
+  const [jobFile, setJobFile] = useState<File | null>(null);
   // 来源跟随具体文件对象，避免同名文件互相覆盖题录来源。
   const sources = useRef(new WeakMap<File, string>());
+  // 配置了 PaddleOCR 时，没有文本层的扫描件也能导入：服务端会先 OCR 出首页文本再识别题录。
+  const ocrReady = useRef(false);
+  const aiReady = useRef(false);
   const activity = useImportProgress();
   useEffect(() => {
     dialog.current?.showModal();
     return () => controller.current?.abort();
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([api.renderStatus(), api.aiStatus()])
+      .then(([status, ai]) => {
+        if (cancelled) return;
+        ocrReady.current = status.available && status.ocrConfigured;
+        aiReady.current = Boolean(ai.configured);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ref 同步加锁，阻止 React 更新 busy 前的重复提交。
@@ -60,19 +85,32 @@ export function ImportDialog({
     setError('');
     activity.begin('preparing', `正在检查 ${file.name}`);
     try {
-      if (file.size > 100 * 1048576) throw new Error('单个文件不超过 100 MB');
+      const isPDF = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+      if (file.size > (isPDF ? MAX_PDF_BYTES : MAX_EPUB_BYTES)) {
+        throw new Error(isPDF ? 'PaddleOCR 本地 PDF 上传上限为 50 MB' : '单个 EPUB 文件不超过 100 MB');
+      }
       const fileIndex = 1;
       const files = 1;
       activity.update({ stage: 'parse', message: '正在打开文件、读取首页和文档信息', name: file.name, file: fileIndex, files, completed: 0, total: 0 });
       const hint = await readPDFMetadata(file, request.signal, (page, total) => activity.update({ stage: 'parse', message: `正在识别段落和栏位，已解析 ${page}/${total} 页`, name: file.name, file: fileIndex, files, completed: page, total }));
       request.signal.throwIfAborted();
+      if (isPDF && (hint.pages?.length ?? 0) > MAX_OCR_PAGES) {
+        throw new Error(`PaddleOCR 单次最多处理 ${MAX_OCR_PAGES} 页，请拆分 PDF 后导入。`);
+      }
       const source = sources.current.get(file);
       if (source) {
         hint.source = source;
       }
-      if (/\.pdf$/i.test(file.name) && !hint.firstPage.trim())
-        throw new Error(`${file.name} 首页没有可读取的文本，暂无法用 AI 识别。请使用带文本层的 PDF。`);
+      if (isPDF) {
+        if (!ocrReady.current)
+          throw new Error(`${file.name}：PDF 导入需要 PaddleOCR，请先在“AI 助手设置”里配置访问令牌。`);
+        if (!aiReady.current)
+          throw new Error(`${file.name}：PDF 导入需要 AI 助手，请先在 AI 设置里配置模型。`);
+      }
       activity.update({ stage: 'upload', message: '准备上传论文与排版数据到本地服务', completed: 0, total: 0 });
+      // PDF 与 EPUB 都使用统一的文档任务面板；PDF 的任务由 OCR/翻译/渲染阶段驱动，
+      // EPUB 的任务记录导入与章节解析状态。
+      setJobFile(file);
       const result = await api.upload([file], request.signal, [hint], activity.receive);
       const imported = result.results[0];
       if (!imported) throw new Error('服务未返回导入结果，请刷新书库确认');
@@ -149,6 +187,7 @@ export function ImportDialog({
     }
   };
   return (
+    <>
     <dialog
       className="app-dialog import-dialog"
       ref={dialog}
@@ -184,11 +223,8 @@ export function ImportDialog({
         onMake={(file) => void upload(file)}
       />
       <p className="text-xs text-ink-faint">
-        单个文件不超过 100 MB；相同文件自动去重。投进篮筐或点按「直接导入」开始处理。
+        PDF 不超过 50 MB、1000 页；EPUB 不超过 100 MB。相同文件自动去重，投进篮筐开始处理。
       </p>
-      {/* 舞台给的是可视化与逐文件状态；这里保留阶段文本、耗时、连接状态与处理记录，
-          出问题时这些细节比动画有用。 */}
-      <ImportProgressPanel activity={activity} busy={busy} />
       <label className="import-link-field">
         链接、arXiv 编号、DOI 或标题
         <input
@@ -209,7 +245,7 @@ export function ImportDialog({
           按标题 / DOI 查找
         </button>
       </div>
-      <details className="import-data-note"><summary>题录识别、翻译与数据说明</summary><p>PDF 会在进入书库前，使用 AI 设置中的模型解析首页，识别真实题目、作者、期刊/会议、年份及中文题名，并完成全文翻译；无法确认的字段留空。论文文字会发送给所选模型，译文按原页布局保存，可取消。扫描件需先添加文本层。</p></details>
+      <details className="import-data-note"><summary>题录识别、翻译与数据说明</summary><p>PDF 导入使用 PaddleOCR 识别段落，再逐页翻译并把每页块坐标保存到本机；论文首页文本会发送给所选 AI 模型识别题录。OCR 令牌和模型在 AI 助手设置中管理。</p></details>
       {error && (
         <p role="alert" className="text-bad">
           {error}
@@ -247,5 +283,22 @@ export function ImportDialog({
         </button>
       </footer>
     </dialog>
+    {jobFile ? (
+      <DocumentJobDialog
+        document={{ key: activity.jobKey || '', title: active?.result?.document?.title || jobFile.name, authors: active?.result?.document?.authors || [], format: /\.epub$/i.test(jobFile.name) || jobFile.type === 'application/epub+zip' ? 'epub' : 'pdf' }}
+        jobKey={activity.jobKey || null}
+        coverFile={jobFile}
+        importing={busy}
+        pending={busy && !activity.jobKey}
+        onClose={() => setJobFile(null)}
+        onOpenReader={() => {
+          const imported = active?.result?.document;
+          if (!imported || !onOpenDocument) return;
+          onOpenDocument(imported.id);
+          onClose();
+        }}
+      />
+    ) : null}
+    </>
   );
 }

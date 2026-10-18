@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   getDocument,
   GlobalWorkerOptions,
   TextLayer,
   type PDFDocumentProxy,
 } from 'pdfjs-dist';
-import { fitPDFWidth, paragraphAt, mergePaperHeadings, typesetPDFTranslation, type TranslatedPDFBlock, type PaperHeading, type PDFLayout, type PDFTranslationPlan } from '@cbct/shared';
+import { fitPDFWidth, paragraphAt, mergePaperHeadings, type PaperHeading, type PDFLayout } from '@cbct/shared';
 import { headingsFromPDFPage } from '../api/pdfOutline';
 import type { SelectedParagraph } from './ParagraphActions';
 import type { TextContent } from 'pdfjs-dist/types/src/display/api';
@@ -26,41 +26,6 @@ export function textFromPDF(content: TextContent): string {
     .map((item) => ('str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : ''))
     .join('')
     .trim();
-}
-
-function TranslatedBlock({ block, scale, fontScale, style, onExpand }: { block: TranslatedPDFBlock; scale: number; fontScale: number; style: React.CSSProperties; onExpand: (anchor: DOMRect) => void }) {
-  const element = useRef<HTMLDivElement>(null);
-  const [overflow, setOverflow] = useState(false);
-  useLayoutEffect(() => {
-    const box = element.current;
-    if (!box) return;
-    const base = block.fontSize * scale * fontScale;
-    const minimum = base * .88;
-    const fit = () => {
-      let low = minimum, high = base;
-      box.style.fontSize = `${high}px`;
-      const fits = () => box.scrollHeight <= box.clientHeight + 1 && box.scrollWidth <= box.clientWidth + 1;
-      if (!fits()) {
-        for (let round = 0; round < 6; round++) {
-          const middle = (low + high) / 2;
-          box.style.fontSize = `${middle}px`;
-          if (fits()) low = middle; else high = middle;
-        }
-        box.style.fontSize = `${low}px`;
-      }
-      setOverflow(!fits());
-    };
-    fit();
-    const observer = new ResizeObserver(fit);
-    observer.observe(box);
-    let active = true;
-    void document.fonts.ready.then(() => { if (active) fit(); });
-    return () => { active = false; observer.disconnect(); };
-  }, [block, scale, fontScale, style.width, style.height]);
-  return <div className="pdf-translated-block" data-role={block.role} data-overflow={overflow || undefined} style={style} lang="zh-CN">
-    <div className="pdf-translated-text" ref={element} style={{ lineHeight: block.lineHeight, textAlign: block.align, textIndent: `${block.indent * scale}px` }}>{block.target}</div>
-    {overflow && <button type="button" className="pdf-translation-expand" aria-label="展开完整译文" title="展开完整译文" onClick={event => { event.stopPropagation(); onExpand(event.currentTarget.getBoundingClientRect()); }}>↗</button>}
-  </div>;
 }
 
 export function usePDF(key: string | null) {
@@ -175,13 +140,10 @@ export function PDFPage({
   focusedId,
   onSelect,
   onText,
-  translation,
   layout,
   paragraphMode = false,
   onParagraph,
   headingTarget,
-  visionMode = false,
-  onVisionStatus,
 }: {
   document: PDFDocumentProxy;
   page: number;
@@ -189,21 +151,12 @@ export function PDFPage({
   focusedId: string | null;
   onSelect: (selection: PendingSelection) => void;
   onText: (text: string) => void;
-  translation?: { layout: PDFLayout; targets: string[] };
   layout?: PDFLayout | null;
   paragraphMode?: boolean;
   onParagraph?: (paragraph: SelectedParagraph) => void;
   headingTarget?: { page: number; y: number; nonce: number } | null;
-  visionMode?: boolean;
-  onVisionStatus?: (status: VisionStatus, detail?: string) => void;
 }) {
-  // 视觉结果只作用于「译文分组」这一展示层（分组/角色/丢弃），因此没有译文时不必出图计费。
-  const visionPlan = useVisionLayout({ document, page, layout: translation?.layout ?? layout ?? null, enabled: visionMode && Boolean(translation), onStatus: onVisionStatus });
-  const translatedBlocks = useMemo(
-    () => (translation ? typesetPDFTranslation(translation.layout, translation.targets, visionPlan ?? undefined) : []),
-    [translation?.layout, translation?.targets, visionPlan],
-  );
-  const paragraphLayout = translation ? { ...translation.layout, blocks: translatedBlocks } : layout;
+  const paragraphLayout = layout;
   const container = useRef<HTMLDivElement>(null);
   const paper = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -213,8 +166,6 @@ export function PDFPage({
   const previousRender = useRef<Promise<void>>(Promise.resolve());
   const [width, setWidth] = useState(600);
   const [zoom, setZoom] = useState(1);
-  const [translationFontScale, setTranslationFontScale] = useState(1);
-  const [renderedScale, setRenderedScale] = useState(1);
   const [renderedPage, setRenderedPage] = useState<number | null>(null);
   const [rendering, setRendering] = useState(true);
   const [error, setError] = useState('');
@@ -268,7 +219,6 @@ export function PDFPage({
         const natural = pdfPage.getViewport({ scale: 1 });
         const scale = (width / natural.width) * zoom;
         const viewport = pdfPage.getViewport({ scale });
-        setRenderedScale(scale);
         const ratio = Math.min(2, window.devicePixelRatio || 1);
         const element = canvas.current;
         element.width = Math.floor(viewport.width * ratio);
@@ -367,14 +317,13 @@ export function PDFPage({
           ＋
         </button>
         <button onClick={() => setZoom(1)}>适合宽度</button>
-        {translation && <label className="pdf-translation-size">译文字号 <select aria-label="译文字号" value={translationFontScale} onChange={event => setTranslationFontScale(Number(event.target.value))}><option value={.9}>90%</option><option value={1}>100%</option><option value={1.1}>110%</option><option value={1.2}>120%</option></select></label>}
         {paragraphMode && paragraphLayout && <select aria-label="选择段落" className="paragraph-picker" value="" onChange={(event) => {
           if (!event.target.value) return;
           const index = Number(event.target.value) - 1;
           const block = paragraphLayout.blocks[index];
           if (!block) return;
           const anchor = event.currentTarget.getBoundingClientRect();
-          onParagraph?.({ text: block.text, translatedText: translation ? translatedBlocks[index]?.target : undefined, position: page, index, kind: 'pdf', top: anchor.bottom, left: anchor.left });
+          onParagraph?.({ text: block.text, position: page, index, kind: 'pdf', top: anchor.bottom, left: anchor.left });
         }}><option value="">识别 {paragraphLayout.blocks.length} 段 · 点击原文或选择</option>
           {paragraphLayout.blocks.map((block, index) => <option key={index} value={index + 1}>第 {index + 1} 段：{block.text.slice(0, 60)}</option>)}
         </select>}
@@ -387,7 +336,7 @@ export function PDFPage({
           data-rendered-page={renderedPage ?? undefined}
           data-rendering={rendering}
           ref={paper}
-          onMouseUp={translation ? undefined : select}
+          onMouseUp={select}
           onMouseMove={(event) => {
             if (!paragraphMode || !paragraphLayout) return;
             const bounds = event.currentTarget.getBoundingClientRect();
@@ -403,7 +352,7 @@ export function PDFPage({
             const index = paragraphAt(paragraphLayout, (event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
             if (index === null) return;
             const block = paragraphLayout.blocks[index]!;
-            onParagraph?.({ text: block.text, translatedText: translation ? translatedBlocks[index]?.target : undefined, position: page, index, kind: 'pdf', top: event.clientY, left: event.clientX });
+            onParagraph?.({ text: block.text, position: page, index, kind: 'pdf', top: event.clientY, left: event.clientX });
           }}
           onKeyUp={(event) => {
             if (event.key === 'Shift') select();
@@ -411,21 +360,11 @@ export function PDFPage({
         >
           <canvas ref={canvas} />
           {headingTarget?.page === page && <div className="pdf-heading-focus" aria-hidden="true" style={{ top: `${headingTarget.y * 100}%` }} />}
-          <div className="textLayer" ref={textLayer} style={translation ? { visibility: 'hidden' } : undefined} />
+          <div className="textLayer" ref={textLayer} />
           {paragraphMode && paragraphLayout && hoveredParagraph !== null && (() => {
             const block = paragraphLayout.blocks[hoveredParagraph];
             return block && <div className="pdf-paragraph-hover" aria-hidden="true" style={{ left: `${block.x / paragraphLayout.width * 100}%`, top: `${block.y / paragraphLayout.height * 100}%`, width: `${block.width / paragraphLayout.width * 100}%`, height: `${block.height / paragraphLayout.height * 100}%` }} />;
           })()}
-          {translation && <div className="pdf-translation-layer">
-            {translation.layout.ornaments?.map((block,index) => <div key={`initial-${page}-${index}`} className="pdf-translation-mask" style={{left:`${block.x/translation.layout.width*100}%`,top:`${block.y/translation.layout.height*100}%`,width:`${block.width/translation.layout.width*100}%`,height:`${block.height/translation.layout.height*100}%`}} />)}
-            {translation.layout.blocks.map((block, index) => <div key={`mask-${page}-${index}`} className="pdf-translation-mask" style={{ left: `${block.x / translation.layout.width * 100}%`, top: `${block.y / translation.layout.height * 100}%`, width: `${block.width / translation.layout.width * 100}%`, height: `${block.height / translation.layout.height * 100}%` }} />)}
-            {translatedBlocks.map((block, index) => <TranslatedBlock
-              key={`${page}-${index}`}
-              block={block} scale={renderedScale} fontScale={translationFontScale}
-              onExpand={anchor => onParagraph?.({ text: block.text, translatedText: block.target, position: page, index, kind: 'pdf', top: anchor.bottom, left: anchor.left })}
-              style={{ left: `${block.x / translation.layout.width * 100}%`, top: `${block.y / translation.layout.height * 100}%`, width: `${block.width / translation.layout.width * 100}%`, height: `${block.height / translation.layout.height * 100}%` }}
-            />)}
-          </div>}
           <div className="pdf-marks">
             {annotations
               .filter((a) => a.page === page)
@@ -450,91 +389,4 @@ export function PDFPage({
       </div>
     </div>
   );
-}
-
-export type VisionStatus = 'idle' | 'rendering' | 'asking' | 'done' | 'cached' | 'failed';
-
-/**
- * 页级版式校正（AI 视觉试点）。
- *
- * 只把整页图像交给模型，换回"哪几块属于同一段、每块什么角色、哪些块该丢弃"的结构计划；
- * **正文一个字都不来自模型**——段落文本仍逐字取自 PDF 文本层的几何块，所以翻译缓存键不受影响。
- * 任何失败（渠道不支持图片、模型输出无法校验、超时）都静默回退几何判读，绝不让版式问题挡住阅读。
- */
-function useVisionLayout({ document, page, layout, enabled, onStatus }: {
-  document: PDFDocumentProxy;
-  page: number;
-  layout: PDFLayout | null;
-  enabled: boolean;
-  onStatus?: (status: VisionStatus, detail?: string) => void;
-}): PDFTranslationPlan | null {
-  const [plan, setPlan] = useState<PDFTranslationPlan | null>(null);
-  const statusRef = useRef(onStatus);
-  statusRef.current = onStatus;
-  const layoutRef = useRef(layout);
-  layoutRef.current = layout;
-  // 依赖块指纹而不是 layout 对象：父组件每次渲染都可能换新对象，否则请求会被反复打断。
-  const signature = layout ? `${page}:${layout.blocks.length}:${layout.blocks[0]?.text.slice(0, 24) ?? ''}:${layout.blocks[layout.blocks.length - 1]?.text.slice(-16) ?? ''}` : '';
-  useEffect(() => {
-    if (!enabled || !signature) {
-      setPlan(null);
-      return;
-    }
-    let cancelled = false;
-    const report = (status: VisionStatus, detail?: string) => {
-      if (!cancelled) statusRef.current?.(status, detail);
-    };
-    void (async () => {
-      try {
-        const current = layoutRef.current;
-        if (!current || !current.blocks.length) return;
-        report('rendering');
-        const pdfPage = await document.getPage(page);
-        const viewport = pdfPage.getViewport({ scale: 2 });
-        const canvas = window.document.createElement('canvas');
-        canvas.width = Math.max(1, Math.ceil(viewport.width));
-        canvas.height = Math.max(1, Math.ceil(viewport.height));
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('无法创建版式校正画布');
-        await pdfPage.render({ canvasContext: context, viewport }).promise;
-        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((value) => resolve(value), 'image/png'));
-        canvas.width = 0;
-        canvas.height = 0;
-        if (!blob) throw new Error('无法编码页面图像');
-        const imageBase64 = await blobBase64(blob);
-        if (cancelled) return;
-        report('asking');
-        const result = await api.visionLayout({
-          page,
-          imageBase64,
-          blocks: current.blocks.map((block, index) => ({
-            index, text: block.text, x: block.x, y: block.y,
-            width: block.width, height: block.height, fontSize: block.fontSize,
-          })),
-        });
-        if (cancelled) return;
-        setPlan(result.plan);
-        report(result.cached ? 'cached' : 'done');
-      } catch (cause) {
-        if (cancelled) return;
-        setPlan(null);
-        report('failed', cause instanceof Error ? cause.message : String(cause));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [enabled, document, page, signature]);
-  return plan;
-}
-
-function blobBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('读取页面图像失败'));
-    reader.onload = () => {
-      const value = typeof reader.result === 'string' ? reader.result : '';
-      const comma = value.indexOf(',');
-      resolve(comma >= 0 ? value.slice(comma + 1) : value);
-    };
-    reader.readAsDataURL(blob);
-  });
 }

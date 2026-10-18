@@ -311,6 +311,15 @@ app.whenReady().then(async () => {
     await waitFor(`document.body.textContent.includes('分析版本')`);
     await click('1. 实验动机');
     await waitFor(`document.querySelector('[aria-label="精读步骤"] [aria-selected="true"]').textContent.includes('实验动机') && document.body.textContent.includes('实验设计动机')`);
+    // 工具栏的两个 ↗ 只负责进入整页工作区：连点两次必须仍然放大，Esc 才回到并排。
+    await click('精读五重奏 ↗');
+    await waitFor(`document.querySelector('.assistant-sidebar').classList.contains('expanded') && document.querySelector('.assistant-sidebar').getBoundingClientRect().width > window.innerWidth - 20`);
+    await click('精读五重奏 ↗');
+    await waitFor(`document.querySelector('.assistant-sidebar').classList.contains('expanded')`);
+    await click('AI 助教 ↗');
+    await waitFor(`document.querySelector('.assistant-sidebar').classList.contains('expanded') && document.querySelector('.assistant-sidebar button[aria-current="true"]').textContent.trim() === '对话'`);
+    await window.webContents.executeJavaScript(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+    await waitFor(`!document.querySelector('.assistant-sidebar').classList.contains('expanded') && document.querySelector('.assistant-sidebar').getBoundingClientRect().width < 600`);
     assert.equal(errors.length, 0, errors.join('\n'));
     fs.writeFileSync(path.join(workspace, 'parallel.png'), (await window.webContents.capturePage()).toPNG());
     await click('书库');

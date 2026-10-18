@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +26,12 @@ func TestFullTranslationIsCommittedWithImportAndRestoredWithoutModel(t *testing.
 		if len(sources) == 0 {
 			return `{"title":"Real paper title","translatedTitle":"真实论文标题","authors":[],"year":0}`, 200
 		}
-		return `{"items":[{"i":0,"t":"第一段译文"},{"i":1,"t":"第二段译文"}]}`, 200
+		items := make([]map[string]any, len(sources))
+		for index, source := range sources {
+			items[index] = map[string]any{"i": index, "t": "译文：" + source}
+		}
+		body, _ := json.Marshal(map[string]any{"items": items})
+		return string(body), 200
 	})
 	writeAIConfig(t, bundle, upstream.URL)
 	result := uploadPublication(t, bundle, "random.pdf", []byte("%PDF-1.4\nfull"), publicationMetadataHint{
@@ -35,10 +41,16 @@ func TestFullTranslationIsCommittedWithImportAndRestoredWithoutModel(t *testing.
 		t.Fatal(result)
 	}
 	key := result["document"].(map[string]any)["key"].(string)
-	res, payload := translate(t, bundle, key, `{"segments":["First paragraph.","Second paragraph."],"cachedOnly":true}`)
-	defer res.Body.Close()
-	if payload["complete"] != true || payload["cached"] != float64(2) || calls != 2 {
-		t.Fatalf("cache not restored: %v; calls=%d", payload, calls)
+	// 导入已改为 OCR-only：模型调用应包含题录识别 + OCR 段落翻译，且译文随文档入库。
+	if calls < 2 {
+		t.Fatalf("模型调用次数异常: %d", calls)
+	}
+	var translated int
+	if err := handle.QueryRow(`SELECT count(*) FROM translations WHERE document_id=?`, key).Scan(&translated); err != nil {
+		t.Fatal(err)
+	}
+	if translated == 0 {
+		t.Fatal("OCR 段落的译文没有随导入入库")
 	}
 	var pageCount int
 	if err := handle.QueryRow(`SELECT count(*) FROM document_pages WHERE document_id=?`, key).Scan(&pageCount); err != nil {

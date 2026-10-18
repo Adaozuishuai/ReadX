@@ -34,11 +34,7 @@ export function AssistantSidebar({
   paragraphQuestion,
   document,
   pdfDocument,
-  expanded,
-  onExpand,
 }: {
-  expanded?: boolean;
-  onExpand?: () => void;
   apiKey: string | null;
   onCite: (page: number) => void;
   annotations: ReturnType<typeof useAnnotations>;
@@ -53,12 +49,19 @@ export function AssistantSidebar({
   const preferences = useAIPreferences();
   const status = preferences.settings?.status;
   const [followup, setFollowup] = useState<{ text: string; nonce: number } | null>(null);
-  const [quote, setQuote] = useState('');
+  const [quote, setQuote] = useState<{ text: string; nonce: number } | null>(null);
   useEffect(() => {
     const accept = (event: Event) => {
       const detail = (event as CustomEvent<{ key: string; text: string }>)
         .detail;
-      if (detail.key === apiKey) setQuote(detail.text);
+      // 同一句原文可以反复点「问 AI」：必须带 nonce，否则 setQuote 同值被 React 跳过，
+      // ChatWorkspace 的 quote effect 不会重跑，输入框看起来"没反应"。
+      if (detail.key === apiKey) {
+        setQuote((current) => ({
+          text: detail.text,
+          nonce: (current?.nonce ?? 0) + 1,
+        }));
+      }
     };
     window.addEventListener('cbct-quote', accept);
     return () => window.removeEventListener('cbct-quote', accept);
@@ -92,7 +95,6 @@ export function AssistantSidebar({
         <span className="ml-auto pr-1 text-[10px] text-ink-faint">
           {status?.configured ? status.model || status.provider : '未配置'}
         </span>
-        <button className="assistant-expand precision-button" onClick={onExpand} aria-label={expanded ? '返回并排阅读' : '展开助教工作区'}>{expanded ? '返回原文 ↙' : '展开 ↗'}</button>
       </div>
 
       {status && !status.configured ? (

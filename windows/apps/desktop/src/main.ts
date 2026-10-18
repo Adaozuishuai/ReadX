@@ -121,7 +121,7 @@ async function startServer(): Promise<ServerHandle> {
     cwd: dataRoot ?? app.getAppPath(),
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-    env: process.env,
+    env: renderEnvironment(),
   });
 
   child.stderr?.setEncoding('utf8');
@@ -139,8 +139,34 @@ async function startServer(): Promise<ServerHandle> {
   return { info, child };
 }
 
-function waitForReady(child: ChildProcessWithoutNullStreams): Promise<ReadyInfo> {
-  const stdout = child.stdout;
+/**
+ * Go server 需要知道渲染引擎、字体与脚本在哪；Electron 自带 Node 22，直接复用它，
+ * 不要求用户另装 Node。仓库开发态下这些资源就在 windows/ 下；打包态同样按相对
+ * 目录探测，找不到时不注入，server 会给出可执行的缺失提示。
+ */
+function renderEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  const windowsRoot = path.resolve(app.getAppPath(), '..', '..');
+  const candidates = [
+    path.join(windowsRoot, 'resources', 'rendering-engine'),
+    path.join(process.resourcesPath ?? '', 'resources', 'rendering-engine'),
+    path.join(process.resourcesPath ?? '', 'rendering-engine'),
+  ];
+  const engine = candidates.find((candidate) =>
+    fs.existsSync(path.join(candidate, 'engine', 'bin', 'rpr-retain.js')),
+  );
+  if (!engine) return env;
+  const resources = path.dirname(engine);
+  env.CBCT_RENDER_ENGINE_DIR = engine;
+  env.CBCT_TRANSLATED_PDF_FONT_DIR = path.join(resources, 'fonts');
+  const script = path.join(windowsRoot, 'scripts', 'render-translated-pdf.cjs');
+  if (fs.existsSync(script)) env.CBCT_RENDER_SCRIPT = script;
+  env.CBCT_NODE_BIN = process.execPath;
+  env.CBCT_ELECTRON_AS_NODE = '1';
+  return env;
+}
+
+function waitForReady(child: ChildProcessWithoutNullStreams): Promise<ReadyInfo> {  const stdout = child.stdout;
   if (!stdout) return Promise.reject(new Error('Go server 没有 stdout 管道，无法读取就绪信息'));
 
   return new Promise<ReadyInfo>((resolve, reject) => {

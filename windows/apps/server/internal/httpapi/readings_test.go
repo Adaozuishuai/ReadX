@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -181,3 +182,37 @@ func TestReadingGetMissingIsEmptyObject(t *testing.T) {
 
 var _ = os.Getenv
 var _ = filepath.Join
+
+// 精读历史只写不读：写入时必须裁掉旧快照，否则 app_state 会随每次重跑无限增长。
+func TestPaperHistoryRetentionKeepsNewest(t *testing.T) {
+	bundle, _ := newImportServer(t)
+	post(t, bundle, http.MethodPost, "/v1/import", "")
+	server := New(bundle.cfg, bundle.handle)
+	ctx := context.Background()
+	for i := 1; i <= 5; i++ {
+		kind := fmt.Sprintf("paperHistory:method:%019d", i)
+		entry := ReadingEntry{Value: fmt.Sprintf("v%d", i), Demoted: []string{}, UpdatedAt: "2026-01-01T00:00:00Z"}
+		if err := server.saveReadingEntry(ctx, "2209.14540", kind, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := server.prunePaperHistory(ctx, "2209.14540", "method"); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := bundle.handle.QueryRow(
+		`SELECT COUNT(*) FROM app_state WHERE instr(key, 'paperHistory:method:') > 0`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != paperHistoryRetention {
+		t.Fatalf("应保留 %d 条历史，实际 %d", paperHistoryRetention, count)
+	}
+	var newest string
+	if err := bundle.handle.QueryRow(
+		`SELECT key FROM app_state WHERE instr(key, 'paperHistory:method:') > 0 ORDER BY key DESC LIMIT 1`).Scan(&newest); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(newest, ":0000000000000000005") {
+		t.Fatalf("保留的应是最新快照，实际 %s", newest)
+	}
+}

@@ -41,6 +41,29 @@ func epubFixture(t *testing.T) []byte {
 	}
 	return b.Bytes()
 }
+
+// normalizePDFHints 给测试补齐 OCR-only 导入所需的页面尺寸（缺省按 A4）。
+func normalizePDFHints(hints []publicationMetadataHint) []publicationMetadataHint {
+	out := append([]publicationMetadataHint(nil), hints...)
+	if len(out) == 0 {
+		out = append(out, publicationMetadataHint{})
+	}
+	for index := range out {
+		if len(out[index].Pages) == 0 {
+			out[index].Pages = []publicationPageHint{{Page: 1, Width: 595, Height: 842}}
+		}
+		for page := range out[index].Pages {
+			if out[index].Pages[page].Width <= 0 {
+				out[index].Pages[page].Width = 595
+			}
+			if out[index].Pages[page].Height <= 0 {
+				out[index].Pages[page].Height = 842
+			}
+		}
+	}
+	return out
+}
+
 func uploadPublication(t *testing.T, b *httptestServerBundle, name string, data []byte, hints ...publicationMetadataHint) map[string]any {
 	t.Helper()
 	var body bytes.Buffer
@@ -50,11 +73,20 @@ func uploadPublication(t *testing.T, b *httptestServerBundle, name string, data 
 		t.Fatal(err)
 	}
 	_, _ = part.Write(data)
-	if len(hints) > 0 {
-		raw, _ := json.Marshal(hints)
+	effectiveHints := hints
+	if strings.HasSuffix(strings.ToLower(name), ".pdf") {
+		// OCR-only 导入需要页面尺寸：老测试没有带，这里补成单页 A4。
+		effectiveHints = normalizePDFHints(hints)
+	}
+	if len(effectiveHints) > 0 {
+		raw, _ := json.Marshal(effectiveHints)
 		_ = form.WriteField("metadata", string(raw))
 	}
 	_ = form.Close()
+	// PDF 导入现在必须走 OCR：测试默认接一个假 PaddleOCR（未显式配置时）。
+	if strings.HasSuffix(strings.ToLower(name), ".pdf") {
+		ensureTestOCR(t, b)
+	}
 	req, _ := http.NewRequest("POST", b.frontend.URL+"/v1/import/files", &body)
 	req.Header.Set("Authorization", "Bearer "+b.token)
 	req.Header.Set("Content-Type", form.FormDataContentType())
@@ -130,11 +162,38 @@ func TestEPUBUploadReadAnnotateLocateAndDedupe(t *testing.T) {
 		t.Fatalf("EPUB is not grounded to chapters: %s %v", system, err)
 	}
 }
+
+// TestImportRequiresOCRAndAI 锁定「没有 OCR 和 AI 一律导入失败」：不再有文本层回退。
+func TestImportRequiresOCRAndAI(t *testing.T) {
+	bundle, _ := newImportServer(t)
+	server := New(bundle.cfg, bundle.handle)
+	pages := []publicationPageHint{{Page: 1, Width: 595, Height: 842, Text: "Some text."}}
+	metadata := recognizedPaperMetadata{}
+	if err := server.prepareImportTranslations(context.Background(), []byte("%PDF-1.4\nfixture"), pages, &metadata); err == nil || !strings.Contains(err.Error(), "AI") {
+		t.Fatalf("未配置 AI 时应报错: %v", err)
+	}
+	writeAIConfig(t, bundle, "http://127.0.0.1:1/v1")
+	metadata = recognizedPaperMetadata{}
+	if err := server.prepareImportTranslations(context.Background(), []byte("%PDF-1.4\nfixture"), pages, &metadata); err == nil || !strings.Contains(err.Error(), "PaddleOCR") {
+		t.Fatalf("未配置 OCR 时应报错: %v", err)
+	}
+}
+
 func TestPDFFileAuthenticationAndRectangles(t *testing.T) {
 	front, handle, cfg := newTestServer(t, nil)
 	b := &httptestServerBundle{front, cfg.Token, cfg, handle}
+	upstream := fakeUpstream(t, func(sources []string) (string, int) {
+		if len(sources) == 0 {
+			return `{"title":"Sample PDF","translatedTitle":"示例 PDF","authors":[]}`, http.StatusOK
+		}
+		return `{"items":[{"i":0,"t":"译文"}]}`, http.StatusOK
+	})
+	writeAIConfig(t, b, upstream.URL)
 	data := []byte("%PDF-1.4\nfixture")
 	result := uploadPublication(t, b, "sample.pdf", data)
+	if result["error"] != nil {
+		t.Fatalf("PDF 导入失败: %v", result)
+	}
 	key := result["document"].(map[string]any)["key"].(string)
 	res := get(t, front, "/v1/documents/"+key+"/file", "")
 	if res.StatusCode != 401 {
@@ -316,5 +375,79 @@ func TestAttachArxivPDFToExistingBookEntry(t *testing.T) {
 	var count int
 	if err := handle.QueryRow(`SELECT COUNT(*) FROM documents WHERE key=?`, key).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("existing entry was duplicated: count=%d err=%v", count, err)
+	}
+}
+
+// 并发补 PDF 时，后到的请求只能清理自己创建的孤儿文件；已经被别的行引用的
+// 文件绝不能删（否则 documents.pdf_path 会指向不存在的路径）。
+func TestRemoveUnreferencedLibraryFileKeepsReferencedTarget(t *testing.T) {
+	bundle, paths := newImportServer(t)
+	post(t, bundle, http.MethodPost, "/v1/import", "")
+	server := New(bundle.cfg, bundle.handle)
+
+	target := filepath.Join(paths.LibraryDir(), "doc-concurrent.pdf")
+	if err := os.WriteFile(target, []byte("%PDF-1.4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bundle.handle.Exec(
+		`INSERT INTO documents(id,key,pdf_path) VALUES(?,?,?)`, "doc-concurrent", "doc-concurrent", target); err != nil {
+		t.Fatal(err)
+	}
+
+	server.removeUnreferencedLibraryFile(context.Background(), target)
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("仍被 documents.pdf_path 引用的文件不得删除: %v", err)
+	}
+
+	if _, err := bundle.handle.Exec(`UPDATE documents SET pdf_path='' WHERE id=?`, "doc-concurrent"); err != nil {
+		t.Fatal(err)
+	}
+	server.removeUnreferencedLibraryFile(context.Background(), target)
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("无人引用的孤儿文件应被清理，实际 err=%v", err)
+	}
+}
+
+// 「清除 Key」必须清掉所有历史渠道：切换过服务商后旧 Key 仍留在 connections 里，
+// 用户以为删干净了，磁盘上却还是明文。
+func TestAISettingsClearKeyRemovesAllConnections(t *testing.T) {
+	bundle, paths := newImportServer(t)
+	post(t, bundle, http.MethodPost, "/v1/import", "")
+	file := paths.ConfigFile()
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"provider":"openai","baseURL":"https://third.test/v1","apiKey":"third-secret","model":"m","connections":{` +
+		`"openai|https://first.test/v1":"first-secret",` +
+		`"openai|https://second.test/v1":"second-secret",` +
+		`"openai|https://third.test/v1":"third-secret"}}`
+	if err := os.WriteFile(file, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, payload := post(t, bundle, "PUT", "/v1/ai/settings",
+		`{"provider":"openai","baseURL":"https://third.test/v1","model":"m","clearKey":true}`)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("保存设置失败: %d %v", res.StatusCode, payload)
+	}
+
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		APIKey      string            `json:"apiKey"`
+		Connections map[string]string `json:"connections"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatalf("配置不是合法 JSON: %v", err)
+	}
+	if config.APIKey != "" {
+		t.Fatalf("顶层 apiKey 未清空: %q", config.APIKey)
+	}
+	for destination, key := range config.Connections {
+		if key != "" {
+			t.Fatalf("历史渠道 %s 仍保留 Key", destination)
+		}
 	}
 }

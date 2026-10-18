@@ -11,7 +11,7 @@ export interface PDFMetadataHint {
   arxiv: string;
   firstPage: string;
   source?: string;
-  pages?: { page: number; text: string; segments: string[] }[];
+  pages?: { page: number; text: string; segments: string[]; width: number; height: number }[];
 }
 
 /** Read the PDF info and first page for AI recognition before library import. */
@@ -56,7 +56,7 @@ export async function readPDFMetadata(file: File, signal?: AbortSignal, onProgre
       const segments = layout.blocks.map((block) => block.text);
       const raw = await (await pdf.getPage(page)).getTextContent();
       const text = raw.items.map((item) => 'str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : '').join('').trim();
-      result.pages.push({ page, text, segments });
+      result.pages.push({ page, text, segments, width: layout.width, height: layout.height });
       onProgress?.(page, pdf.numPages);
     }
     return result;

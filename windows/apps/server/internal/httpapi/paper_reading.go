@@ -179,6 +179,8 @@ func (s *Server) generatePaperReading(ctx context.Context, key string, body gene
 			emit(map[string]any{"error": "保留上一版精读记录失败: " + err.Error()})
 			return
 		}
+		// 历史目前没有读取入口（界面没有回滚）：每个步骤只留最近几份，避免无限膨胀。
+		_ = s.prunePaperHistory(ctx, key, body.Kind)
 	}
 	entry := ReadingEntry{Value: "", Demoted: []string{}, Provider: cfg.ProviderName(), Model: cfg.ModelName(), ReasoningEffort: cfg.ReasoningEffort, Visuals: visuals, VisualSourceHash: visualSourceHash(source, cfg), ReaderStatus: "partial", ReaderIssues: issues}
 	visualState, _ := json.Marshal(visuals)
@@ -431,4 +433,18 @@ func parsePaperVisualPlacement(value string) (string, string, string) {
 		}
 	}
 	return "", "", ""
+}
+
+// paperHistoryRetention 每个「论文 + 步骤」保留的历史快照数。
+const paperHistoryRetention = 3
+
+// prunePaperHistory 只按 key 前缀删除更旧的快照：键尾是 UnixNano，定长数字串的
+// 字典序等于时间序，所以 ORDER BY key DESC 就是「最新在前」。
+func (s *Server) prunePaperHistory(ctx context.Context, key, kind string) error {
+	prefix := paperCachePrefix(key) + "paperHistory:" + kind + ":"
+	_, err := s.handle.ExecContext(ctx,
+		`DELETE FROM app_state WHERE key IN (
+			SELECT key FROM app_state WHERE substr(key, 1, length(?)) = ? ORDER BY key DESC LIMIT -1 OFFSET ?
+		)`, prefix, prefix, paperHistoryRetention)
+	return err
 }

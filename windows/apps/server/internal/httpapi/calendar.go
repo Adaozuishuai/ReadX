@@ -27,7 +27,7 @@ type calendarPaper struct {
 	Page      int    `json:"page,omitempty"`
 	UpdatedAt string `json:"updatedAt"`
 	// 该篇在这天是否有精读条目 / 批注，供日历上的小圆点区分"翻过"与"读过"。
-	HasReading   bool `json:"hasReading"`
+	HasReading    bool `json:"hasReading"`
 	HasAnnotation bool `json:"hasAnnotation"`
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type AISettings, type CodexModel } from '../api/client';
+import { api, type AISettings, type CodexModel, type OCRSettings } from '../api/client';
 import { effortLabel } from './AIModelControls';
 import { ProviderLogo } from './providerLogos';
 
@@ -61,10 +61,18 @@ type TestState = 'idle' | 'testing' | 'ok' | 'fail';
 export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [settings, setSettings] = useState<AISettings | null>(null);
+  const [ocrSettings, setOCRSettings] = useState<OCRSettings | null>(null);
+  const [ocrToken, setOCRToken] = useState('');
+  const [ocrBaseURL, setOCRBaseURL] = useState('');
+  const [ocrModel, setOCRModel] = useState('');
+  const [clearOCRToken, setClearOCRToken] = useState(false);
+  const [savingOCR, setSavingOCR] = useState(false);
+  const [ocrNotice, setOCRNotice] = useState('');
   const [provider, setProvider] = useState('openai');
   const [baseURL, setBaseURL] = useState('');
   const [model, setModel] = useState('');
   const [reasoningEffort, setReasoningEffort] = useState('');
+  const [translationPreparation, setTranslationPreparation] = useState<'off' | 'artifacts_only' | 'terms' | 'terms+style' | 'editorial'>('off');
   const [catalog, setCatalog] = useState<CodexModel[]>([]);
   const [key, setKey] = useState('');
   const [clearKey, setClearKey] = useState(false);
@@ -129,6 +137,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
         setBaseURL(value.baseURL);
         setModel(value.model);
         setReasoningEffort(value.reasoningEffort ?? '');
+        setTranslationPreparation(value.translationPreparation === 'editorial' ? 'editorial' : value.translationPreparation === 'terms+style' ? 'terms+style' : value.translationPreparation === 'terms' ? 'terms' : value.translationPreparation === 'artifacts_only' ? 'artifacts_only' : 'off');
         /*
          * 刻意不靠"地址对不上预设"来推断自定义。
          * 任何 OpenAI 兼容地址都是合法配置（例如网关 https://api.llm.ustc.edu.cn，
@@ -141,6 +150,14 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
       .catch((cause) => {
         if (alive) setNotice(String(cause));
       });
+    void api.ocrSettings().then((value) => {
+      if (!alive) return;
+      setOCRSettings(value);
+      setOCRBaseURL(value.baseURL);
+      setOCRModel(value.model);
+    }).catch((cause) => {
+      if (alive) setOCRNotice(cause instanceof Error ? cause.message : String(cause));
+    });
     return () => {
       alive = false;
     };
@@ -183,7 +200,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setNotice('');
     try {
-      const value = await api.saveSettings({ provider, baseURL, model, reasoningEffort, apiKey: key, clearKey });
+      const value = await api.saveSettings({ provider, baseURL, model, reasoningEffort, translationPreparation, apiKey: key, clearKey });
       setSettings(value);
       setKey('');
       setClearKey(false);
@@ -196,6 +213,29 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
     } finally {
       saveLock.current = false;
       setBusy(false);
+    }
+  };
+
+  const saveOCR = async () => {
+    if (savingOCR) return;
+    setSavingOCR(true);
+    setOCRNotice('');
+    try {
+      const value = await api.saveOCRSettings({
+        token: ocrToken,
+        clearToken: clearOCRToken,
+        baseURL: ocrBaseURL,
+        model: ocrModel,
+      });
+      setOCRSettings(value);
+      setOCRToken('');
+      setClearOCRToken(false);
+      setOCRNotice(value.configured ? 'PaddleOCR 设置已保存在本机。' : 'PaddleOCR 令牌已清除。');
+      window.dispatchEvent(new CustomEvent('cbct-ocr-settings', { detail: { settings: value } }));
+    } catch (cause) {
+      setOCRNotice(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSavingOCR(false);
     }
   };
 
@@ -242,7 +282,20 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <dialog className="app-dialog ai-settings" ref={dialog} onCancel={onClose}>
+    <dialog
+      className="app-dialog ai-settings"
+      ref={dialog}
+      onCancel={(event) => {
+        // 模型下拉展开时按 Esc 只想收起下拉：原生 dialog 的 cancel 会顺带关掉整个
+        // 设置弹窗，把还没保存的地址/Key/模型输入一起丢掉。
+        if (modelOpen) {
+          event.preventDefault();
+          setModelOpen(false);
+          return;
+        }
+        onClose();
+      }}
+    >
       <header className="ai-settings-head">
         <button type="button" className="ai-back" onClick={onClose} aria-label="关闭 AI 助手设置">
           ←
@@ -475,6 +528,8 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
 
         {provider === 'codex' && <section className="ai-card"><header>推理强度</header><label className="ai-model-controls"><select aria-label="Codex 推理强度" value={reasoningEffort} disabled={busy || loadingModels || !selectedCodexModel} onChange={(e) => setReasoningEffort(e.target.value)}><option value="">跟随模型默认{selectedCodexModel ? ` · ${effortLabel(selectedCodexModel.defaultReasoningEffort)}` : ''}</option>{reasoningEffort && !selectedCodexModel?.supportedReasoningEfforts.some((e) => e.reasoningEffort === reasoningEffort) && <option value={reasoningEffort}>{reasoningEffort} · 待校验</option>}{selectedCodexModel?.supportedReasoningEfforts.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{effortLabel(option.reasoningEffort)}</option>)}</select></label><p className="ai-hint">选项来自本机 Codex，不同模型支持的等级不同。保存后供后续提问与精读生成使用；更高等级通常需要更长时间。</p></section>}
 
+        <section className="ai-card"><header>译前准备</header><label className="ai-model-controls"><select aria-label="译前准备模式" value={translationPreparation} disabled={busy} onChange={(event) => setTranslationPreparation(event.target.value === 'editorial' ? 'editorial' : event.target.value === 'terms+style' ? 'terms+style' : event.target.value === 'terms' ? 'terms' : event.target.value === 'artifacts_only' ? 'artifacts_only' : 'off')}><option value="off">关闭（RetainPDF 默认）</option><option value="artifacts_only">仅生成术语库与风格指南，不注入</option><option value="terms">术语预扫（terms）</option><option value="terms+style">术语预扫与风格指南（terms+style）</option><option value="editorial">术语预扫、审定与风格指南（editorial）</option></select></label><p className="ai-hint">术语建议仅作为翻译提示，不写入用户术语表。Editorial 会按 RetainPDF 规则审定术语并处理人名、出版物与普通词；风格指南失败时保留通用规则继续翻译。</p></section>
+
         <section className="ai-card ai-test-card">
           <header>
             <span className="ai-card-icon" aria-hidden="true">
@@ -496,8 +551,52 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
           {test.detail ? <p className={test.state === 'ok' ? 'ai-result ok' : 'ai-result bad'}>{test.detail}</p> : null}
         </section>
 
+        <p className="ai-step">第 2 步 · 文档识别</p>
+        <section className="ai-card ai-ocr-card">
+          <header>
+            <span className="ai-card-icon" aria-hidden="true">▤</span>
+            PaddleOCR
+            <span className={`ai-chip${ocrSettings?.configured ? ' ok' : ''}`}>
+              {ocrSettings?.configured ? '已配置' : ocrSettings ? '未配置' : '读取中'}
+            </span>
+          </header>
+          <label>
+            访问令牌
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={ocrToken}
+              disabled={savingOCR}
+              onChange={(event) => { setOCRToken(event.target.value); setClearOCRToken(false); }}
+              placeholder={ocrSettings?.configured ? '已保存；留空保持不变' : '填写 PaddleOCR 访问令牌'}
+              aria-label="PaddleOCR 访问令牌"
+            />
+          </label>
+          {ocrSettings?.configured ? (
+            <label className="checkbox-label">
+              <input type="checkbox" checked={clearOCRToken} disabled={savingOCR} onChange={(event) => setClearOCRToken(event.target.checked)} />
+              清除已保存的 PaddleOCR 令牌
+            </label>
+          ) : null}
+          <label>
+            服务地址
+            <input value={ocrBaseURL} disabled={savingOCR} onChange={(event) => setOCRBaseURL(event.target.value)} aria-label="PaddleOCR 服务地址" />
+          </label>
+          <label>
+            模型
+            <input value={ocrModel} disabled={savingOCR} onChange={(event) => setOCRModel(event.target.value)} aria-label="PaddleOCR 模型" />
+          </label>
+          <p className="ai-hint">PDF 识别采用 PaddleOCR，本地上传上限 50 MB、单次最多 1000 页。令牌仅保存在本机配置中。</p>
+          <div className="ai-ocr-actions">
+            <button type="button" className="ai-save-button" disabled={savingOCR || !ocrSettings} onClick={() => void saveOCR()}>
+              {savingOCR ? '保存中…' : '保存 OCR 设置'}
+            </button>
+          </div>
+          {ocrNotice ? <p role="status" className={`ai-result${ocrSettings?.configured ? ' ok' : ''}`}>{ocrNotice}</p> : null}
+        </section>
+
         <p className="ai-hint">
-          调用时相关文档内容会发送给所选服务；Key 保存在本机 <code>app/config.json</code>，不会回传界面。
+          调用时相关文档内容会发送给所选服务；AI Key 与 PaddleOCR 令牌保存在本机 <code>app/config.json</code>，不会回传界面。
         </p>
         {notice ? <p role="status" className="ai-result">{notice}</p> : null}
       </div>

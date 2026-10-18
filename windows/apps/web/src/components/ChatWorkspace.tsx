@@ -46,7 +46,7 @@ export function AssistantMessage({ text, onCite }: { text: string; onCite: (page
 }
 
 export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQuestion, followup, preferences, onCite, onReading }: {
-  documentKey: string | null; title: string; disabled: boolean; quote: string; paragraphQuestion?: ParagraphQuestion | null;
+  documentKey: string | null; title: string; disabled: boolean; quote: { text: string; nonce: number } | null; paragraphQuestion?: ParagraphQuestion | null;
   followup?: { text: string; nonce: number } | null; preferences: AIPreferences; onCite: (page: number) => void; onReading?: () => void;
 }) {
   const chat = useChat(documentKey);
@@ -76,7 +76,7 @@ export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQu
     return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', escape); };
   }, [addOpen, contextOpen]);
   useEffect(() => { if (paragraphQuestion) { setParagraph(paragraphQuestion); input.current?.focus(); } }, [paragraphQuestion]);
-  useEffect(() => { if (quote) { setDraft(quote); setParagraph(null); input.current?.focus(); } }, [quote]);
+  useEffect(() => { if (quote) { setDraft(quote.text); setParagraph(null); input.current?.focus(); } }, [quote]);
   useEffect(() => { if (followup) { setDraft(followup.text); setParagraph(null); input.current?.focus(); } }, [followup]);
   useEffect(() => { if (nearBottom.current) scroller.current?.scrollTo({ top: scroller.current.scrollHeight }); }, [chat.turns]);
   useEffect(() => { nearBottom.current = true; scroller.current?.scrollTo({ top: scroller.current.scrollHeight }); }, [chat.active]);
@@ -119,7 +119,7 @@ export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQu
       <footer>{chat.canUndo && <button className="precision-button" disabled={chat.busy} onClick={chat.undoDelete}>撤销删除对话</button>}<strong>{preferences.settings?.status.configured ? '● 已配置' : '○ 未配置'} · {preferences.settings?.provider === 'codex' ? 'Codex' : preferences.settings?.provider ?? 'AI'}</strong></footer>
     </aside>
     <section className="codex-conversation">
-      <header className="codex-conversation-head"><button className="codex-history-toggle precision-button" onClick={() => setHistoryOpen((v) => !v)} aria-expanded={historyOpen}>历史</button><div><strong>与论文一起思考</strong><small title={title}>{title || '当前文献'}</small></div>{onReading && <button className="precision-button" onClick={onReading}>精读五重奏 ↗</button>}</header>
+      <header className="codex-conversation-head"><button className="codex-history-toggle precision-button" onClick={() => setHistoryOpen((v) => !v)} aria-expanded={historyOpen}>历史</button><div><strong>与论文一起思考</strong><small title={title}>{title || '当前文献'}</small></div>{onReading && <button className="precision-button" onClick={onReading}>精读五重奏</button>}</header>
       <div ref={scroller} className="codex-scroll" onScroll={() => { const el = scroller.current; if (el) nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
         <div className="codex-messages" aria-live="polite" aria-relevant="additions">
           {!chat.turns.length && <div className="codex-welcome"><span className="codex-emblem">◈</span><h2>从一个好问题开始</h2><div>{['作者的研究假设是什么，实验支持到什么范围？', '按输入、模块、输出解释方法，并指出关键公式。', '哪些复现参数缺失？帮我列出核对步骤。'].map((q) => <button key={q} onClick={() => { setDraft(q); input.current?.focus(); }}>{q}<span>↗</span></button>)}</div></div>}

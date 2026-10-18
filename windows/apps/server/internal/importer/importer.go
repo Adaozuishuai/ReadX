@@ -86,6 +86,19 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (Report, error) {
 		report.BackupDir = dir
 	}
 
+	// 两阶段：先把旧文件全部读进内存、算好每篇要写的行，再开短事务只做写入。
+	// 事务里做文件 I/O 会把唯一连接占住（db.Open 里 SetMaxOpenConns(1)），
+	// 导入期间所有 DB 请求——包括免鉴权的 /healthz——都会排队等连接。
+	pdfIndex := opts.Paths.LibraryPDFIndex()
+	prepared := make([]preparedDocument, 0, len(cleaned))
+	for _, entry := range cleaned {
+		row, err := prepareDocument(opts.Paths, pdfIndex, entry, overrides, states, progress, existing)
+		if err != nil {
+			return report, err
+		}
+		prepared = append(prepared, row)
+	}
+
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return report, fmt.Errorf("开启导入事务失败: %w", err)
@@ -93,50 +106,30 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (Report, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	stamp := now().Format(time.RFC3339)
-	for _, entry := range cleaned {
-		key := entry.Key()
-		status := deriveStatus(key, overrides, states, progress, exists(opts.Paths.ReadingFile(key)))
-		pdfPath := ""
-		if found, ok := opts.Paths.PDFFile(key); ok {
-			pdfPath = found
-		}
-		authors, err := json.Marshal(entry.Authors)
-		if err != nil {
-			return report, fmt.Errorf("序列化 %s 的作者失败: %w", key, err)
-		}
-		raw, err := json.Marshal(entry.Raw())
-		if err != nil {
-			return report, fmt.Errorf("序列化 %s 的原始条目失败: %w", key, err)
-		}
-		var yearValue any
-		if year := entry.ResolvedYear(); year > 0 {
-			yearValue = year
-		}
-
-		previous, existed := existing[key]
-		if existed && previous.sameMetadata(entry, string(authors), yearValue, pdfPath, string(raw), status) {
+	for _, row := range prepared {
+		if row.existed && row.previous.sameMetadata(row.entry, row.authors, row.year, row.pdfPath, row.raw, row.status) {
 			report.DocumentsUnchanged++
 		} else {
-			if err := upsertDocument(ctx, tx, key, entry, string(authors), yearValue, pdfPath, string(raw), status, stamp, existed); err != nil {
+			if err := upsertDocument(ctx, tx, row.key, row.entry, row.authors, row.year, row.pdfPath, row.raw, row.status, stamp, row.existed); err != nil {
 				return report, err
 			}
-			if existed {
+			if row.existed {
 				report.DocumentsUpdated++
 			} else {
 				report.DocumentsAdded++
 			}
 		}
 
-		imported, unchanged, cacheFound, err := importTextCache(ctx, tx, opts.Paths, key, stamp, &report)
+		imported, unchanged, err := importTextCache(ctx, tx, row.key, row.pages, row.hasText, stamp, &report)
 		if err != nil {
 			return report, err
 		}
 		report.PagesImported += imported
 		report.PagesUnchanged += unchanged
-		if cacheFound {
+		if row.hasText {
 			report.TextCaches++
 		}
-		done, err := importReading(ctx, tx, opts.Paths, key, stamp)
+		done, err := importReading(ctx, tx, row.key, row.reading, row.hasReading, stamp)
 		if err != nil {
 			return report, err
 		}
@@ -195,6 +188,77 @@ type documentRow struct {
 	pdfPath string
 	raw     string
 	status  string
+}
+
+// preparedDocument 是「第二阶段只写库」所需的全部输入：文件读取、JSON 解析、
+// 状态推导都已在 prepareDocument 里完成，事务内不再触碰文件系统。
+type preparedDocument struct {
+	entry      legacy.Entry
+	key        string
+	status     string
+	pdfPath    string
+	authors    string
+	raw        string
+	year       any
+	previous   documentRow
+	existed    bool
+	pages      []legacy.Page
+	hasText    bool
+	reading    string
+	hasReading bool
+}
+
+// prepareDocument 在事务外读齐一篇论文的旧数据并算好要写的值。
+func prepareDocument(paths legacy.Paths, pdfIndex legacy.LibraryPDFIndex, entry legacy.Entry,
+	overrides, states, progress map[string]any, existing map[string]documentRow) (preparedDocument, error) {
+
+	row := preparedDocument{entry: entry, key: entry.Key()}
+	reading, hasReading, err := readReadingFile(row.key, paths.ReadingFile(row.key))
+	if err != nil {
+		return row, err
+	}
+	row.reading, row.hasReading = reading, hasReading
+	row.status = deriveStatus(row.key, overrides, states, progress, hasReading)
+	if found, ok := pdfIndex.Match(row.key); ok {
+		row.pdfPath = found
+	}
+	authors, err := json.Marshal(entry.Authors)
+	if err != nil {
+		return row, fmt.Errorf("序列化 %s 的作者失败: %w", row.key, err)
+	}
+	row.authors = string(authors)
+	raw, err := json.Marshal(entry.Raw())
+	if err != nil {
+		return row, fmt.Errorf("序列化 %s 的原始条目失败: %w", row.key, err)
+	}
+	row.raw = string(raw)
+	if year := entry.ResolvedYear(); year > 0 {
+		row.year = year
+	}
+	row.previous, row.existed = existing[row.key]
+	pages, hasText, err := legacy.ReadTextCache(paths.TextCacheFile(row.key))
+	if err != nil {
+		return row, err
+	}
+	row.pages, row.hasText = pages, hasText
+	return row, nil
+}
+
+// readReadingFile 读旧版精读 JSON。不存在返回 ("", false, nil)；损坏必须报错，
+// 不能当作没有记录，否则导入会把用户数据「读没」。
+func readReadingFile(key, path string) (string, bool, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("读取 %s 的精读记录失败: %w", key, err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return "", false, fmt.Errorf("%s 的精读记录不是合法 JSON，导入中止（旧文件仍在，请人工处理）: %w", key, err)
+	}
+	return string(body), true, nil
 }
 
 func (d documentRow) sameMetadata(e legacy.Entry, authors string, year any, pdfPath, raw, status string) bool {
@@ -338,13 +402,10 @@ func upsertDocument(ctx context.Context, tx *sql.Tx, key string, entry legacy.En
 }
 
 // importTextCache 把旧版逐页缓存搬进 document_pages，按内容哈希跳过未变化的页。
-func importTextCache(ctx context.Context, tx *sql.Tx, paths legacy.Paths, key, stamp string, report *Report) (imported, unchanged int, cacheFound bool, err error) {
-	pages, found, err := legacy.ReadTextCache(paths.TextCacheFile(key))
-	if err != nil {
-		return 0, 0, false, err
-	}
-	if !found {
-		return 0, 0, false, nil
+// pages 由 prepareDocument 在事务外读入，这里只做 DB 读写。
+func importTextCache(ctx context.Context, tx *sql.Tx, key string, pages []legacy.Page, cacheFound bool, stamp string, report *Report) (imported, unchanged int, err error) {
+	if !cacheFound {
+		return 0, 0, nil
 	}
 	if legacy.IsOCRText(pages) {
 		report.warn("%s 的全文来自 OCR 识别，摘录校验可能失效，需人工核对", key)
@@ -358,43 +419,35 @@ func importTextCache(ctx context.Context, tx *sql.Tx, paths legacy.Paths, key, s
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO document_pages(document_id, page, text, hash, updated_at) VALUES(?,?,?,?,?)`,
 				key, page.Number, page.Text, hash, stamp); err != nil {
-				return imported, unchanged, true, fmt.Errorf("写入 %s 第 %d 页失败: %w", key, page.Number, err)
+				return imported, unchanged, fmt.Errorf("写入 %s 第 %d 页失败: %w", key, page.Number, err)
 			}
 			imported++
 		case scanErr != nil:
-			return imported, unchanged, true, fmt.Errorf("查询 %s 第 %d 页失败: %w", key, page.Number, scanErr)
+			return imported, unchanged, fmt.Errorf("查询 %s 第 %d 页失败: %w", key, page.Number, scanErr)
 		case stored == hash:
 			unchanged++
 		default:
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE document_pages SET text = ?, hash = ?, updated_at = ? WHERE document_id = ? AND page = ?`,
 				page.Text, hash, stamp, key, page.Number); err != nil {
-				return imported, unchanged, true, fmt.Errorf("更新 %s 第 %d 页失败: %w", key, page.Number, err)
+				return imported, unchanged, fmt.Errorf("更新 %s 第 %d 页失败: %w", key, page.Number, err)
 			}
 			imported++
 		}
 	}
-	return imported, unchanged, true, nil
+	return imported, unchanged, nil
 }
 
-// importReading 原样搬运 app/data/readings/<key>.json。
+// importReading 原样搬运 app/data/readings/<key>.json（内容已在事务外读过）。
 // 校验在 S2 移植完成后加到写入路径上；导入阶段不因旧数据不合新规则而丢数据。
-func importReading(ctx context.Context, tx *sql.Tx, paths legacy.Paths, key, stamp string) (bool, error) {
-	body, err := os.ReadFile(paths.ReadingFile(key))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("读取 %s 的精读记录失败: %w", key, err)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		return false, fmt.Errorf("%s 的精读记录不是合法 JSON，导入中止（旧文件仍在，请人工处理）: %w", key, err)
+func importReading(ctx context.Context, tx *sql.Tx, key, body string, found bool, stamp string) (bool, error) {
+	if !found {
+		return false, nil
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO readings(document_id, value_json, updated_at) VALUES(?,?,?)
 		 ON CONFLICT(document_id) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-		key, string(body), stamp); err != nil {
+		key, body, stamp); err != nil {
 		return false, fmt.Errorf("写入 %s 的精读记录失败: %w", key, err)
 	}
 	return true, nil

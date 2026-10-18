@@ -1,6 +1,8 @@
 # Publish Windows and macOS source plus repository entry documents.
 /*
 !/.gitignore
+!/.gitattributes
+!/.github/
 !/README.md
 !/windows/
 !/macos/

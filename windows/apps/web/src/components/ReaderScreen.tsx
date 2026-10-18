@@ -3,35 +3,18 @@ import type { DocumentSummary, PDFLayout } from '@cbct/shared';
 import { pageParagraphs, segmentParagraph, statusLabel } from '@cbct/shared';
 import { api, type EPUBSection } from '../api/client';
 import type { DocumentPhase } from '../hooks/useDocument';
-import { useTranslations } from '../hooks/useTranslations';
 import { AssistantSidebar, type AssistantTab } from './AssistantPanels';
 import type { useAnnotations } from '../hooks/useAnnotations';
-import { PDFPage, usePDF, type PendingSelection, type VisionStatus } from './PDFView';
+import { PDFPage, usePDF, type PendingSelection } from './PDFView';
 import { layoutFromPDF } from '../api/pdfLayout';
 import { ResizeHandle } from './ResizeHandle';
 import { EPUBView } from './EPUBView';
 import { ParagraphActions, type SelectedParagraph, type ParagraphQuestion } from './ParagraphActions';
+import { PrintedTranslation } from './PrintedTranslation';
+import { ExportPDFDialog } from './ExportPDFDialog';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 type ReadingMode = 'source' | 'parallel' | 'translation';
-
-/** 版式校正的状态文案：失败必须写明"已回退几何判读"，否则用户会以为段落变少是丢内容。 */
-function visionStatusLabel(state: { status: VisionStatus; detail?: string }): string {
-  switch (state.status) {
-    case 'rendering':
-      return '版式校正：渲染页面…';
-    case 'asking':
-      return '版式校正：询问模型…';
-    case 'done':
-      return '版式校正：已应用';
-    case 'cached':
-      return '版式校正：已应用（缓存）';
-    case 'failed':
-      return `版式校正失败，已回退几何判读${state.detail ? `：${state.detail}` : ''}`;
-    default:
-      return '版式校正：待命';
-  }
-}
 
 interface Props {
   detail: DocumentPhase;
@@ -44,6 +27,7 @@ interface Props {
   annotations: ReturnType<typeof useAnnotations>;
   onFocusAnnotation: (id: string, page: number | null) => void;
   focusedAnnotationId: string | null;
+  onOpenAISettings: () => void;
 }
 
 export function ReaderScreen({
@@ -57,6 +41,7 @@ export function ReaderScreen({
   annotations,
   onFocusAnnotation,
   focusedAnnotationId,
+  onOpenAISettings,
 }: Props) {
   const epub = selected?.format === 'epub';
   const documentKey = selected?.key ?? null;
@@ -65,7 +50,6 @@ export function ReaderScreen({
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 1000);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth >= 1200);
   const [tab, setTab] = useState<AssistantTab>('chat');
-  const [assistantExpanded, setAssistantExpanded] = useState(false);
   const [swapped, setSwapped] = useState(false);
   const [divider, setDivider] = useState(50);
   const [leftWidth, setLeftWidth] = useState(() => readPanelWidth('toc', 220));
@@ -103,11 +87,6 @@ export function ReaderScreen({
   const [section, setSection] = useState<EPUBSection | null>(null);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<PendingSelection | null>(null);
-  const [paragraphMode, setParagraphMode] = useState(true);
-  const [visionMode, setVisionMode] = useState(false);
-  const [visionStatus, setVisionStatus] = useState<{ status: VisionStatus; detail?: string }>({ status: 'idle' });
-  // 每次渲染都会换新函数身份；useVisionLayout 把它收在 ref 里，不会因此重启请求。
-  const handleVisionStatus = (status: VisionStatus, detail?: string) => setVisionStatus({ status, detail });
   const [selectedParagraph, setSelectedParagraph] = useState<SelectedParagraph | null>(null);
   const [paragraphQuestion, setParagraphQuestion] = useState<ParagraphQuestion | null>(null);
   const [note, setNote] = useState('');
@@ -116,8 +95,12 @@ export function ReaderScreen({
   const [saving, setSaving] = useState(false);
   const [flashing, setFlashing] = useState(false);
   const panes = useRef<HTMLDivElement>(null);
-  const translations = useTranslations(documentKey);
   const restored = useRef(false);
+  // 导出保留排版的译文 PDF（文本层 PDF 用 rpr 引擎，扫描件走 PaddleOCR）。
+  const [exportOpen, setExportOpen] = useState(false);
+  // 导入时生成了 OCR 版式数据的文档：译文窗格自动显示排版译文，不再走文本层分段。
+  const [layoutPages, setLayoutPages] = useState(0);
+  const layoutMode = layoutPages > 0;
   // 由外部出处（图谱证据 / 批注）驱动跳转时置位：不让「恢复上次阅读位置」抢走目标页。
   const citeTakeover = useRef(false);
   const [locationReady, setLocationReady] = useState(false);
@@ -145,10 +128,6 @@ export function ReaderScreen({
         : pdfLayout ? pdfLayout.blocks.map((block) => block.text) : pageParagraphs(sourceText),
     [epub, section, sourceText, pdfLayout],
   );
-  useEffect(() => {
-    if (paragraphs.length && (epub || pdfLayout))
-      void translations.translate(current, paragraphs, true);
-  }, [current, paragraphs, epub, pdfLayout, translations.translate]);
 
   useEffect(() => {
     if (!documentKey || restored.current) return;
@@ -202,8 +181,23 @@ export function ReaderScreen({
     sections.map((item) => item.href).join('|'),
   ]);
   useEffect(() => {
-    if (!cite) return;
-    // 标记「本次进入阅读页由出处跳转驱动」：恢复上次阅读位置的异步回填要让位给目标页。
+    let cancelled = false;
+    setLayoutPages(0);
+    if (!documentKey) return;
+    void api
+      .layoutStatus(documentKey)
+      .then((status) => {
+        if (!cancelled) setLayoutPages(status.available ? status.pages : 0);
+      })
+      .catch(() => {
+        if (!cancelled) setLayoutPages(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentKey]);
+  useEffect(() => {
+    if (!cite) return;    // 标记「本次进入阅读页由出处跳转驱动」：恢复上次阅读位置的异步回填要让位给目标页。
     citeTakeover.current = true;
     setMode((value) => (value === 'translation' ? 'source' : value));
     onPage(cite.page);
@@ -218,7 +212,6 @@ export function ReaderScreen({
     setPDFLayout(null);
     setSection(null);
     setError('');
-    translations.reset();
     if (!documentKey) return;
     const controller = new AbortController();
     let cancelled = false;
@@ -261,7 +254,10 @@ export function ReaderScreen({
   }, [documentKey, current, epub, pdf.document]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setPending(null); setSelectedParagraph(null); }
+      if (event.key === 'Escape') {
+        setPending(null);
+        setSelectedParagraph(null);
+      }
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
@@ -350,7 +346,7 @@ export function ReaderScreen({
             annotations={annotations.items}
             focusedId={focusedAnnotationId}
             onSelect={select}
-            paragraphMode={paragraphMode}
+            paragraphMode
             onParagraph={(paragraph) => { setPending(null); setSelectedParagraph(paragraph); }}
           />
         ) : (
@@ -366,10 +362,8 @@ export function ReaderScreen({
           onText={() => undefined}
           headingTarget={headingTarget}
           layout={pdfLayout}
-          paragraphMode={paragraphMode}
+          paragraphMode
           onParagraph={(paragraph) => { setPending(null); setSelectedParagraph(paragraph); }}
-          visionMode={visionMode}
-          onVisionStatus={handleVisionStatus}
         />
       ) : (
         <div className="translation-document">
@@ -399,40 +393,24 @@ export function ReaderScreen({
       className="publication-pane"
       style={{ flex: mode === 'parallel' ? `0 0 calc((100% - 1px) * ${(100 - divider) / 100})` : 1 }}
     >
-      {!epub && pdf.document && pdfLayout && translations.phase.kind === 'ready' && translations.activePage === current ? (
-        <PDFPage document={pdf.document} page={current} annotations={[]} focusedId={null}
-          onSelect={select} onText={() => undefined}
-          paragraphMode={paragraphMode}
-          onParagraph={(paragraph) => { setPending(null); setSelectedParagraph(paragraph); }}
-          headingTarget={headingTarget}
-          visionMode={visionMode}
-          onVisionStatus={handleVisionStatus}
-          translation={{ layout: pdfLayout, targets: translations.phase.targets }} />
-      ) : <div className="translation-document">
-        {translations.phase.kind === 'ready' && translations.activePage === current ? (
-          <>
-            <p className="mb-4 text-xs text-ink-faint">
-              AI 译文 · 复用 {translations.phase.cached} 段 / 新译{' '}
-              {translations.phase.newly} 段
-            </p>
-            {translations.phase.targets.map((text, index) => (
-              <section key={index}>
-                <p>{text}</p>
-              </section>
-            ))}
-          </>
-        ) : (
+      {layoutMode && documentKey && pdf.document ? (
+        <PrintedTranslation
+          documentKey={documentKey}
+          pdfDocument={pdf.document}
+          page={current}
+          nonce={0}
+        />
+      ) : (
+        <div className="translation-document">
           <p>
-            {translations.activePage !== null && translations.activePage !== current
-              ? '当前页尚无译文，请点击翻译。'
-              : translations.phase.kind === 'loading'
-              ? '翻译中…'
-              : translations.phase.kind === 'error'
-                ? translations.phase.message
-                : `点击“翻译${epub ? '本章' : '本页'}”开始对照阅读。`}
+            {epub
+              ? 'RetainPDF 排版译文只适用于 PDF。EPUB 请阅读原文。'
+              : pdf.error
+                ? pdf.error
+                : '这篇文档还没有 OCR 排版译文。新文档导入后会自动生成。'}
           </p>
-        )}
-      </div>}
+        </div>
+      )}
     </div>
   );
   return (
@@ -455,15 +433,6 @@ export function ReaderScreen({
           <small>{selected && statusLabel(selected.status)}</small>
         </div>
         <div className="toolbar-actions">
-          <button aria-pressed={paragraphMode} onClick={() => { setParagraphMode((value) => !value); setSelectedParagraph(null); }} title="开启后点击原文段落可翻译或提问，拖选文字仍可批注">段落识别</button>
-          <button
-            aria-pressed={visionMode}
-            onClick={() => { setVisionMode((value) => !value); setVisionStatus({ status: 'idle' }); }}
-            title="用 AI 视觉核对本页版面：只判定段落分组与图注/标题角色，正文仍来自文本层。失败自动回退几何判读。"
-          >
-            AI 版式校正
-          </button>
-          {visionMode ? <small className="text-ink-faint" role="status">{visionStatusLabel(visionStatus)}</small> : null}
           <span className="mode-pills">
             {(['source', 'parallel', 'translation'] as const).map((item) => (
               <button
@@ -482,28 +451,35 @@ export function ReaderScreen({
               </button>
             ))}
           </span>
+          {!epub && pdf.document && documentKey ? (
+            <button onClick={() => setExportOpen(true)} title="生成保留原版式的译文 PDF；扫描件可用 PaddleOCR">
+              导出译文 PDF
+            </button>
+          ) : null}
           <button
-            disabled={
-              !paragraphs.length || (!epub && !pdfLayout) || translations.phase.kind === 'loading'
-            }
+            aria-pressed={rightOpen && tab === 'chat'}
             onClick={() => {
-              if (mode === 'source') setMode('parallel');
-              void translations.translate(current, paragraphs);
+              const shouldOpen = !rightOpen || tab !== 'chat';
+              setTab('chat');
+              setRightOpen(shouldOpen);
+              if (shouldOpen && window.innerWidth < 1000) setLeftOpen(false);
             }}
           >
-            翻译{epub ? '本章' : '本页'}
+            AI 助教
           </button>
-          <button
-            aria-pressed={rightOpen}
-            onClick={() => {
-              setRightOpen((value) => !value);
-              if (window.innerWidth < 1000) setLeftOpen(false);
-            }}
-          >
-            助读
-          </button>
-          <button aria-pressed={assistantExpanded && rightOpen} onClick={() => { setRightOpen(true); setAssistantExpanded((value) => !value); setTab('chat'); }}>AI 助教 ↗</button>
-          {!epub && <button onClick={() => { setRightOpen(true); setAssistantExpanded(true); setTab('reading'); }}>精读五重奏 ↗</button>}
+          {!epub && (
+            <button
+              aria-pressed={rightOpen && tab === 'reading'}
+              onClick={() => {
+                const shouldOpen = !rightOpen || tab !== 'reading';
+                setTab('reading');
+                setRightOpen(shouldOpen);
+                if (shouldOpen && window.innerWidth < 1000) setLeftOpen(false);
+              }}
+            >
+              精读五重奏
+            </button>
+          )}
         </div>
       </header>
       <div className="reader-panels" ref={panelRoot}>
@@ -606,19 +582,17 @@ export function ReaderScreen({
             </>
           )}
         </div>
-        <ResizeHandle label="调整助读宽度" value={visibleRight}
+        <ResizeHandle label="调整 AI 助教侧栏宽度" value={visibleRight}
           onStart={() => { const start = visibleRight; return (delta) => resizeRight(start - delta); }}
           onStep={(delta) => resizeRight(visibleRight - delta)} onReset={() => { setRightWidth(440); setRightOpen(true); }} />
-        <aside className={`assistant-sidebar${assistantExpanded && rightOpen ? ' expanded' : ''}`} data-open={rightOpen} style={{ width: visibleRight, flexBasis: visibleRight }}>
+        <aside className="assistant-sidebar" data-open={rightOpen} style={{ width: visibleRight, flexBasis: visibleRight }}>
           <AssistantSidebar
             key={documentKey}
             apiKey={documentKey}
             document={selected}
             pdfDocument={pdf.document as PDFDocumentProxy | null}
             format={epub ? 'epub' : 'pdf'}
-            onCite={(position) => { setAssistantExpanded(false); onCite(position); }}
-            expanded={assistantExpanded}
-            onExpand={() => setAssistantExpanded((value) => !value)}
+            onCite={onCite}
             annotations={annotations}
             onFocusAnnotation={focus}
             tab={tab}
@@ -629,7 +603,7 @@ export function ReaderScreen({
       </div>
       {selectedParagraph && documentKey && <ParagraphActions
         key={`${current}-${selectedParagraph.index}-${selectedParagraph.text}`}
-        documentKey={documentKey} paragraph={selectedParagraph}
+        paragraph={selectedParagraph}
         onClose={() => setSelectedParagraph(null)}
         onAsk={() => {
           setRightOpen(true);
@@ -729,6 +703,15 @@ export function ReaderScreen({
           )}
         </div>
       )}
+      {exportOpen && !epub && pdf.document && documentKey ? (
+        <ExportPDFDialog
+          documentKey={documentKey}
+          document={pdf.document}
+          pageCount={pdf.document.numPages}
+          onClose={() => setExportOpen(false)}
+          onOpenAISettings={() => { setExportOpen(false); onOpenAISettings(); }}
+        />
+      ) : null}
     </div>
   );
 }

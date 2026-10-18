@@ -150,6 +150,5 @@ declare global {
 }
 
 export * from './pdfLayout.js';
-export * from './pdfTypesetting.js';
 
 export * from './outline.js';

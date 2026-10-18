@@ -27,6 +27,7 @@ const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then
 export default function App() {
   const {
     phase,
+    allDocuments,
     filters,
     setFilters,
     reload,
@@ -41,10 +42,16 @@ export default function App() {
     'all',
   );
 
+  // documents 只用于书库列表渲染（跟随搜索/筛选）；跨页跳转必须用不受筛选影响的全集，
+  // 否则搜索状态下从图谱点「原文依据」会找不到目标论文、继续用上一篇的 selectedId。
   const documents = phase.kind === 'ready' ? phase.documents.documents : [];
+  const navigationDocuments = useMemo(
+    () => (allDocuments.length ? allDocuments : documents),
+    [allDocuments, documents],
+  );
   const selected = useMemo(
-    () => documents.find((doc) => doc.id === selectedId) ?? null,
-    [documents, selectedId],
+    () => navigationDocuments.find((doc) => doc.id === selectedId) ?? null,
+    [navigationDocuments, selectedId],
   );
   const detail = useDocument(
     screen === 'reader' ? (selected?.key ?? null) : null,
@@ -91,13 +98,13 @@ export default function App() {
   // 图谱里点某条关系的原文依据：选定该文献 → 进阅读页 → 跳到那一页并闪一下出处。
   const citeInDocument = useCallback(
     (target: { key: string; page: number }) => {
-      const doc = documents.find((item) => item.key === target.key);
+      const doc = navigationDocuments.find((item) => item.key === target.key);
       if (doc) setSelectedId(doc.id);
       setPage(target.page);
       setCite((current) => ({ page: target.page, nonce: (current?.nonce ?? 0) + 1 }));
       setScreen('reader');
     },
-    [documents],
+    [navigationDocuments],
   );
 
   const focusAnnotation = useCallback(
@@ -118,19 +125,19 @@ export default function App() {
 
   const openReproduction = useCallback(
     (key: string) => {
-      const target = documents.find((doc) => doc.key === key);
+      const target = navigationDocuments.find((doc) => doc.key === key);
       if (target) setSelectedId(target.id);
       setScreen('reproduction');
     },
-    [documents],
+    [navigationDocuments],
   );
 
   const pickForReproduction = useCallback(
     (key: string) => {
-      const target = documents.find((doc) => doc.key === key);
+      const target = navigationDocuments.find((doc) => doc.key === key);
       if (target) setSelectedId(target.id);
     },
-    [documents],
+    [navigationDocuments],
   );
 
   return (
@@ -160,6 +167,7 @@ export default function App() {
       {screen === 'library' ? (
         <LibraryScreen
           phase={phase}
+          allDocuments={navigationDocuments}
           filters={filters}
           setFilters={setFilters}
           selectedId={selectedId}
@@ -196,41 +204,49 @@ export default function App() {
           annotations={annotations}
           onFocusAnnotation={focusAnnotation}
           focusedAnnotationId={focusedAnnotationId}
+          onOpenAISettings={() => setSettingsOpen(true)}
         />
       ) : screen === 'graph' ? (
         <KnowledgeGraphSection
           phase={phase}
-          documents={documents}
+          documents={navigationDocuments}
           onBack={() => setScreen('library')}
           onCite={citeInDocument}
         />
       ) : screen === 'calendar' ? (
         <ReadingCalendarSection
           phase={phase}
-          documents={documents}
+          documents={navigationDocuments}
           onBack={() => setScreen('library')}
           onOpenDocument={openDocument}
         />
       ) : (
         <ReproductionSection
           document={selected}
-          documents={documents}
+          documents={navigationDocuments}
           onPick={pickForReproduction}
           onBack={() => setScreen('library')}
         />
       )}
 
+      </Suspense>
+      {/* 对话框各自一个边界：首次加载 chunk 时只让弹窗区域回退，绝不卸载整页
+          （否则滚动位置、面板本地状态与已发出的列表请求都会重来一遍）。 */}
       {importFiles !== null && (
-        <ImportDialog
-          files={importFiles}
-          onClose={() => setImportFiles(null)}
-          onImported={reload}
-        />
+        <Suspense fallback={null}>
+          <ImportDialog
+            files={importFiles}
+            onClose={() => setImportFiles(null)}
+            onImported={reload}
+            onOpenDocument={openDocument}
+          />
+        </Suspense>
       )}
       {settingsOpen && (
-        <AISettingsDialog onClose={() => setSettingsOpen(false)} />
+        <Suspense fallback={null}>
+          <AISettingsDialog onClose={() => setSettingsOpen(false)} />
+        </Suspense>
       )}
-      </Suspense>
       {phase.kind === 'error' ? (
         <footer className="shrink-0 border-t border-bad/30 bg-bad/5 px-5 py-2">
           <p className="text-[12px] leading-relaxed text-bad">

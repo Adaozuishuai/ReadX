@@ -280,7 +280,7 @@ func TestPDFStreamingAndRange(t *testing.T) {
 	bundle, _ := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
 
-	req, _ := http.NewRequest(http.MethodGet, bundle.frontend.URL+"/v1/documents/2209.14540/pdf", nil)
+	req, _ := http.NewRequest(http.MethodGet, bundle.frontend.URL+"/v1/documents/2209.14540/file", nil)
 	req.Header.Set("Authorization", "Bearer "+bundle.token)
 	req.Header.Set("Range", "bytes=0-7")
 	res, err := bundle.frontend.Client().Do(req)
@@ -298,7 +298,7 @@ func TestPDFStreamingAndRange(t *testing.T) {
 	if ct := res.Header.Get("Content-Type"); ct != "application/pdf" {
 		t.Fatalf("Content-Type 应为 application/pdf，实际 %q", ct)
 	}
-	if res := get(t, bundle.frontend, "/v1/documents/intratomo-2021/pdf", bundle.token); res.StatusCode != http.StatusNotFound {
+	if res := get(t, bundle.frontend, "/v1/documents/intratomo-2021/file", bundle.token); res.StatusCode != http.StatusNotFound {
 		t.Fatalf("没有本地 PDF 应 404，实际 %d", res.StatusCode)
 	}
 }
@@ -340,5 +340,17 @@ func TestUnmatchedAPIPathIsJSONNotFoundEvenWithStatic(t *testing.T) {
 		if !strings.Contains(string(body), "error") {
 			t.Fatalf("%s 应返回 JSON 错误体：%s", path, body)
 		}
+	}
+}
+
+// 页列表要和 /pages/{page}、/documents/{key} 一样区分「文档不存在」与「还没抽页」。
+func TestPageListRequiresExistingDocument(t *testing.T) {
+	bundle, _ := newImportServer(t)
+	post(t, bundle, http.MethodPost, "/v1/import", "")
+	if res := get(t, bundle.frontend, "/v1/documents/2209.14540/pages", bundle.token); res.StatusCode != http.StatusOK {
+		t.Fatalf("已存在的文档应 200，实际 %d", res.StatusCode)
+	}
+	if res := get(t, bundle.frontend, "/v1/documents/does-not-exist/pages", bundle.token); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("不存在的文档应 404，实际 %d", res.StatusCode)
 	}
 }

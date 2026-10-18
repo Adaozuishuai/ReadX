@@ -63,6 +63,13 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
     if (!readCache()) void load();
   }, []);
 
+  useEffect(() => () => {
+    // 收起侧栏会卸载本组件：必须中止仍在跑的下载/导入，否则它会继续跑满服务端允许的
+    // 30 分钟，并在卸载后 setState，用户也再找不到「取消导入」按钮。
+    controller.current?.abort();
+    controller.current = null;
+  }, []);
+
   const visible = useMemo(() => {
     const titles = new Set(documents.map((doc) => normalizedTitle(doc.title)));
     const dois = new Set(documents.map((doc) => doc.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//, '')));
@@ -71,8 +78,8 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
 
   /**
    * 推荐卡片的导入必须和「选择本地文件 / 从链接导入」走同一条管线：
-   * 先把全文下载到渲染进程、用 pdf.js 抽出版式与段落，再上传给服务端做 AI 元数据识别与全文翻译。
-   * 若图省事直接调 /v1/import/url 一步入库，阅读页只会读到空译文——那里按 cachedOnly 取缓存。
+   * 先把全文下载到渲染进程，再上传给服务端使用 PaddleOCR 版面、AI 元数据识别与全文翻译。
+   * 服务端直接导入链接也走同一条 OCR 与翻译链；此处保留两阶段流程以支持下载进度和取消。
    */
   const importPaper = async (paper: DailyRecommendation) => {
     if (!paper.pdfUrl) return;
