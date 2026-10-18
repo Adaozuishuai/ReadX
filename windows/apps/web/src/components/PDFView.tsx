@@ -28,7 +28,7 @@ export function textFromPDF(content: TextContent): string {
     .trim();
 }
 
-export function usePDF(key: string | null) {
+export function usePDF(key: string | null, translated = false) {
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [outline, setOutline] = useState<PDFOutline[]>([]);
   const [error, setError] = useState('');
@@ -40,9 +40,12 @@ export function usePDF(key: string | null) {
     setDocument(null);
     setOutline([]);
     setError('');
+    setIndexing('');
     void (async () => {
       try {
-        const data = await api.file(key, controller.signal);
+        const data = translated
+          ? await api.translatedFile(key, controller.signal)
+          : await api.file(key, controller.signal);
         if (controller.signal.aborted) return;
         task = getDocument({
           data,
@@ -89,6 +92,10 @@ export function usePDF(key: string | null) {
         };
         if (tree) await visit(tree, 0);
         if (!controller.signal.aborted) setOutline(entries);
+        if (translated) {
+          if (!controller.signal.aborted) setIndexing('');
+          return;
+        }
         const cached = new Set(
           (await api.pages(key, controller.signal)).pages.map(
             (item) => item.page,
@@ -113,7 +120,7 @@ export function usePDF(key: string | null) {
         if (!controller.signal.aborted)
           setIndexing(
             empty
-              ? `${empty} 页没有文本层，扫描页暂不支持 OCR`
+              ? `${empty} 页是扫描页；OCR 与译文由 RetainPDF 处理，可切换到译文查看`
               : '',
           );
       } catch (cause) {
@@ -129,7 +136,7 @@ export function usePDF(key: string | null) {
       controller.abort();
       void task?.destroy();
     };
-  }, [key]);
+  }, [key, translated]);
   return { document, outline, error, indexing };
 }
 

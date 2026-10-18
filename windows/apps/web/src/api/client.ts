@@ -11,7 +11,6 @@ import type {
   WireStatus,
 } from '@cbct/shared';
 import { isApiFailure } from '@cbct/shared';
-import type { PDFMetadataHint } from './pdfMetadata';
 
 /**
  * API 客户端。
@@ -276,14 +275,6 @@ export interface AnnotationListResponse {
   key: string;
   annotations: Annotation[];
   total: number;
-}
-
-export interface TranslatedPDFPageInput {
-  page: number;
-  width: number;
-  height: number;
-  /** 仅作旧客户端兼容；服务端只按 OCR 结果渲染，不再接受文本层块。 */
-  blocks: unknown[];
 }
 
 export interface TranslatedPDFResponse {
@@ -558,7 +549,16 @@ export interface ImportStreamEvent {
   heartbeat?: boolean;
 }
 
-function uploadPublications(files: File[], signal?: AbortSignal, metadata?: PDFMetadataHint[], onProgress?: (event: ImportStreamEvent) => void): Promise<{ results: ImportedDocument[] }> {
+export interface ImportMetadataHint {
+  title: string;
+  author: string;
+  doi: string;
+  arxiv: string;
+  firstPage: string;
+  source?: string;
+}
+
+function uploadPublications(files: File[], signal?: AbortSignal, metadata?: ImportMetadataHint[], onProgress?: (event: ImportStreamEvent) => void): Promise<{ results: ImportedDocument[] }> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
     const { apiBase, token } = bootstrap();
@@ -809,6 +809,13 @@ export const api = {
         { signal },
       )
     ).arrayBuffer(),
+  translatedFile: async (key: string, signal?: AbortSignal) =>
+    (
+      await authenticatedFetch(
+        `/v1/documents/${encodeURIComponent(key)}/translated-pdf`,
+        { signal },
+      )
+    ).arrayBuffer(),
   section: (key: string, index: number, signal?: AbortSignal) =>
     request<EPUBSection>(
       `/v1/documents/${encodeURIComponent(key)}/sections/${index}`,
@@ -900,7 +907,7 @@ export const api = {
       signal,
     }),
   /** 生成保留排版的译文 PDF：服务端统一走 OCR → 翻译 → rpr 排版。 */
-  translatedPDF: (key: string, body: { pages: TranslatedPDFPageInput[]; ocr?: boolean }, signal?: AbortSignal) =>
+  translatedPDF: (key: string, body: { pageCount: number }, signal?: AbortSignal) =>
     request<TranslatedPDFResponse>(`/v1/documents/${encodeURIComponent(key)}/translated-pdf`, {
       method: 'POST',
       body,
@@ -928,45 +935,6 @@ export const api = {
     }
     return response.blob();
   },
-  /**
-   * 单页排版译文：服务端先用 PaddleOCR 识别段落，再翻译并由 rpr 引擎按原页坐标回填，
-   * 返回只含这一页的 PDF（原图 + 译文叠加层）。扫描件没有文本层时用它。
-   */
-  translatedPage: async (
-    key: string,
-    page: number,
-    body: { width: number; height: number; force?: boolean },
-    signal?: AbortSignal,
-  ): Promise<{ data: ArrayBuffer; extracted: boolean }> => {
-    const { apiBase, token } = bootstrap();
-    const headers = new Headers({ 'Content-Type': 'application/json' });
-    if (token) headers.set('Authorization', `Bearer ${token}`);
-    const response = await fetch(
-      `${apiBase}/v1/documents/${encodeURIComponent(key)}/pages/${page}/translated-page`,
-      { method: 'POST', headers, body: JSON.stringify(body), credentials: 'omit', signal },
-    );
-    if (!response.ok) {
-      const text = await response.text();
-      let message = `HTTP ${response.status}`;
-      try {
-        const parsed = JSON.parse(text) as ApiFailure;
-        if (isApiFailure(parsed)) message = parsed.error;
-      } catch {
-        /* 非 JSON 错误体：保留兜底文案 */
-      }
-      throw new ApiError(message, response.status);
-    }
-    return {
-      data: await response.arrayBuffer(),
-      extracted: response.headers.get('X-CBCT-Page-Extracted') === 'true',
-    };
-  },
-  /** 这篇文档是否带导入时生成的 OCR 版式数据（阅读器据此自动显示排版译文）。 */
-  layoutStatus: (key: string, signal?: AbortSignal) =>
-    request<{ available: boolean; pages: number }>(
-      `/v1/documents/${encodeURIComponent(key)}/layout`,
-      { signal },
-    ),
   /** 这篇文档最近一次导入任务（OCR → 翻译 → 渲染），供任务进度面板轮询。 */
   documentJob: (key: string, signal?: AbortSignal) =>
     request<{ available: boolean; job?: DocumentJob }>(

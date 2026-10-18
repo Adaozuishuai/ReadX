@@ -10,7 +10,6 @@ import { layoutFromPDF } from '../api/pdfLayout';
 import { ResizeHandle } from './ResizeHandle';
 import { EPUBView } from './EPUBView';
 import { ParagraphActions, type SelectedParagraph, type ParagraphQuestion } from './ParagraphActions';
-import { PrintedTranslation } from './PrintedTranslation';
 import { ExportPDFDialog } from './ExportPDFDialog';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
@@ -46,6 +45,7 @@ export function ReaderScreen({
   const epub = selected?.format === 'epub';
   const documentKey = selected?.key ?? null;
   const pdf = usePDF(!epub ? documentKey : null);
+  const translatedPDF = usePDF(!epub ? documentKey : null, true);
   const [mode, setMode] = useState<ReadingMode>('source');
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 1000);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth >= 1200);
@@ -63,6 +63,12 @@ export function ReaderScreen({
     observer.observe(panelRoot.current);
     return () => observer.disconnect();
   }, []);
+  useEffect(() => {
+    setMode('source');
+  }, [documentKey]);
+  useEffect(() => {
+    if (!epub && translatedPDF.document) setMode('translation');
+  }, [documentKey, epub, translatedPDF.document]);
   useEffect(() => {
     try { localStorage.setItem('cbct.reader.panels', JSON.stringify({ toc: leftWidth, assistant: rightWidth })); } catch { /* Storage may be disabled. */ }
   }, [leftWidth, rightWidth]);
@@ -96,11 +102,8 @@ export function ReaderScreen({
   const [flashing, setFlashing] = useState(false);
   const panes = useRef<HTMLDivElement>(null);
   const restored = useRef(false);
-  // 导出保留排版的译文 PDF（文本层 PDF 用 rpr 引擎，扫描件走 PaddleOCR）。
+  // 通过 RetainPDF 重新处理并获取整本译文 PDF。
   const [exportOpen, setExportOpen] = useState(false);
-  // 导入时生成了 OCR 版式数据的文档：译文窗格自动显示排版译文，不再走文本层分段。
-  const [layoutPages, setLayoutPages] = useState(0);
-  const layoutMode = layoutPages > 0;
   // 由外部出处（图谱证据 / 批注）驱动跳转时置位：不让「恢复上次阅读位置」抢走目标页。
   const citeTakeover = useRef(false);
   const [locationReady, setLocationReady] = useState(false);
@@ -180,22 +183,6 @@ export function ReaderScreen({
     locationReady,
     sections.map((item) => item.href).join('|'),
   ]);
-  useEffect(() => {
-    let cancelled = false;
-    setLayoutPages(0);
-    if (!documentKey) return;
-    void api
-      .layoutStatus(documentKey)
-      .then((status) => {
-        if (!cancelled) setLayoutPages(status.available ? status.pages : 0);
-      })
-      .catch(() => {
-        if (!cancelled) setLayoutPages(0);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [documentKey]);
   useEffect(() => {
     if (!cite) return;    // 标记「本次进入阅读页由出处跳转驱动」：恢复上次阅读位置的异步回填要让位给目标页。
     citeTakeover.current = true;
@@ -393,22 +380,22 @@ export function ReaderScreen({
       className="publication-pane"
       style={{ flex: mode === 'parallel' ? `0 0 calc((100% - 1px) * ${(100 - divider) / 100})` : 1 }}
     >
-      {layoutMode && documentKey && pdf.document ? (
-        <PrintedTranslation
-          documentKey={documentKey}
-          pdfDocument={pdf.document}
-          page={current}
-          nonce={0}
+      {epub ? (
+        <div className="translation-document">
+          <p>RetainPDF 排版译文只适用于 PDF。EPUB 请阅读原文。</p>
+        </div>
+      ) : translatedPDF.document ? (
+        <PDFPage
+          document={translatedPDF.document}
+          page={Math.min(current, translatedPDF.document.numPages)}
+          annotations={annotations.items}
+          focusedId={focusedAnnotationId}
+          onSelect={select}
+          onText={() => undefined}
         />
       ) : (
         <div className="translation-document">
-          <p>
-            {epub
-              ? 'RetainPDF 排版译文只适用于 PDF。EPUB 请阅读原文。'
-              : pdf.error
-                ? pdf.error
-                : '这篇文档还没有 OCR 排版译文。新文档导入后会自动生成。'}
-          </p>
+          <p>{translatedPDF.error || '正在加载 RetainPDF 译文 PDF…'}</p>
         </div>
       )}
     </div>
@@ -452,7 +439,7 @@ export function ReaderScreen({
             ))}
           </span>
           {!epub && pdf.document && documentKey ? (
-            <button onClick={() => setExportOpen(true)} title="生成保留原版式的译文 PDF；扫描件可用 PaddleOCR">
+          <button onClick={() => setExportOpen(true)} title="交给 RetainPDF 重新生成整本译文 PDF">
               导出译文 PDF
             </button>
           ) : null}
@@ -706,7 +693,6 @@ export function ReaderScreen({
       {exportOpen && !epub && pdf.document && documentKey ? (
         <ExportPDFDialog
           documentKey={documentKey}
-          document={pdf.document}
           pageCount={pdf.document.numPages}
           onClose={() => setExportOpen(false)}
           onOpenAISettings={() => { setExportOpen(false); onOpenAISettings(); }}

@@ -7,12 +7,9 @@ import {
 import { useImportProgress } from './ImportProgressPanel';
 import { UploadShotStage, type ActiveImport } from './UploadShotStage';
 import { DocumentJobDialog } from './DocumentJobDialog';
-const readPDFMetadata: typeof import('../api/pdfMetadata').readPDFMetadata = async (...args) =>
-  (await import('../api/pdfMetadata')).readPDFMetadata(...args);
 
-const MAX_PDF_BYTES = 50 * 1048576;
+const MAX_PDF_BYTES = 512 * 1048576;
 const MAX_EPUB_BYTES = 100 * 1048576;
-const MAX_OCR_PAGES = 1000;
 
 export function ImportDialog({
   files,
@@ -40,28 +37,11 @@ export function ImportDialog({
   const [jobFile, setJobFile] = useState<File | null>(null);
   // 来源跟随具体文件对象，避免同名文件互相覆盖题录来源。
   const sources = useRef(new WeakMap<File, string>());
-  // 配置了 PaddleOCR 时，没有文本层的扫描件也能导入：服务端会先 OCR 出首页文本再识别题录。
-  const ocrReady = useRef(false);
-  const aiReady = useRef(false);
   const activity = useImportProgress();
   useEffect(() => {
     dialog.current?.showModal();
     return () => controller.current?.abort();
   }, []);
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all([api.renderStatus(), api.aiStatus()])
-      .then(([status, ai]) => {
-        if (cancelled) return;
-        ocrReady.current = status.available && status.ocrConfigured;
-        aiReady.current = Boolean(ai.configured);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   // ref 同步加锁，阻止 React 更新 busy 前的重复提交。
   const startRequest = () => {
     if (controller.current) return null;
@@ -87,29 +67,17 @@ export function ImportDialog({
     try {
       const isPDF = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
       if (file.size > (isPDF ? MAX_PDF_BYTES : MAX_EPUB_BYTES)) {
-        throw new Error(isPDF ? 'PaddleOCR 本地 PDF 上传上限为 50 MB' : '单个 EPUB 文件不超过 100 MB');
+        throw new Error(isPDF ? 'PDF 文件不能超过 RetainPDF 默认的 512 MB 上传上限' : '单个 EPUB 文件不超过 100 MB');
       }
       const fileIndex = 1;
       const files = 1;
-      activity.update({ stage: 'parse', message: '正在打开文件、读取首页和文档信息', name: file.name, file: fileIndex, files, completed: 0, total: 0 });
-      const hint = await readPDFMetadata(file, request.signal, (page, total) => activity.update({ stage: 'parse', message: `正在识别段落和栏位，已解析 ${page}/${total} 页`, name: file.name, file: fileIndex, files, completed: page, total }));
-      request.signal.throwIfAborted();
-      if (isPDF && (hint.pages?.length ?? 0) > MAX_OCR_PAGES) {
-        throw new Error(`PaddleOCR 单次最多处理 ${MAX_OCR_PAGES} 页，请拆分 PDF 后导入。`);
-      }
+      activity.update({ stage: 'upload', message: '正在准备上传，由 RetainPDF 处理论文', name: file.name, file: fileIndex, files, completed: 0, total: 0 });
+      const hint = { title: '', author: '', doi: '', arxiv: '', firstPage: '' };
       const source = sources.current.get(file);
       if (source) {
         hint.source = source;
       }
-      if (isPDF) {
-        if (!ocrReady.current)
-          throw new Error(`${file.name}：PDF 导入需要 PaddleOCR，请先在“AI 助手设置”里配置访问令牌。`);
-        if (!aiReady.current)
-          throw new Error(`${file.name}：PDF 导入需要 AI 助手，请先在 AI 设置里配置模型。`);
-      }
-      activity.update({ stage: 'upload', message: '准备上传论文与排版数据到本地服务', completed: 0, total: 0 });
-      // PDF 与 EPUB 都使用统一的文档任务面板；PDF 的任务由 OCR/翻译/渲染阶段驱动，
-      // EPUB 的任务记录导入与章节解析状态。
+      // PDF 的 OCR、段落整理、翻译和排版全部由 RetainPDF 完成；EPUB 保留章节导入流程。
       setJobFile(file);
       const result = await api.upload([file], request.signal, [hint], activity.receive);
       const imported = result.results[0];
@@ -117,7 +85,7 @@ export function ImportDialog({
       setActive({ file, result: imported, cancelled: false });
       setResults((current) => [...current, ...result.results]);
       const failed = result.results.filter(item => item.error).length;
-      activity.update({ stage: 'complete', message: failed ? '导入失败，原因见下方' : '论文信息、原文和译文已保存到书库', completed: 1, total: 1 });
+      activity.update({ stage: 'complete', message: failed ? '导入失败，原因见下方' : 'RetainPDF 译文已保存到书库', completed: 1, total: 1 });
     } catch (cause) {
       const cancelled = request.signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError');
       const message = cancelled ? '已取消' : String(cause);
@@ -223,7 +191,7 @@ export function ImportDialog({
         onMake={(file) => void upload(file)}
       />
       <p className="text-xs text-ink-faint">
-        PDF 不超过 50 MB、1000 页；EPUB 不超过 100 MB。相同文件自动去重，投进篮筐开始处理。
+        PDF 最大 512 MB（RetainPDF 服务会继续校验 OCR 限制）；EPUB 最大 100 MB。相同文件自动去重，投进篮筐开始处理。
       </p>
       <label className="import-link-field">
         链接、arXiv 编号、DOI 或标题
@@ -245,7 +213,7 @@ export function ImportDialog({
           按标题 / DOI 查找
         </button>
       </div>
-      <details className="import-data-note"><summary>题录识别、翻译与数据说明</summary><p>PDF 导入使用 PaddleOCR 识别段落，再逐页翻译并把每页块坐标保存到本机；论文首页文本会发送给所选 AI 模型识别题录。OCR 令牌和模型在 AI 助手设置中管理。</p></details>
+      <details className="import-data-note"><summary>题录识别、翻译与数据说明</summary><p>PDF 导入后由 RetainPDF 完成 OCR、段落整理、翻译和 PDF 排版。ReadX 保存并展示 RetainPDF 返回的成品；OCR 与翻译模型配置在 AI 助手设置中管理。</p></details>
       {error && (
         <p role="alert" className="text-bad">
           {error}

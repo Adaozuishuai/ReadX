@@ -226,7 +226,7 @@ export function DocumentJobDialog({
       : `页面排版 ${processedPages} / ${renderTotal || '—'} 页`
     : pending
       ? document.format === 'epub' ? '正在上传文件，任务创建后显示章节导入状态' : '正在上传文件，任务创建后显示 OCR 进度'
-      : document.format === 'epub' ? '导入后这里会显示 EPUB 章节导入状态。' : '导入后这里会显示 OCR、翻译与渲染进度。';
+      : document.format === 'epub' ? '导入后这里会显示 EPUB 章节导入状态。' : '导入后这里会显示 RetainPDF 的 OCR、翻译与渲染进度。';
   const openDisabled = importing || !effectiveKey || job?.status === 'failed' || job?.status === 'cancelled';
 
   return (
@@ -331,8 +331,8 @@ export function DocumentJobDialog({
               <button type="button" className="job-live" onClick={() => { if (!openDisabled) onOpenReader(); }} disabled={openDisabled}>
                 <span aria-hidden="true">◉</span>
                 <div>
-                  <strong>{document.format === 'epub' ? '在阅读器中打开 →' : '查看实时译文 →'}</strong>
-                  <small>{importing ? '导入完成后可打开' : document.format === 'epub' ? '保留 EPUB 原章节结构' : '在原 PDF 上逐页显示'}</small>
+                  <strong>{document.format === 'epub' ? '在阅读器中打开 →' : '查看译文 PDF →'}</strong>
+                  <small>{importing ? 'RetainPDF 处理完成后可打开' : document.format === 'epub' ? '保留 EPUB 原章节结构' : '直接阅读 RetainPDF 生成的完整译文 PDF'}</small>
                 </div>
               </button>
 
@@ -437,11 +437,11 @@ export function DocumentJobDialog({
                 </button>
                 {document.format !== 'epub' ? <button type="button" onClick={downloadTranslated} disabled={openDisabled}>
                   <span aria-hidden="true">Aa</span>
-                  <div><strong>译文 PDF</strong><small>按原版式排版的译文，需先在阅读器生成</small></div>
+                  <div><strong>译文 PDF</strong><small>RetainPDF 处理完成后提供</small></div>
                   <span aria-hidden="true">⇩</span>
                 </button> : null}
               </section>
-              {document.format !== 'epub' ? <p className="job-action-note">译文 PDF 由内置 rpr 引擎生成；扫描件需在导出对话框配置 PaddleOCR。</p> : <p className="job-action-note">EPUB 保留原章节结构，在阅读器中打开。</p>}
+              {document.format !== 'epub' ? <p className="job-action-note">PDF 的 OCR、翻译与排版由 RetainPDF 完成，ReadX 保存并展示成品。</p> : <p className="job-action-note">EPUB 保留原章节结构，在阅读器中打开。</p>}
             </div>
           ) : null}
 

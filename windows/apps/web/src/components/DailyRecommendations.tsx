@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
 import { api, type DailyRecommendation } from '../api/client';
-// 与导入对话框一样按需加载：pdf.js 的元数据解析不该进首屏包。
-const readPDFMetadata: typeof import('../api/pdfMetadata').readPDFMetadata = async (...args) =>
-  (await import('../api/pdfMetadata')).readPDFMetadata(...args);
 
 const CACHE_KEY = 'cbct-v2-daily-recommendations';
 type DailyCache = { day: string; fetchedAt: string; papers: DailyRecommendation[] };
@@ -76,11 +73,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
     return papers.filter((paper) => !titles.has(normalizedTitle(paper.title)) && (!paper.doi || !dois.has(paper.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//, '')))).slice(0, 5);
   }, [documents, papers]);
 
-  /**
-   * 推荐卡片的导入必须和「选择本地文件 / 从链接导入」走同一条管线：
-   * 先把全文下载到渲染进程，再上传给服务端使用 PaddleOCR 版面、AI 元数据识别与全文翻译。
-   * 服务端直接导入链接也走同一条 OCR 与翻译链；此处保留两阶段流程以支持下载进度和取消。
-   */
+  /** 推荐卡片的 PDF 下载后交给 RetainPDF 完整处理。 */
   const importPaper = async (paper: DailyRecommendation) => {
     if (!paper.pdfUrl) return;
     // 同一个按钮兼任取消：一次导入要跑完识别＋全文翻译，必须能中途停下。
@@ -97,14 +90,15 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       const downloaded = await api.downloadPublication(paper.pdfUrl, paper.title, current.signal, (received, total) => {
         setProgress(total > 0 ? `正在下载：${Math.round((received / total) * 100)}%` : `正在下载：${Math.round(received / 1048576)} MB`);
       });
-      setProgress('正在解析段落与栏位…');
-      const hint = await readPDFMetadata(downloaded.file, current.signal, (page, total) => setProgress(`正在解析段落与栏位：${page}/${total} 页`));
-      // 卡片已知的题录作为识别种子传下去，避免模型把标题写歪；未知字段仍由模型判定。
-      hint.title = paper.title;
-      hint.doi = paper.doi;
-      hint.author = paper.authors.join(', ');
-      hint.source = downloaded.source;
-      if (!hint.firstPage.trim()) throw new Error('下载文件没有可读取的 PDF 首页，可能是扫描件或登录页，暂无法识别与翻译。');
+      setProgress('正在交给 RetainPDF 处理全文…');
+      const hint = {
+        title: paper.title,
+        author: paper.authors.join(', '),
+        doi: paper.doi,
+        arxiv: paper.arxiv ?? '',
+        firstPage: '',
+        source: downloaded.source,
+      };
       const result = await api.upload([downloaded.file], current.signal, [hint], (event) => {
         if (event.progress?.message) setProgress(event.progress.message);
       });
@@ -114,7 +108,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       setProgress(
         imported?.existing
           ? '论文已在书库中，译文已就绪'
-          : `已导入书库：中文题名与全文翻译已保存${imported?.warning ? `（${imported.warning}）` : ''}`,
+          : `已导入书库：RetainPDF 译文已保存${imported?.warning ? `（${imported.warning}）` : ''}`,
       );
       onReload();
     } catch (cause) {

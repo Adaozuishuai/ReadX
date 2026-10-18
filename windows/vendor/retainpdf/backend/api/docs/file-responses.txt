@@ -1,0 +1,1408 @@
+# 文件出口的返回快照。由 src/api_tests/file_responses.rs 生成，不要手改：
+#   UPDATE_FILE_RESPONSES=1 cargo test -p retainpdf-api --lib file_responses
+# PDF / zip 只记类型；ETag、Last-Modified、Content-Length 不记；content-range 的总长记成 *。
+
+## 译文 PDF
+GET /api/v1/jobs/files-contract-job/pdf
+  status: 200
+  content-type: application/pdf
+  content-disposition: inline; filename="zh______translated.pdf"; filename*=UTF-8''zh_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_translated.pdf
+  accept-ranges: bytes
+  | pdf
+
+## 译文 PDF，断点续传
+GET /api/v1/jobs/files-contract-job/pdf  [range: bytes=0-3]
+  status: 206
+  content-type: application/pdf
+  content-disposition: inline; filename="zh______translated.pdf"; filename*=UTF-8''zh_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_translated.pdf
+  accept-ranges: bytes
+  content-range: bytes 0-3/*
+  | pdf
+
+## 对照 PDF
+GET /api/v1/jobs/files-contract-job/pdf/side-by-side
+  status: 200
+  content-type: application/pdf
+  content-disposition: attachment; filename="dual______side-by-side.pdf"; filename*=UTF-8''dual_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_side-by-side.pdf
+  accept-ranges: bytes
+  | pdf
+
+## Word（默认清晰度）
+GET /api/v1/jobs/files-contract-job/docx
+  status: 200
+  content-type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  content-disposition: attachment; filename="zh______layout.docx"; filename*=UTF-8''zh_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_layout.docx
+  accept-ranges: bytes
+  | 17 字节，sha256 b1797ec64dd37cdb
+
+## Word（dpi=150）
+GET /api/v1/jobs/files-contract-job/docx?dpi=150
+  status: 200
+  content-type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  content-disposition: attachment; filename="zh______layout.docx"; filename*=UTF-8''zh_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_layout.docx
+  accept-ranges: bytes
+  | 17 字节，sha256 d8a707e3a84a55dc
+
+## 任务封面
+GET /api/v1/jobs/files-contract-job/cover
+  status: 200
+  content-type: image/jpeg
+  cache-control: private, max-age=86400
+  accept-ranges: bytes
+  | 14 字节，sha256 9e519cc4636809d1
+
+## 任务缩略图
+GET /api/v1/jobs/files-contract-job/thumbnail
+  status: 200
+  content-type: image/jpeg
+  cache-control: private, max-age=86400
+  accept-ranges: bytes
+  | 18 字节，sha256 75f3ee278eea96ea
+
+## 原文第 1 页预览
+GET /api/v1/jobs/files-contract-job/preview/pages/1?kind=source
+  status: 200
+  content-type: image/jpeg
+  cache-control: public, max-age=31536000, immutable
+  accept-ranges: bytes
+  | 16 字节，sha256 258ccd75f613aa48
+
+## 译文第 1 页预览
+GET /api/v1/jobs/files-contract-job/preview/pages/1?kind=translated
+  status: 200
+  content-type: image/jpeg
+  cache-control: public, max-age=31536000, immutable
+  accept-ranges: bytes
+  | 20 字节，sha256 63af4870cbd5da14
+
+## 规范化文档
+GET /api/v1/jobs/files-contract-job/normalized-document
+  status: 200
+  content-type: application/json
+  accept-ranges: bytes
+  | {
+  |   "pages": [],
+  |   "schema": "document.v1"
+  | }
+
+## 规范化报告
+GET /api/v1/jobs/files-contract-job/normalization-report
+  status: 200
+  content-type: application/json
+  accept-ranges: bytes
+  | {
+  |   "normalization": {
+  |     "defaults": {
+  |       "pages_seen": 1
+  |     }
+  |   }
+  | }
+
+## 原文 Markdown（JSON）
+GET /api/v1/jobs/files-contract-job/markdown
+  status: 200
+  content-type: application/json
+  | {
+  |   "code": 0,
+  |   "data": {
+  |     "content": "# Title\n\n![fig](images/page-1/fig.png)\n",
+  |     "images_base_path": "/api/v1/jobs/files-contract-job/files/output/ocr/images/",
+  |     "images_base_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr/images/",
+  |     "job_id": "files-contract-job",
+  |     "raw_path": "/api/v1/jobs/files-contract-job/files/output/ocr.md",
+  |     "raw_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr.md"
+  |   },
+  |   "message": "ok"
+  | }
+
+## 原文 Markdown（原样）
+GET /api/v1/jobs/files-contract-job/markdown?raw=true
+  status: 200
+  content-type: text/markdown; charset=utf-8
+  content-disposition: inline; filename="orig______ocr.md"; filename*=UTF-8''orig_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_ocr.md
+  accept-ranges: bytes
+  | 39 字节，sha256 5be549bc5513125d
+
+## Markdown 图片
+GET /api/v1/jobs/files-contract-job/markdown/images/page-1/fig.png
+  status: 200
+  content-type: image/png
+  accept-ranges: bytes
+  | 8 字节，sha256 6fc1ef73e2efe0bf
+
+## 全部打包
+GET /api/v1/jobs/files-contract-job/download
+  status: 200
+  content-type: application/zip
+  content-disposition: attachment; filename="_____bundle.zip"; filename*=UTF-8''%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_bundle.zip
+  accept-ranges: bytes
+  x-job-id: files-contract-job
+  | zip
+
+## 产物列表
+GET /api/v1/jobs/files-contract-job/artifacts
+  status: 200
+  content-type: application/json
+  | {
+  |   "code": 0,
+  |   "data": {
+  |     "actions": {
+  |       "cancel": {
+  |         "enabled": false,
+  |         "method": "POST",
+  |         "path": "/api/v1/jobs/files-contract-job/actions/cancel",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/actions/cancel"
+  |       },
+  |       "download_bundle": {
+  |         "enabled": true,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job/files/output/all.zip?download=1",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/all.zip?download=1"
+  |       },
+  |       "download_pdf": {
+  |         "enabled": true,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job/files/output/translated.pdf",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/translated.pdf"
+  |       },
+  |       "open_artifacts": {
+  |         "enabled": true,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job/artifacts",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/artifacts"
+  |       },
+  |       "open_job": {
+  |         "enabled": true,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job"
+  |       },
+  |       "open_markdown": {
+  |         "enabled": true,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job/reader/markdown",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/reader/markdown"
+  |       },
+  |       "open_markdown_raw": {
+  |         "enabled": true,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job/files/output/ocr.md",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr.md"
+  |       },
+  |       "rerun": {
+  |         "enabled": true,
+  |         "method": "POST",
+  |         "path": "/api/v1/jobs/files-contract-job/actions/rerun",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/actions/rerun"
+  |       }
+  |     },
+  |     "bundle": {
+  |       "content_type": "application/zip",
+  |       "file_name": "files-contract-job.zip",
+  |       "method": "GET",
+  |       "path": "/api/v1/jobs/files-contract-job/files/output/all.zip?download=1",
+  |       "ready": true,
+  |       "size_bytes": null,
+  |       "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/all.zip?download=1"
+  |     },
+  |     "bundle_ready": true,
+  |     "bundle_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/all.zip?download=1",
+  |     "manifest_path": "/api/v1/jobs/files-contract-job/artifacts-manifest",
+  |     "manifest_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/artifacts-manifest",
+  |     "markdown": {
+  |       "file_name": "full.md",
+  |       "images_base_path": "/api/v1/jobs/files-contract-job/files/output/ocr/images/",
+  |       "images_base_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr/images/",
+  |       "json_path": "/api/v1/jobs/files-contract-job/reader/markdown",
+  |       "json_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/reader/markdown",
+  |       "raw_path": "/api/v1/jobs/files-contract-job/files/output/ocr.md",
+  |       "raw_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr.md",
+  |       "ready": true,
+  |       "size_bytes": 39
+  |     },
+  |     "markdown_images_base_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr/images/",
+  |     "markdown_ready": true,
+  |     "markdown_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/reader/markdown",
+  |     "normalization_report": {
+  |       "content_type": "application/json",
+  |       "file_name": "document.v1.report.json",
+  |       "method": "GET",
+  |       "path": "/api/v1/jobs/files-contract-job/files/internal/normalization-report.json",
+  |       "ready": true,
+  |       "size_bytes": 47,
+  |       "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/normalization-report.json"
+  |     },
+  |     "normalization_report_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/normalization-report.json",
+  |     "normalized_document": {
+  |       "content_type": "application/json",
+  |       "file_name": "document.v1.json",
+  |       "method": "GET",
+  |       "path": "/api/v1/jobs/files-contract-job/files/internal/normalized-document.json",
+  |       "ready": true,
+  |       "size_bytes": 35,
+  |       "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/normalized-document.json"
+  |     },
+  |     "normalized_document_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/normalized-document.json",
+  |     "pdf": {
+  |       "content_type": "application/pdf",
+  |       "file_name": "translated.pdf",
+  |       "method": "GET",
+  |       "path": "/api/v1/jobs/files-contract-job/files/output/translated.pdf",
+  |       "ready": true,
+  |       "size_bytes": 329,
+  |       "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/translated.pdf"
+  |     },
+  |     "pdf_ready": true,
+  |     "pdf_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/translated.pdf",
+  |     "provider_raw_dir": null,
+  |     "provider_summary_json": "jobs/files-contract-job/ocr/paddle_result.json",
+  |     "provider_zip": null,
+  |     "schema_version": null
+  |   },
+  |   "message": "ok"
+  | }
+
+## 产物清单
+GET /api/v1/jobs/files-contract-job/artifacts-manifest
+  status: 200
+  content-type: application/json
+  | {
+  |   "code": 0,
+  |   "data": {
+  |     "items": [
+  |       {
+  |         "artifact_group": "debug",
+  |         "artifact_key": "job_root",
+  |         "artifact_kind": "dir",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/x-directory",
+  |         "file_name": "files-contract-job",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/artifacts/job_root",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/artifacts/job_root",
+  |         "size_bytes": null,
+  |         "source_stage": "runtime"
+  |       },
+  |       {
+  |         "artifact_group": "debug",
+  |         "artifact_key": "pipeline_summary",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "pipeline_summary.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/pipeline_summary.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/internal/pipeline-summary.json?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/pipeline-summary.json?download=1",
+  |         "size_bytes": 15,
+  |         "source_stage": "rendering"
+  |       },
+  |       {
+  |         "artifact_group": "json",
+  |         "artifact_key": "layout_json",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "paddle_result.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/ocr/paddle_result.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/artifacts/layout_json",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/artifacts/layout_json",
+  |         "size_bytes": 27,
+  |         "source_stage": "ocr"
+  |       },
+  |       {
+  |         "artifact_group": "json",
+  |         "artifact_key": "normalization_report_json",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "normalization_report.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/ocr/normalization_report.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/internal/normalization-report.json",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/normalization-report.json",
+  |         "size_bytes": 47,
+  |         "source_stage": "normalizing"
+  |       },
+  |       {
+  |         "artifact_group": "json",
+  |         "artifact_key": "normalized_document_json",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "document.v1.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/ocr/normalized/document.v1.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/internal/normalized-document.json",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/normalized-document.json",
+  |         "size_bytes": 35,
+  |         "source_stage": "normalizing"
+  |       },
+  |       {
+  |         "artifact_group": "markdown",
+  |         "artifact_key": "markdown_bundle_zip",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/zip",
+  |         "file_name": "files-contract-job-markdown.zip",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/artifacts/files-contract-job-markdown.zip",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/output/ocr.zip?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr.zip?download=1",
+  |         "size_bytes": null,
+  |         "source_stage": "ocr"
+  |       },
+  |       {
+  |         "artifact_group": "markdown",
+  |         "artifact_key": "markdown_images_dir",
+  |         "artifact_kind": "dir",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/x-directory",
+  |         "file_name": "images",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/md/images",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/output/ocr/images/",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr/images/",
+  |         "size_bytes": null,
+  |         "source_stage": "ocr"
+  |       },
+  |       {
+  |         "artifact_group": "markdown",
+  |         "artifact_key": "markdown_raw",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "text/markdown; charset=utf-8",
+  |         "file_name": "full.md",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/md/full.md",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/output/ocr.md",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr.md",
+  |         "size_bytes": 39,
+  |         "source_stage": "ocr"
+  |       },
+  |       {
+  |         "artifact_group": "provider",
+  |         "artifact_key": "provider_result_json",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "paddle_result.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/ocr/paddle_result.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/internal/ocr-provider/result.json?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/ocr-provider/result.json?download=1",
+  |         "size_bytes": 27,
+  |         "source_stage": "ocr"
+  |       },
+  |       {
+  |         "artifact_group": "rendered",
+  |         "artifact_key": "translated_pdf",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/pdf",
+  |         "file_name": "translated.pdf",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/rendered/translated.pdf",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/output/translated.pdf",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/translated.pdf",
+  |         "size_bytes": 329,
+  |         "source_stage": "rendering"
+  |       },
+  |       {
+  |         "artifact_group": "source",
+  |         "artifact_key": "source_pdf",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/pdf",
+  |         "file_name": "input.pdf",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job/source/input.pdf",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/artifacts/source_pdf",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/artifacts/source_pdf",
+  |         "size_bytes": 329,
+  |         "source_stage": "upload"
+  |       },
+  |       {
+  |         "artifact_group": "typst",
+  |         "artifact_key": "typst_render_pdf",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/pdf",
+  |         "file_name": "book-overlay.pdf",
+  |         "ready": false,
+  |         "relative_path": "jobs/files-contract-job/rendered/typst/book-overlays/book-overlay.pdf",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/internal/typst/render.pdf?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/typst/render.pdf?download=1",
+  |         "size_bytes": null,
+  |         "source_stage": "rendering"
+  |       },
+  |       {
+  |         "artifact_group": "typst",
+  |         "artifact_key": "typst_source",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "text/plain; charset=utf-8",
+  |         "file_name": "book-overlay.typ",
+  |         "ready": false,
+  |         "relative_path": "jobs/files-contract-job/rendered/typst/book-overlays/book-overlay.typ",
+  |         "resource_path": "/api/v1/jobs/files-contract-job/files/internal/typst/source.typ?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/typst/source.typ?download=1",
+  |         "size_bytes": null,
+  |         "source_stage": "rendering"
+  |       }
+  |     ],
+  |     "job_id": "files-contract-job"
+  |   },
+  |   "message": "ok"
+  | }
+
+## 书的原文
+GET /api/v1/documents/<doc>/source.pdf
+  status: 200
+  content-type: application/pdf
+  content-disposition: attachment; filename="orig______source.pdf"; filename*=UTF-8''orig_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_source.pdf
+  accept-ranges: bytes
+  | pdf
+
+## 书的封面
+GET /api/v1/documents/<doc>/cover
+  status: 200
+  content-type: image/jpeg
+  cache-control: private, max-age=86400
+  accept-ranges: bytes
+  | 19 字节，sha256 d5e238020f7eb5e8
+
+## 书的缩略图
+GET /api/v1/documents/<doc>/thumbnail
+  status: 200
+  content-type: image/jpeg
+  cache-control: private, max-age=86400
+  accept-ranges: bytes
+  | 23 字节，sha256 3209301db0cb66de
+
+## 书架封面（按任务编号）
+GET /api/v1/library/books/files-contract-job/cover
+  status: 200
+  content-type: image/jpeg
+  cache-control: private, max-age=86400
+  accept-ranges: bytes
+  | 14 字节，sha256 9e519cc4636809d1
+
+## 书架缩略图（按任务编号）
+GET /api/v1/library/books/files-contract-job/thumbnail
+  status: 200
+  content-type: image/jpeg
+  cache-control: private, max-age=86400
+  accept-ranges: bytes
+  | 18 字节，sha256 75f3ee278eea96ea
+
+## 旧别名：OCR 产物列表
+GET /api/v1/ocr/jobs/files-contract-job-ocr/artifacts
+  status: 200
+  content-type: application/json
+  | {
+  |   "code": 0,
+  |   "data": {
+  |     "actions": {
+  |       "cancel": {
+  |         "enabled": false,
+  |         "method": "POST",
+  |         "path": "/api/v1/jobs/files-contract-job-ocr/actions/cancel",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/actions/cancel"
+  |       },
+  |       "download_bundle": {
+  |         "enabled": true,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job-ocr/files/output/all.zip?download=1",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/all.zip?download=1"
+  |       },
+  |       "download_pdf": {
+  |         "enabled": false,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job-ocr/files/output/translated.pdf",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/translated.pdf"
+  |       },
+  |       "open_artifacts": {
+  |         "enabled": true,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job-ocr/artifacts",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/artifacts"
+  |       },
+  |       "open_job": {
+  |         "enabled": true,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job-ocr",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr"
+  |       },
+  |       "open_markdown": {
+  |         "enabled": false,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job-ocr/reader/markdown",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/reader/markdown"
+  |       },
+  |       "open_markdown_raw": {
+  |         "enabled": false,
+  |         "method": "GET",
+  |         "path": "/api/v1/jobs/files-contract-job-ocr/files/output/ocr.md",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/ocr.md"
+  |       },
+  |       "rerun": {
+  |         "enabled": false,
+  |         "method": "POST",
+  |         "path": "/api/v1/jobs/files-contract-job-ocr/actions/rerun",
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/actions/rerun"
+  |       }
+  |     },
+  |     "bundle": {
+  |       "content_type": "application/zip",
+  |       "file_name": "files-contract-job-ocr.zip",
+  |       "method": "GET",
+  |       "path": "/api/v1/jobs/files-contract-job-ocr/files/output/all.zip?download=1",
+  |       "ready": true,
+  |       "size_bytes": null,
+  |       "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/all.zip?download=1"
+  |     },
+  |     "bundle_ready": true,
+  |     "bundle_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/all.zip?download=1",
+  |     "manifest_path": "/api/v1/jobs/files-contract-job-ocr/artifacts-manifest",
+  |     "manifest_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/artifacts-manifest",
+  |     "markdown": {
+  |       "file_name": null,
+  |       "images_base_path": "/api/v1/jobs/files-contract-job-ocr/files/output/ocr/images/",
+  |       "images_base_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/ocr/images/",
+  |       "json_path": "/api/v1/jobs/files-contract-job-ocr/reader/markdown",
+  |       "json_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/reader/markdown",
+  |       "raw_path": "/api/v1/jobs/files-contract-job-ocr/files/output/ocr.md",
+  |       "raw_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/ocr.md",
+  |       "ready": false,
+  |       "size_bytes": null
+  |     },
+  |     "markdown_images_base_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/ocr/images/",
+  |     "markdown_ready": false,
+  |     "markdown_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/reader/markdown",
+  |     "normalization_report": {
+  |       "content_type": "application/json",
+  |       "file_name": "document.v1.report.json",
+  |       "method": "GET",
+  |       "path": "/api/v1/jobs/files-contract-job-ocr/files/internal/normalization-report.json",
+  |       "ready": true,
+  |       "size_bytes": 47,
+  |       "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/normalization-report.json"
+  |     },
+  |     "normalization_report_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/normalization-report.json",
+  |     "normalized_document": {
+  |       "content_type": "application/json",
+  |       "file_name": "document.v1.json",
+  |       "method": "GET",
+  |       "path": "/api/v1/jobs/files-contract-job-ocr/files/internal/normalized-document.json",
+  |       "ready": true,
+  |       "size_bytes": 35,
+  |       "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/normalized-document.json"
+  |     },
+  |     "normalized_document_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/normalized-document.json",
+  |     "pdf": {
+  |       "content_type": "application/pdf",
+  |       "file_name": null,
+  |       "method": "GET",
+  |       "path": "/api/v1/jobs/files-contract-job-ocr/files/output/translated.pdf",
+  |       "ready": false,
+  |       "size_bytes": null,
+  |       "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/translated.pdf"
+  |     },
+  |     "pdf_ready": false,
+  |     "pdf_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/translated.pdf",
+  |     "provider_raw_dir": null,
+  |     "provider_summary_json": "jobs/files-contract-job-ocr/ocr/paddle_result.json",
+  |     "provider_zip": null,
+  |     "schema_version": null
+  |   },
+  |   "message": "ok"
+  | }
+
+## 旧别名：OCR 产物清单
+GET /api/v1/ocr/jobs/files-contract-job-ocr/artifacts-manifest
+  status: 200
+  content-type: application/json
+  | {
+  |   "code": 0,
+  |   "data": {
+  |     "items": [
+  |       {
+  |         "artifact_group": "debug",
+  |         "artifact_key": "job_root",
+  |         "artifact_kind": "dir",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/x-directory",
+  |         "file_name": "files-contract-job-ocr",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job-ocr",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/artifacts/job_root",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/artifacts/job_root",
+  |         "size_bytes": null,
+  |         "source_stage": "runtime"
+  |       },
+  |       {
+  |         "artifact_group": "debug",
+  |         "artifact_key": "pipeline_summary",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "pipeline_summary.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job-ocr/pipeline_summary.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/files/internal/pipeline-summary.json?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/pipeline-summary.json?download=1",
+  |         "size_bytes": 15,
+  |         "source_stage": "rendering"
+  |       },
+  |       {
+  |         "artifact_group": "json",
+  |         "artifact_key": "layout_json",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "paddle_result.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job-ocr/ocr/paddle_result.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/artifacts/layout_json",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/artifacts/layout_json",
+  |         "size_bytes": 27,
+  |         "source_stage": "ocr"
+  |       },
+  |       {
+  |         "artifact_group": "json",
+  |         "artifact_key": "normalization_report_json",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "normalization_report.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job-ocr/ocr/normalization_report.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/files/internal/normalization-report.json",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/normalization-report.json",
+  |         "size_bytes": 47,
+  |         "source_stage": "normalizing"
+  |       },
+  |       {
+  |         "artifact_group": "json",
+  |         "artifact_key": "normalized_document_json",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "document.v1.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job-ocr/ocr/normalized/document.v1.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/files/internal/normalized-document.json",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/normalized-document.json",
+  |         "size_bytes": 35,
+  |         "source_stage": "normalizing"
+  |       },
+  |       {
+  |         "artifact_group": "markdown",
+  |         "artifact_key": "markdown_bundle_zip",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/zip",
+  |         "file_name": "files-contract-job-ocr-markdown.zip",
+  |         "ready": false,
+  |         "relative_path": "jobs/files-contract-job-ocr/artifacts/files-contract-job-ocr-markdown.zip",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/files/output/ocr.zip?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/output/ocr.zip?download=1",
+  |         "size_bytes": null,
+  |         "source_stage": "ocr"
+  |       },
+  |       {
+  |         "artifact_group": "provider",
+  |         "artifact_key": "provider_result_json",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/json",
+  |         "file_name": "paddle_result.json",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job-ocr/ocr/paddle_result.json",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/files/internal/ocr-provider/result.json?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/ocr-provider/result.json?download=1",
+  |         "size_bytes": 27,
+  |         "source_stage": "ocr"
+  |       },
+  |       {
+  |         "artifact_group": "source",
+  |         "artifact_key": "source_pdf",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/pdf",
+  |         "file_name": "input.pdf",
+  |         "ready": true,
+  |         "relative_path": "jobs/files-contract-job-ocr/source/input.pdf",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/artifacts/source_pdf",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/artifacts/source_pdf",
+  |         "size_bytes": 329,
+  |         "source_stage": "upload"
+  |       },
+  |       {
+  |         "artifact_group": "typst",
+  |         "artifact_key": "typst_render_pdf",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "application/pdf",
+  |         "file_name": "book-overlay.pdf",
+  |         "ready": false,
+  |         "relative_path": "jobs/files-contract-job-ocr/rendered/typst/book-overlays/book-overlay.pdf",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/files/internal/typst/render.pdf?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/typst/render.pdf?download=1",
+  |         "size_bytes": null,
+  |         "source_stage": "rendering"
+  |       },
+  |       {
+  |         "artifact_group": "typst",
+  |         "artifact_key": "typst_source",
+  |         "artifact_kind": "file",
+  |         "attempt": 1,
+  |         "checksum": null,
+  |         "content_type": "text/plain; charset=utf-8",
+  |         "file_name": "book-overlay.typ",
+  |         "ready": false,
+  |         "relative_path": "jobs/files-contract-job-ocr/rendered/typst/book-overlays/book-overlay.typ",
+  |         "resource_path": "/api/v1/jobs/files-contract-job-ocr/files/internal/typst/source.typ?download=1",
+  |         "resource_url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job-ocr/files/internal/typst/source.typ?download=1",
+  |         "size_bytes": null,
+  |         "source_stage": "rendering"
+  |       }
+  |     ],
+  |     "job_id": "files-contract-job-ocr"
+  |   },
+  |   "message": "ok"
+  | }
+
+## 旧别名：OCR 规范化文档
+GET /api/v1/ocr/jobs/files-contract-job-ocr/normalized-document
+  status: 200
+  content-type: application/json
+  accept-ranges: bytes
+  | {
+  |   "pages": [],
+  |   "schema": "document.v1"
+  | }
+
+## 旧别名：OCR 规范化报告
+GET /api/v1/ocr/jobs/files-contract-job-ocr/normalization-report
+  status: 200
+  content-type: application/json
+  accept-ranges: bytes
+  | {
+  |   "normalization": {
+  |     "defaults": {
+  |       "pages_seen": 1
+  |     }
+  |   }
+  | }
+
+## 旧别名：OCR 按名字取产物
+GET /api/v1/ocr/jobs/files-contract-job-ocr/artifacts/normalized_document_json
+  status: 200
+  content-type: application/json
+  content-disposition: attachment; filename="document.v1.json"; filename*=UTF-8''document.v1.json
+  accept-ranges: bytes
+  | {
+  |   "pages": [],
+  |   "schema": "document.v1"
+  | }
+
+## 新：任务的文件清单
+GET /api/v1/jobs/files-contract-job/files
+  status: 200
+  content-type: application/json
+  | {
+  |   "code": 0,
+  |   "data": {
+  |     "internal": [
+  |       {
+  |         "content_type": "application/json",
+  |         "name": "normalized-document.json",
+  |         "on_demand": false,
+  |         "ready": true,
+  |         "size_bytes": 35,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/normalized-document.json"
+  |       },
+  |       {
+  |         "content_type": "application/json",
+  |         "name": "normalization-report.json",
+  |         "on_demand": false,
+  |         "ready": true,
+  |         "size_bytes": 47,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/normalization-report.json"
+  |       },
+  |       {
+  |         "content_type": "application/json",
+  |         "name": "pipeline-summary.json",
+  |         "on_demand": false,
+  |         "ready": true,
+  |         "size_bytes": 15,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/pipeline-summary.json"
+  |       },
+  |       {
+  |         "content_type": "text/plain; charset=utf-8",
+  |         "name": "typst/source.typ",
+  |         "on_demand": false,
+  |         "ready": false,
+  |         "size_bytes": null,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/typst/source.typ"
+  |       },
+  |       {
+  |         "content_type": "application/pdf",
+  |         "name": "typst/render.pdf",
+  |         "on_demand": false,
+  |         "ready": false,
+  |         "size_bytes": null,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/typst/render.pdf"
+  |       },
+  |       {
+  |         "content_type": "application/json",
+  |         "name": "ocr-provider/result.json",
+  |         "on_demand": false,
+  |         "ready": true,
+  |         "size_bytes": 27,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/internal/ocr-provider/result.json"
+  |       }
+  |     ],
+  |     "job_id": "files-contract-job",
+  |     "output": [
+  |       {
+  |         "content_type": "application/pdf",
+  |         "name": "translated.pdf",
+  |         "on_demand": false,
+  |         "ready": true,
+  |         "size_bytes": 329,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/translated.pdf"
+  |       },
+  |       {
+  |         "content_type": "application/pdf",
+  |         "name": "side-by-side.pdf",
+  |         "on_demand": true,
+  |         "ready": true,
+  |         "size_bytes": null,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/side-by-side.pdf"
+  |       },
+  |       {
+  |         "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  |         "name": "translated.docx",
+  |         "on_demand": true,
+  |         "ready": true,
+  |         "size_bytes": null,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/translated.docx"
+  |       },
+  |       {
+  |         "content_type": "text/markdown; charset=utf-8",
+  |         "name": "ocr.md",
+  |         "on_demand": false,
+  |         "ready": true,
+  |         "size_bytes": 39,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr.md"
+  |       },
+  |       {
+  |         "content_type": "application/zip",
+  |         "name": "ocr.zip",
+  |         "on_demand": true,
+  |         "ready": true,
+  |         "size_bytes": null,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/ocr.zip"
+  |       },
+  |       {
+  |         "content_type": "application/zip",
+  |         "name": "all.zip",
+  |         "on_demand": true,
+  |         "ready": true,
+  |         "size_bytes": null,
+  |         "url": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/output/all.zip"
+  |       }
+  |     ],
+  |     "pages": {
+  |       "page_count": 1,
+  |       "url_template": "http://127.0.0.1:41000/api/v1/jobs/files-contract-job/files/pages/{page}.jpg"
+  |     }
+  |   },
+  |   "message": "ok"
+  | }
+
+## 新：译文 PDF（浏览器里打开）
+GET /api/v1/jobs/files-contract-job/files/output/translated.pdf
+  status: 200
+  content-type: application/pdf
+  content-disposition: inline; filename="zh______translated.pdf"; filename*=UTF-8''zh_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_translated.pdf
+  accept-ranges: bytes
+  | pdf
+
+## 新：译文 PDF（下载）
+GET /api/v1/jobs/files-contract-job/files/output/translated.pdf?download=1
+  status: 200
+  content-type: application/pdf
+  content-disposition: attachment; filename="zh______translated.pdf"; filename*=UTF-8''zh_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_translated.pdf
+  accept-ranges: bytes
+  | pdf
+
+## 新：对照 PDF
+GET /api/v1/jobs/files-contract-job/files/output/side-by-side.pdf
+  status: 200
+  content-type: application/pdf
+  content-disposition: inline; filename="dual______side-by-side.pdf"; filename*=UTF-8''dual_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_side-by-side.pdf
+  accept-ranges: bytes
+  | pdf
+
+## 新：Word（默认清晰度）
+GET /api/v1/jobs/files-contract-job/files/output/translated.docx?download=1
+  status: 200
+  content-type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  content-disposition: attachment; filename="zh______layout.docx"; filename*=UTF-8''zh_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_layout.docx
+  accept-ranges: bytes
+  | 17 字节，sha256 b1797ec64dd37cdb
+
+## 新：Word（dpi=150）
+GET /api/v1/jobs/files-contract-job/files/output/translated.docx?download=1&dpi=150
+  status: 200
+  content-type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  content-disposition: attachment; filename="zh______layout.docx"; filename*=UTF-8''zh_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_layout.docx
+  accept-ranges: bytes
+  | 17 字节，sha256 d8a707e3a84a55dc
+
+## 新：原文 Markdown
+GET /api/v1/jobs/files-contract-job/files/output/ocr.md
+  status: 200
+  content-type: text/markdown; charset=utf-8
+  content-disposition: inline; filename="orig______ocr.md"; filename*=UTF-8''orig_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_ocr.md
+  accept-ranges: bytes
+  | 39 字节，sha256 5be549bc5513125d
+
+## 新：原文 Markdown + 图片
+GET /api/v1/jobs/files-contract-job/files/output/ocr.zip
+  status: 200
+  content-type: application/zip
+  content-disposition: inline; filename="orig______markdown.zip"; filename*=UTF-8''orig_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_markdown.zip
+  accept-ranges: bytes
+  | zip
+
+## 新：Markdown 图片
+GET /api/v1/jobs/files-contract-job/files/output/ocr/images/page-1/fig.png
+  status: 200
+  content-type: image/png
+  accept-ranges: bytes
+  | 8 字节，sha256 6fc1ef73e2efe0bf
+
+## 新：全部打包
+GET /api/v1/jobs/files-contract-job/files/output/all.zip?download=1
+  status: 200
+  content-type: application/zip
+  content-disposition: attachment; filename="_____bundle.zip"; filename*=UTF-8''%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_bundle.zip
+  accept-ranges: bytes
+  x-job-id: files-contract-job
+  | zip
+
+## 新：译文第 1 页预览
+GET /api/v1/jobs/files-contract-job/files/pages/1.jpg
+  status: 200
+  content-type: image/jpeg
+  cache-control: public, max-age=31536000, immutable
+  accept-ranges: bytes
+  | 20 字节，sha256 63af4870cbd5da14
+
+## 新：中间产物 规范化文档
+GET /api/v1/jobs/files-contract-job/files/internal/normalized-document.json
+  status: 200
+  content-type: application/json
+  content-disposition: inline; filename="normalized-document.json"; filename*=UTF-8''normalized-document.json
+  accept-ranges: bytes
+  | {
+  |   "pages": [],
+  |   "schema": "document.v1"
+  | }
+
+## 新：中间产物 OCR 原始返回
+GET /api/v1/jobs/files-contract-job/files/internal/ocr-provider/result.json
+  status: 200
+  content-type: application/json
+  content-disposition: inline; filename="ocr-provider-result.json"; filename*=UTF-8''ocr-provider-result.json
+  accept-ranges: bytes
+  | {
+  |   "layoutParsingResults": []
+  | }
+
+## 新：中间产物 流水线摘要
+GET /api/v1/jobs/files-contract-job/files/internal/pipeline-summary.json
+  status: 200
+  content-type: application/json
+  content-disposition: inline; filename="pipeline-summary.json"; filename*=UTF-8''pipeline-summary.json
+  accept-ranges: bytes
+  | {
+  |   "status": "ok"
+  | }
+
+## 新：书的文件清单
+GET /api/v1/documents/<doc>/files
+  status: 200
+  content-type: application/json
+  | {
+  |   "code": 0,
+  |   "data": {
+  |     "document_id": "<doc>",
+  |     "files": [
+  |       {
+  |         "content_type": "application/pdf",
+  |         "name": "source.pdf",
+  |         "on_demand": false,
+  |         "ready": true,
+  |         "url": "http://127.0.0.1:41000/api/v1/documents/<doc>/files/source.pdf"
+  |       },
+  |       {
+  |         "content_type": "image/jpeg",
+  |         "name": "cover.jpg",
+  |         "on_demand": true,
+  |         "ready": true,
+  |         "url": "http://127.0.0.1:41000/api/v1/documents/<doc>/files/cover.jpg"
+  |       },
+  |       {
+  |         "content_type": "image/jpeg",
+  |         "name": "thumbnail.jpg",
+  |         "on_demand": true,
+  |         "ready": true,
+  |         "url": "http://127.0.0.1:41000/api/v1/documents/<doc>/files/thumbnail.jpg"
+  |       }
+  |     ],
+  |     "pages": {
+  |       "page_count": 1,
+  |       "url_template": "http://127.0.0.1:41000/api/v1/documents/<doc>/files/pages/{page}.jpg"
+  |     }
+  |   },
+  |   "message": "ok"
+  | }
+
+## 新：书的原文（浏览器里打开）
+GET /api/v1/documents/<doc>/files/source.pdf
+  status: 200
+  content-type: application/pdf
+  content-disposition: inline; filename="orig______source.pdf"; filename*=UTF-8''orig_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_source.pdf
+  accept-ranges: bytes
+  | pdf
+
+## 新：书的原文（下载）
+GET /api/v1/documents/<doc>/files/source.pdf?download=1
+  status: 200
+  content-type: application/pdf
+  content-disposition: attachment; filename="orig______source.pdf"; filename*=UTF-8''orig_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_source.pdf
+  accept-ranges: bytes
+  | pdf
+
+## 新：书的封面
+GET /api/v1/documents/<doc>/files/cover.jpg
+  status: 200
+  content-type: image/jpeg
+  cache-control: private, max-age=86400
+  accept-ranges: bytes
+  | 19 字节，sha256 d5e238020f7eb5e8
+
+## 新：书的缩略图
+GET /api/v1/documents/<doc>/files/thumbnail.jpg
+  status: 200
+  content-type: image/jpeg
+  cache-control: private, max-age=86400
+  accept-ranges: bytes
+  | 23 字节，sha256 3209301db0cb66de
+
+## 新：原文第 1 页预览
+GET /api/v1/documents/<doc>/files/pages/1.jpg
+  status: 200
+  content-type: image/jpeg
+  cache-control: public, max-age=31536000, immutable
+  accept-ranges: bytes
+  | 25 字节，sha256 96581d3dc2db72ba
+
+## 新报错：没有这个文件
+GET /api/v1/jobs/files-contract-job/files/output/translated.PDF
+  status: 404
+  content-type: application/json
+  | {
+  |   "code": 40400,
+  |   "error": {
+  |     "code": "NOT_FOUND",
+  |     "details": {},
+  |     "http_status": 404
+  |   },
+  |   "message": "no such file: output/translated.PDF"
+  | }
+
+## 新报错：layout.json 和 ocr-provider/result.json 重复，只留后者
+GET /api/v1/jobs/files-contract-job/files/internal/layout.json
+  status: 404
+  content-type: application/json
+  | {
+  |   "code": 40400,
+  |   "error": {
+  |     "code": "NOT_FOUND",
+  |     "details": {},
+  |     "http_status": 404
+  |   },
+  |   "message": "no such file: internal/layout.json"
+  | }
+
+## 新报错：页码从 1 开始
+GET /api/v1/jobs/files-contract-job/files/pages/0.jpg
+  status: 404
+  content-type: application/json
+  | {
+  |   "code": 40400,
+  |   "error": {
+  |     "code": "NOT_FOUND",
+  |     "details": {},
+  |     "http_status": 404
+  |   },
+  |   "message": "no such file: pages/0.jpg"
+  | }
+
+## 新报错：书没有这个文件
+GET /api/v1/documents/<doc>/files/cover.png
+  status: 404
+  content-type: application/json
+  | {
+  |   "code": 40400,
+  |   "error": {
+  |     "code": "NOT_FOUND",
+  |     "details": {},
+  |     "http_status": 404
+  |   },
+  |   "message": "no such file: cover.png"
+  | }
+
+## 新报错：还在跑，不能打包
+GET /api/v1/jobs/files-contract-running/files/output/all.zip
+  status: 409
+  content-type: application/json
+  | {
+  |   "code": 40900,
+  |   "error": {
+  |     "code": "CONFLICT",
+  |     "details": {},
+  |     "http_status": 409
+  |   },
+  |   "message": "job is not finished successfully"
+  | }
+
+## 报错：产物名不存在
+GET /api/v1/jobs/files-contract-job/artifacts/no_such_artifact
+  status: 404
+  content-type: application/json
+  | {
+  |   "code": 40400,
+  |   "error": {
+  |     "code": "NOT_FOUND",
+  |     "details": {},
+  |     "http_status": 404
+  |   },
+  |   "message": "artifact not found: files-contract-job/no_such_artifact"
+  | }
+
+## 报错：目录类产物不能直接下载
+GET /api/v1/jobs/files-contract-job/artifacts/job_root
+  status: 409
+  content-type: application/json
+  | {
+  |   "code": 40900,
+  |   "error": {
+  |     "code": "CONFLICT",
+  |     "details": {},
+  |     "http_status": 409
+  |   },
+  |   "message": "artifact is a directory and cannot be streamed directly: job_root"
+  | }
+
+## 报错：预览类型不对
+GET /api/v1/jobs/files-contract-job/preview/pages/1?kind=bogus
+  status: 400
+  content-type: application/json
+  | {
+  |   "code": 40000,
+  |   "error": {
+  |     "code": "BAD_REQUEST",
+  |     "details": {},
+  |     "http_status": 400
+  |   },
+  |   "message": "preview kind must be source or translated"
+  | }
+
+## 报错：页码从 1 开始
+GET /api/v1/jobs/files-contract-job/preview/pages/0?kind=source
+  status: 400
+  content-type: application/json
+  | {
+  |   "code": 40000,
+  |   "error": {
+  |     "code": "BAD_REQUEST",
+  |     "details": {},
+  |     "http_status": 400
+  |   },
+  |   "message": "page must be 1-based"
+  | }
+
+## 报错：Markdown 图片路径越界
+GET /api/v1/jobs/files-contract-job/markdown/images/..%2F..%2Fsecret
+  status: 400
+  content-type: application/json
+  | {
+  |   "code": 40000,
+  |   "error": {
+  |     "code": "BAD_REQUEST",
+  |     "details": {},
+  |     "http_status": 400
+  |   },
+  |   "message": "parent-relative markdown image path is not allowed"
+  | }
+
+## 报错：任务不存在
+GET /api/v1/jobs/no-such-job/pdf
+  status: 404
+  content-type: application/json
+  | {
+  |   "code": 40400,
+  |   "error": {
+  |     "code": "NOT_FOUND",
+  |     "details": {},
+  |     "http_status": 404
+  |   },
+  |   "message": "job not found: no-such-job"
+  | }
+
+## 报错：还在跑，译文 PDF 没就绪
+GET /api/v1/jobs/files-contract-running/pdf
+  status: 404
+  content-type: application/json
+  | {
+  |   "code": 40400,
+  |   "error": {
+  |     "code": "NOT_FOUND",
+  |     "details": {},
+  |     "http_status": 404
+  |   },
+  |   "message": "pdf not ready: files-contract-running"
+  | }
+
+## 报错：还在跑，不能打包
+GET /api/v1/jobs/files-contract-running/download
+  status: 409
+  content-type: application/json
+  | {
+  |   "code": 40900,
+  |   "error": {
+  |     "code": "CONFLICT",
+  |     "details": {},
+  |     "http_status": 409
+  |   },
+  |   "message": "job is not finished successfully"
+  | }
+
+## 按名字取产物
+GET /api/v1/jobs/files-contract-job/artifacts/source_pdf
+  status: 200
+  content-type: application/pdf
+  content-disposition: attachment; filename="orig______source.pdf"; filename*=UTF-8''orig_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_source.pdf
+  accept-ranges: bytes
+  | pdf
+
+## 按名字取产物
+GET /api/v1/jobs/files-contract-job/artifacts/translated_pdf
+  status: 200
+  content-type: application/pdf
+  content-disposition: attachment; filename="zh______translated.pdf"; filename*=UTF-8''zh_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_translated.pdf
+  accept-ranges: bytes
+  | pdf
+
+## 按名字取产物
+GET /api/v1/jobs/files-contract-job/artifacts/markdown_raw
+  status: 200
+  content-type: text/markdown; charset=utf-8
+  content-disposition: attachment; filename="orig______ocr.md"; filename*=UTF-8''orig_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_ocr.md
+  accept-ranges: bytes
+  | 39 字节，sha256 5be549bc5513125d
+
+## 按名字取产物
+GET /api/v1/jobs/files-contract-job/artifacts/markdown_bundle_zip
+  status: 200
+  content-type: application/zip
+  content-disposition: attachment; filename="orig______markdown.zip"; filename*=UTF-8''orig_%E5%85%89%E8%B0%B1%E7%BB%BC%E8%BF%B0_markdown.zip
+  accept-ranges: bytes
+  | zip
+
+## 按名字取产物
+GET /api/v1/jobs/files-contract-job/artifacts/normalized_document_json
+  status: 200
+  content-type: application/json
+  content-disposition: attachment; filename="document.v1.json"; filename*=UTF-8''document.v1.json
+  accept-ranges: bytes
+  | {
+  |   "pages": [],
+  |   "schema": "document.v1"
+  | }
+
+## 按名字取产物
+GET /api/v1/jobs/files-contract-job/artifacts/normalization_report_json
+  status: 200
+  content-type: application/json
+  content-disposition: attachment; filename="normalization_report.json"; filename*=UTF-8''normalization_report.json
+  accept-ranges: bytes
+  | {
+  |   "normalization": {
+  |     "defaults": {
+  |       "pages_seen": 1
+  |     }
+  |   }
+  | }
+
+## 按名字取产物
+GET /api/v1/jobs/files-contract-job/artifacts/layout_json
+  status: 200
+  content-type: application/json
+  content-disposition: attachment; filename="paddle_result.json"; filename*=UTF-8''paddle_result.json
+  accept-ranges: bytes
+  | {
+  |   "layoutParsingResults": []
+  | }
+
+## 按名字取产物
+GET /api/v1/jobs/files-contract-job/artifacts/provider_result_json
+  status: 200
+  content-type: application/json
+  content-disposition: attachment; filename="paddle_result.json"; filename*=UTF-8''paddle_result.json
+  accept-ranges: bytes
+  | {
+  |   "layoutParsingResults": []
+  | }
+
+## 按名字取产物
+GET /api/v1/jobs/files-contract-job/artifacts/pipeline_summary
+  status: 200
+  content-type: application/json
+  content-disposition: attachment; filename="pipeline_summary.json"; filename*=UTF-8''pipeline_summary.json
+  accept-ranges: bytes
+  | {
+  |   "status": "ok"
+  | }

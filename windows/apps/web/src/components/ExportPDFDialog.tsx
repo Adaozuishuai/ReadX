@@ -1,46 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
 import {
   api,
   type OCRSettings,
-  type RenderStatus,
-  type TranslatedPDFPageInput,
   type TranslatedPDFResponse,
 } from '../api/client';
 
 /**
  * 生成保留排版的译文 PDF。
  *
- * 只走 RetainPDF 链路：PaddleOCR 识别段落 → 模型翻译 → rpr 引擎按原页坐标回填。
- * 旧的「PDF.js 文本层分段 + 翻译接口」路径已删除，因此必须先配置 PaddleOCR 与 AI。
+ * 整本 OCR、段落整理、翻译与排版都由 RetainPDF 完成；ReadX 只保存并展示返回的 PDF。
  */
 type Phase = 'idle' | 'working' | 'done' | 'error';
 
 interface Props {
   documentKey: string;
-  document: PDFDocumentProxy;
   pageCount: number;
   onClose: () => void;
   onOpenAISettings: () => void;
 }
 
-export function ExportPDFDialog({ documentKey, document, pageCount, onClose, onOpenAISettings }: Props) {
+export function ExportPDFDialog({ documentKey, pageCount, onClose, onOpenAISettings }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [result, setResult] = useState<TranslatedPDFResponse | null>(null);
-  const [renderStatus, setRenderStatus] = useState<RenderStatus | null>(null);
   const [ocr, setOCR] = useState<OCRSettings | null>(null);
   const cancelled = useRef(false);
 
   useEffect(() => {
     dialog.current?.showModal();
     cancelled.current = false;
-    void Promise.all([api.renderStatus(), api.ocrSettings()])
-      .then(([status, settings]) => {
+    void api.ocrSettings()
+      .then((settings) => {
         if (cancelled.current) return;
-        setRenderStatus(status);
         setOCR(settings);
       })
       .catch((cause) => {
@@ -70,21 +63,11 @@ export function ExportPDFDialog({ documentKey, document, pageCount, onClose, onO
     setResult(null);
     setProgress('');
     try {
-      if (!renderStatus?.available) {
-        throw new Error(renderStatus?.error || '当前安装缺少排版引擎（resources/rendering-engine）');
-      }
       if (!ocr?.configured) {
-        throw new Error('导出译文 PDF 需要 PaddleOCR：请先到 AI 助手设置中配置访问令牌。');
+        throw new Error('请先在 AI 助手设置中配置 RetainPDF 使用的 OCR 令牌。');
       }
-      setProgress(`读取 ${pageCount} 页尺寸…`);
-      const pages: TranslatedPDFPageInput[] = [];
-      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-        const page = await document.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1 });
-        pages.push({ page: pageNumber, width: viewport.width, height: viewport.height, blocks: [] });
-      }
-      setProgress(`OCR、翻译并排版 ${pageCount} 页（可能需要数分钟）…`);
-      const response = await api.translatedPDF(documentKey, { pages, ocr: true });
+      setProgress(`RetainPDF 正在处理整篇论文（共 ${pageCount} 页）…`);
+      const response = await api.translatedPDF(documentKey, { pageCount });
       setResult(response);
       setPhase('done');
       setProgress('');
@@ -109,22 +92,18 @@ export function ExportPDFDialog({ documentKey, document, pageCount, onClose, onO
       <header>
         <div>
           <h2>导出译文 PDF</h2>
-          <small>PaddleOCR 识别段落 → 翻译 → rpr 按原页坐标排版；公式/表格/图片保持原样。</small>
+          <small>RetainPDF 负责 OCR、段落整理、翻译和译文 PDF 排版。</small>
         </div>
         <button type="button" disabled={phase === 'working'} onClick={onClose}>关闭</button>
       </header>
 
       <div className="export-pdf-body">
-        {renderStatus && !renderStatus.available ? (
-          <p className="text-bad">排版引擎不可用：{renderStatus.error}</p>
-        ) : null}
-
         <div className={`export-pdf-ocr${ocr?.configured ? ' ok' : ''}`}>
           <div>
-            <strong>PaddleOCR</strong>
-            <span>{ocr?.configured ? '已配置（导出必需）' : '未配置（导出必需）'}</span>
+            <strong>{ocr?.provider === 'mineru' ? 'MinerU' : 'PaddleOCR'}</strong>
+            <span>{ocr?.configured ? '已配置' : '尚未配置'}</span>
           </div>
-          <p>令牌和识别模型在 AI 助手设置中统一管理。</p>
+          <p>OCR 服务令牌在 AI 助手设置中管理，RetainPDF 会执行实际识别。</p>
           {!ocr?.configured ? <button type="button" onClick={onOpenAISettings}>打开 AI 助手设置</button> : null}
         </div>
 
@@ -145,7 +124,7 @@ export function ExportPDFDialog({ documentKey, document, pageCount, onClose, onO
 
       <footer>
         <button type="button" onClick={onClose} disabled={phase === 'working'}>取消</button>
-        <button type="button" className="primary" disabled={phase === 'working' || !renderStatus?.available} onClick={() => void run()}>
+        <button type="button" className="primary" disabled={phase === 'working'} onClick={() => void run()}>
           {phase === 'working' ? '生成中…' : '生成译文 PDF'}
         </button>
       </footer>

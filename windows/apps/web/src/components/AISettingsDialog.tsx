@@ -586,7 +586,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
             模型
             <input value={ocrModel} disabled={savingOCR} onChange={(event) => setOCRModel(event.target.value)} aria-label="PaddleOCR 模型" />
           </label>
-          <p className="ai-hint">PDF 识别采用 PaddleOCR，本地上传上限 50 MB、单次最多 1000 页。令牌仅保存在本机配置中。</p>
+          <p className="ai-hint">RetainPDF 会使用此 OCR 服务完成整篇识别。上传上限默认 512 MB，实际页数与文件限制由 OCR 服务决定；令牌仅保存在本机配置中。</p>
           <div className="ai-ocr-actions">
             <button type="button" className="ai-save-button" disabled={savingOCR || !ocrSettings} onClick={() => void saveOCR()}>
               {savingOCR ? '保存中…' : '保存 OCR 设置'}

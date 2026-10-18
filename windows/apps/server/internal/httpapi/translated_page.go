@@ -606,6 +606,9 @@ type translatedPageStats struct {
 
 // handleTranslatedPage 返回单页译文 PDF（原页 + 译文叠加层），供阅读器直接渲染。
 func (s *Server) handleTranslatedPage(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusGone, "单页 ReadX 排版已停用；请通过 RetainPDF 完整文档任务生成译文 PDF")
+	return
+
 	key, ok := pathKey(w, r)
 	if !ok {
 		return

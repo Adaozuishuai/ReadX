@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"cbctv2/server/internal/render"
 )
@@ -140,6 +141,32 @@ func (s *Server) updateImportJob(key string, mutate func(*DocumentJob)) {
 func (s *Server) jobStage(key, stage, status, message string, completed, total int) {
 	s.updateImportJob(key, func(job *DocumentJob) {
 		job.setStage(stage, status, message, completed, total)
+	})
+}
+
+func (s *Server) jobRetainProgress(key, stage, message string, completed, total, pages int, unit string) {
+	s.updateImportJob(key, func(job *DocumentJob) {
+		job.setStage(stage, "running", message, completed, total)
+		if current := job.stage(stage); current != nil {
+			switch strings.ToLower(strings.TrimSpace(unit)) {
+			case "page":
+				current.Unit = "页"
+			case "block":
+				current.Unit = "段"
+			case "batch":
+				current.Unit = "批"
+			case "step":
+				current.Unit = "步"
+			case "percent":
+				current.Unit = "%"
+			}
+		}
+		if pages > 0 {
+			job.Pages = pages
+			if len(job.Runs) > 0 {
+				job.Runs[len(job.Runs)-1].Pages = pages
+			}
+		}
 	})
 }
 

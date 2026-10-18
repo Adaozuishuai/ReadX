@@ -34,8 +34,12 @@ func defaultOCRConfig() ocrConfig {
 
 // loadOCRConfig 读 app/config.json 的 ocr 段；文件不存在时返回默认值。
 func (s *Server) loadOCRConfig() (ocrConfig, error) {
+	return loadOCRConfigForRoot(s.cfg.DataRoot)
+}
+
+func loadOCRConfigForRoot(dataRoot string) (ocrConfig, error) {
 	config := defaultOCRConfig()
-	body, err := os.ReadFile(legacy.NewPaths(s.cfg.DataRoot).ConfigFile())
+	body, err := os.ReadFile(legacy.NewPaths(dataRoot).ConfigFile())
 	if errors.Is(err, os.ErrNotExist) {
 		return config, nil
 	}
