@@ -20,7 +20,19 @@ import (
 // Its source and MIT license are embedded so the desktop app does not depend on
 // the user's tmp/retain-pdf checkout.
 //
+// Go embed ignores underscore-prefixed files reached through directory patterns.
+// Retain's Python packages depend on these package initializers, so list each
+// one explicitly in the embedded FS.
+//
 //go:embed retain_runtime
+//go:embed retain_runtime/retainpdf_base/__init__.py
+//go:embed retain_runtime/retainpdf_pipeline/__init__.py
+//go:embed retain_runtime/retainpdf_pipeline/ocr/__init__.py
+//go:embed retain_runtime/retainpdf_pipeline/ocr/document_schema/__init__.py
+//go:embed retain_runtime/retainpdf_pipeline/ocr/document_schema/provider_adapters/__init__.py
+//go:embed retain_runtime/retainpdf_pipeline/ocr/document_schema/provider_adapters/common/__init__.py
+//go:embed retain_runtime/retainpdf_pipeline/ocr/document_schema/provider_adapters/mineru/__init__.py
+//go:embed retain_runtime/retainpdf_pipeline/ocr/document_schema/provider_adapters/paddle/__init__.py
 var retainRuntime embed.FS
 
 var (
