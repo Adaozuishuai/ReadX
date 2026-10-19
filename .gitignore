@@ -4,6 +4,7 @@
 !/.gitattributes
 !/.github/
 !/README.md
+!/docs/
 !/windows/
 !/macos/
 .DS_Store

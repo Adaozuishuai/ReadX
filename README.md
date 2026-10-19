@@ -1,91 +1,128 @@
 <p align="center">
-  <img src="windows/apps/web/public/icon-512.png" alt="ReadX 图标" width="120" height="120">
+  <img src="windows/apps/web/public/icon-512.png" alt="ReadX app icon" width="112" height="112">
 </p>
 
-<h1 align="center">ReadX · Research Workspace</h1>
-
-<hr>
-
-<p align="center">
-  <a href="#zh">简体中文</a> | <a href="#en">English</a>
-</p>
+<h1 align="center">ReadX</h1>
+<p align="center"><strong>Research papers, read with context.</strong><br>把论文读懂，也把图表、译文与研究思路连起来。</p>
 
 <p align="center">
-  <a href="windows/README.md"><img alt="Windows" src="https://img.shields.io/badge/Windows-supported-2b6651?style=flat-square&logo=windows&logoColor=white"></a>
-  <a href="macos/README.md"><img alt="macOS" src="https://img.shields.io/badge/macOS-supported-2b6651?style=flat-square&logo=apple&logoColor=white"></a>
-  <img alt="React" src="https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white">
-  <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00add8?style=flat-square&logo=go&logoColor=white">
-  <img alt="Electron" src="https://img.shields.io/badge/Electron-44-47848f?style=flat-square&logo=electron&logoColor=white">
-  <img alt="Documents" src="https://img.shields.io/badge/PDF%20%2B%20EPUB-reading-2b6651?style=flat-square">
+  <a href="https://github.com/Leechion/ReadX/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Leechion/ReadX?display_name=tag&style=flat-square&color=276653"></a>
+  <a href="https://github.com/Leechion/ReadX/actions/workflows/release-windows.yml"><img alt="Windows release" src="https://img.shields.io/github/actions/workflow/status/Leechion/ReadX/release-windows.yml?branch=main&label=Windows%20release&style=flat-square"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-276653?style=flat-square&logo=windows&logoColor=white">
+  <img alt="Stack" src="https://img.shields.io/badge/React%20%2B%20Go%20%2B%20Electron-Research%20Workspace-496f61?style=flat-square">
 </p>
 
 <p align="center">
-  <a href="https://github.com/Leechion/cbct-reading"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Leechion/cbct-reading?style=flat-square&color=2b6651&logo=github"></a>
-  <img alt="Codex Desktop" src="https://img.shields.io/badge/AI-Codex%20Desktop-2b6651?style=flat-square">
-  <img alt="Local first" src="https://img.shields.io/badge/data-local%20first-2b6651?style=flat-square">
+  <a href="#中文">简体中文</a> · <a href="#english">English</a> · <a href="windows/README.md">开发与详细使用说明</a>
 </p>
-
-<a id="zh"></a>
-
-> 面向科研阅读的本地工作区：阅读 PDF 与 EPUB、对照原文翻译、整理图表，并用 AI 助教完成论文的**精读五重奏**——实验动机、方法公式、实验配置、结果分析和代码复现。图表会结合分析归入相关步骤，精读内容按节保存，方便继续阅读与追问。
-
-<a id="en"></a>
-
-<p align="center"><em>A local research workspace for reading PDF and EPUB papers, comparing translations with the source, organizing figures and tables, and studying each paper through five focused steps: motivation, methods and equations, experimental setup, results, and reproduction. Relevant figures are placed alongside their analysis, while notes are saved section by section for follow-up reading.</em></p>
 
 <p align="center">
-  <a href="windows/README.md">Windows 使用说明</a> ·
-  <a href="macos/README.md">macOS 使用说明</a> ·
-  <a href="https://github.com/Leechion/cbct-reading">GitHub 仓库</a>
+  <a href="https://github.com/Leechion/ReadX/releases/latest"><strong>下载 Windows 版</strong></a>
 </p>
 
-## 功能一览
+---
 
-- **论文阅读**：阅读 PDF 与可重排 EPUB，支持目录导航、阅读位置恢复、选区批注、段落提问与双语阅读。
-- **翻译引擎**：按 RetainPDF 的翻译链重写——代码/链接/邮箱占位符保护、逐条质检与单条重译；译文按原页文字块坐标回填版式。
-- **译文 PDF**：内置 RetainPDF 的 rpr 排版引擎，把译文按原页版式重排并叠回原 PDF；扫描件可用 PaddleOCR 解析版式后再渲染，公式、表格、图片与作者信息保持原样。
-- **精读五重奏**：按五个研究步骤逐节生成和保存分析；方法公式以 LaTeX 排版，结果可保留原表格，复现计划可整理为任务清单。
-- **图表结合分析**：识别图表候选并从原 PDF 裁切；可校正或补选图表。AI 分析时将相关图表放进对应步骤和小节正文。
-- **AI 助教**：对话按论文保存在本机，支持停止、重新回答、公式和代码排版，以及从回答定位出处。可选择 Codex Desktop 中可用的模型与推理强度。
-- **本机数据**：论文、阅读记录与批注保存在本机。AI 请求发送到当前配置的渠道；Codex 接入使用已登录的 Codex Desktop，不需要另装 CLI。
+<a id="中文"></a>
 
-## 最近更新（2026-10-18）
+## 从导入到理解，一处完成
 
-- **翻译引擎**：翻译链按 RetainPDF 的做法重写：代码、链接与邮箱先做占位符保护；译文逐条检查占位符、数字、残留英文与截断，问题段落带清单单独重译。
-- **译文 PDF**：内置 RetainPDF 的 rpr 排版引擎（MIT）与其思源宋体资源，按原页版式重排译文并叠回原 PDF；扫描件接入 PaddleOCR 文档解析，公式、表格、图片和作者/单位信息保持原样。
-- **导入即排版翻译**：PDF 导入只走 RetainPDF 链路，**必须配置 PaddleOCR 与 AI**，否则直接导入失败。导入时先识别段落、按上游块类型与策略逐页翻译，并保存每页块坐标；阅读器直接显示按原版式排好的译文页，扫描件也可导入。
-- **任务进度面板**：阅读工具栏“任务进度”打开 OCR → 翻译 → 渲染 三阶段面板，含逐页覆盖、实时译文入口、取消与历史记录；渲染在后台按页完成。
-- **品牌与图标**：应用、网页标题、Windows 桌面快捷方式和启动器统一使用 ReadX；应用图标更新为 Figma 设计的绿色书本与 AI 星芒标志。
-- **Codex AI 助教**：直接连接已登录的 Codex Desktop 程序，动态读取可用模型及其推理强度；选择会保存并用于后续对话和精读，无需另装 Codex CLI。
-- **对话工作区**：采用 Codex 风格的输入与模型控制布局；支持按论文保存多组对话、停止和重试、原文引用定位、文本附件与语音输入。
-- **精读五重奏**：新增逐页图像阅读与复核、长论文分层串联和分节增量保存。精读正文以可读 Markdown 为主，结构化字段独立整理，避免公式或正文因 JSON 解析失败而整体丢失。
-- **图表分析**：改进双栏图注、矢量图形和多面板边界识别；支持原页补选、校正和忽略误识别。AI 分析时把选中的真实图表嵌入对应步骤与小节正文。
+ReadX 是面向科研论文的本地阅读工作区。导入 PDF 后，ReadX 识别页面与段落、翻译并保留原有排版；阅读时可在原文和译文间对照，再用 AI 助教和精读五重奏梳理论文的方法、实验与结果。
 
-## 快速开始
+<p align="center">
+  <img src="docs/images/readx-workflow.svg" alt="ReadX 从论文导入、OCR 和翻译，到双语阅读、精读与导出的工作流程" width="100%">
+</p>
 
-需要 Node.js 20.19+ 和 Go 1.27+。Windows：
+### 主要功能
+
+| 阅读与理解 | 研究与整理 |
+| --- | --- |
+| **PDF / EPUB 阅读**：目录导航、阅读位置恢复、选区批注；PDF 支持原文、译文和双语对照。 | **精读五重奏**：实验动机、方法公式、实验配置、结果分析、代码复现分别分析、分别保存。 |
+| **保留版式的翻译**：识别段落和版面结构，译文按原页位置呈现；可重新翻译书库中的论文。 | **图表融入分析**：识别并裁切论文中的图表，在分析相应章节时把相关图表直接放入正文。 |
+| **AI 助教**：围绕当前论文提问；对话按论文保存在本机。 | **模型可选**：配置兼容 API，或连接已登录的 Codex Desktop；可选择可用模型和推理强度。 |
+| **译文 PDF**：生成保留原页面布局的译文 PDF，便于阅读与分享。 | **本地优先**：论文文件、阅读进度、批注和精读记录保存在本机。 |
+
+## 精读五重奏
+
+五个部分可以单独生成，并行处理；分析会复用导入时整理的论文上下文。图表与对应章节一起进入分析正文，公式和结果表格保留为可读格式。
+
+<p align="center">
+  <img src="docs/images/readx-quintet.svg" alt="精读五重奏的五个分析部分" width="100%">
+</p>
+
+## 下载与开始
+
+**当前提供 Windows 桌面版。** 在 [最新 Release](https://github.com/Leechion/ReadX/releases/latest) 下载 `ReadX-Setup-*.exe`，运行安装程序后从桌面或开始菜单启动。
+
+首次使用请在 **AI 设置**中配置翻译和问答所用的服务。若使用 Codex Desktop，先在 Codex 中登录，再在 ReadX 的 AI 设置中选择 Codex。不同服务的配置方式见[详细指南](windows/README.md#ai-接入)。
+
+> v0.1.3 首次加入应用内检查更新。已安装 v0.1.2 或更早版本的用户，请先从 Release 页面安装一次 v0.1.3；后续版本可以从应用内检查和安装。
+
+## 更新内容 · v0.1.3
+
+- 新增应用内检查更新，可查看版本说明并选择立即更新或暂不更新。
+- 精读五重奏支持五部分并行生成，复用导入阶段建立的论文上下文。
+- 书库支持重新翻译；阅读器支持连续滚动和双语对照跳转。
+- 改进 Windows 导入、OCR 与翻译进度对应关系，并修复精读表格布局问题。
+
+更多细节见 [v0.1.3 Release](https://github.com/Leechion/ReadX/releases/tag/v0.1.3)。
+
+## 数据与隐私
+
+ReadX 的论文、阅读位置、批注和精读内容保存在本机。使用云端模型时，相关论文文本或提问内容会发送给你在 AI 设置中选择的服务；请在使用前查看该服务的隐私政策。API Key 保存在本机配置中，请勿将密钥提交到仓库。
+
+## 开发者
+
+Windows 开发环境需要 Node.js 20.19+ 和 Go 1.27+：
 
 ```powershell
 cd windows
 npm ci
-npm start
+npm run dev
 ```
 
-安装依赖后，也可以双击 `windows/启动 ReadX.cmd` 启动。macOS 请按 [macOS 使用说明](macos/README.md) 中的步骤运行。
-
-开发与构建：
+生产构建：
 
 ```powershell
-cd windows
-npm run dev
 npm run build
 ```
 
-## 本机数据
+完整的 Windows 功能、AI 接入、数据位置和构建说明见 [`windows/README.md`](windows/README.md)。
 
-论文副本默认位于仓库根目录的 `library/`；配置位于 `app/config.json`，阅读数据库位于 `app/data/v2/reader.db`。本机论文、配置和数据库不随源码提交。请勿将真实 API Key 提交到 Git。
+## 鸣谢
 
-## 文档
+感谢开源文档处理、OCR、PDF 渲染和论文元数据项目的维护者。第三方组件及许可信息随仓库相应目录提供。
 
-- [Windows 版完整功能、AI 接入与开发说明](windows/README.md)
-- [macOS 版使用说明](macos/README.md)
+---
+
+<a id="english"></a>
+
+## English
+
+ReadX is a local-first research reading workspace. Import a PDF, read the source alongside its translation, ask an AI tutor questions about the paper, and build a structured understanding with the five-part deep-reading workflow.
+
+### What you can do
+
+- Read PDF and EPUB papers with table-of-contents navigation, saved reading position, and annotations.
+- Translate PDFs while preserving page layout, then compare source and translation side by side.
+- Ask questions in a paper-specific AI chat and choose from the models available to your configured provider or signed-in Codex Desktop.
+- Analyze motivation, methods and equations, experimental setup, results, and reproduction as five independent sections.
+- Bring figures and tables into the relevant analysis section, and export translated PDFs or reading notes.
+- Keep papers, notes, annotations, and reading progress on your computer.
+
+### Download
+
+Download the Windows installer from [the latest GitHub Release](https://github.com/Leechion/ReadX/releases/latest). Configure an AI provider in **AI Settings** before using translation or AI features. See the [Windows guide](windows/README.md) for setup details.
+
+### Build from source
+
+Requires Node.js 20.19+ and Go 1.27+.
+
+```powershell
+cd windows
+npm ci
+npm run dev
+```
+
+---
+
+<p align="center"><sub>ReadX · Research Workspace · Windows</sub></p>
