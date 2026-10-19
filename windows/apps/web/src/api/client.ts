@@ -277,7 +277,7 @@ export interface AnnotationListResponse {
   total: number;
 }
 
-export interface RetainParagraph {
+export interface LeeParagraph {
   index: number;
   text: string;
   box: [number, number, number, number];
@@ -287,12 +287,12 @@ export interface RetainParagraph {
   translatable: boolean;
 }
 
-export interface RetainParagraphs {
+export interface LeeParagraphs {
   available: boolean;
   page: number;
   width: number;
   height: number;
-  blocks: RetainParagraph[];
+  blocks: LeeParagraph[];
 }
 
 export interface TranslatedPDFResponse {
@@ -839,7 +839,7 @@ export const api = {
       )
     ).arrayBuffer(),
   paragraphs: (key: string, page: number, signal?: AbortSignal) =>
-    request<RetainParagraphs>(
+    request<LeeParagraphs>(
       `/v1/documents/${encodeURIComponent(key)}/pages/${page}/paragraphs`,
       { signal },
     ),
@@ -933,7 +933,7 @@ export const api = {
     request<ReadingsResponse>(`/v1/readings/${encodeURIComponent(key)}`, {
       signal,
     }),
-  /** 校验并返回 RetainPDF 导入阶段生成的排版译文 PDF 信息。 */
+  /** 校验并返回 LeePDF 导入阶段生成的排版译文 PDF 信息。 */
   translatedPDF: (key: string, body: { pageCount: number }, signal?: AbortSignal) =>
     request<TranslatedPDFResponse>(`/v1/documents/${encodeURIComponent(key)}/translated-pdf`, {
       method: 'POST',

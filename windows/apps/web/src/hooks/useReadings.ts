@@ -14,11 +14,12 @@ export interface ReadingState {
 /** Load durable readings and apply completed subsection updates during generation. */
 export function useReadings(key: string | null) {
   const [state, setState] = useState<ReadingState>({ entries: {}, loading: false, error: null });
-  const [generating, setGenerating] = useState<ReadingKind | 'visuals' | null>(null);
-  const [progress, setProgress] = useState<GenerateProgress | null>(null);
-  const [notice, setNotice] = useState<GenerateResponse | null>(null);
+  const [generating, setGenerating] = useState<Partial<Record<ReadingKind | 'visuals', boolean>>>({});
+  const [progress, setProgress] = useState<Partial<Record<ReadingKind | 'visuals', GenerateProgress>>>({});
+  const [jobErrors, setJobErrors] = useState<Partial<Record<ReadingKind | 'visuals', string>>>({});
+  const [notices, setNotices] = useState<Partial<Record<ReadingKind | 'visuals', GenerateResponse>>>({});
   const epoch = useRef(0);
-  const request = useRef<AbortController | null>(null);
+  const request = useRef(new Map<ReadingKind | 'visuals', AbortController>());
   const loadSequence = useRef(0);
 
   const reload = useCallback(async () => {
@@ -46,7 +47,14 @@ export function useReadings(key: string | null) {
       }
       const visualRaw = response.entries.visualAnalysis as ReadingEntry | undefined;
       const visualAnalysis = visualRaw && typeof visualRaw === 'object' && Array.isArray(visualRaw.visuals) ? visualRaw : undefined;
-      setState({ entries, loading: false, error: null, visualAnalysis });
+      setState((current) => {
+        // A parallel reload must not replace a newer streamed partial result for
+        // another section that is still running.
+        for (const kind of request.current.keys()) {
+          if (current.entries[kind as ReadingKind]) entries[kind as ReadingKind] = current.entries[kind as ReadingKind];
+        }
+        return { entries, loading: false, error: null, visualAnalysis };
+      });
     } catch (error) {
       if (generation === epoch.current && sequence === loadSequence.current) setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) }));
     }
@@ -54,25 +62,27 @@ export function useReadings(key: string | null) {
 
   useEffect(() => {
     ++epoch.current;
-    request.current?.abort(); request.current = null;
+    for (const controller of request.current.values()) controller.abort();
+    request.current.clear();
     setState({ entries: {}, loading: true, error: null });
-    setGenerating(null); setProgress(null); setNotice(null);
+    setGenerating({}); setProgress({}); setJobErrors({}); setNotices({});
     void reload();
-    return () => { ++epoch.current; request.current?.abort(); request.current = null; };
+    return () => { ++epoch.current; for (const controller of request.current.values()) controller.abort(); request.current.clear(); };
   }, [reload]);
 
   const generate = useCallback(
-    async (kind: ReadingKind | 'visuals', visuals: ReadingVisualReference[] | ((signal: AbortSignal, progress: (value: GenerateProgress) => void) => Promise<ReadingVisualReference[] | ReadingGenerationInput>) = []) => {
-      if (!key || request.current) return false;
+    async (kind: ReadingKind | 'visuals', visuals: ReadingVisualReference[] | ReadingGenerationInput | ((signal: AbortSignal, progress: (value: GenerateProgress) => void) => Promise<ReadingVisualReference[] | ReadingGenerationInput>) = []) => {
+      if (!key || request.current.has(kind)) return false;
       const generation = epoch.current;
       const controller = new AbortController();
-      request.current = controller;
-      setGenerating(kind);
+      request.current.set(kind, controller);
+      setGenerating((current) => ({ ...current, [kind]: true }));
+      setProgress((current) => ({ ...current, [kind]: { percent: 2, message: '正在准备精读任务…' } }));
+      setJobErrors((current) => ({ ...current, [kind]: undefined }));
       setState((current) => ({ ...current, error: null }));
-      setProgress({ percent: 2, message: '正在准备精读任务…' });
-      setNotice(null);
+      setNotices((current) => ({ ...current, [kind]: undefined }));
       try {
-        const report = (value: GenerateProgress) => { if (epoch.current === generation) setProgress(value); };
+        const report = (value: GenerateProgress) => { if (epoch.current === generation && request.current.get(kind) === controller) setProgress((current) => ({ ...current, [kind]: value })); };
         const input = typeof visuals === 'function' ? await visuals(controller.signal, report) : visuals;
         const references = Array.isArray(input) ? input : input.visuals;
         const paper = Array.isArray(input) ? undefined : { workflow: input.workflow, fingerprint: input.fingerprint, pageCount: input.pageCount, unavailableVisuals: input.unavailableVisuals };
@@ -80,23 +90,27 @@ export function useReadings(key: string | null) {
         const result = await api.generate(key, kind, references, report, controller.signal, (savedKind, entry) => {
           if (epoch.current === generation && savedKind === kind && kind !== 'visuals') setState((current) => ({ ...current, entries: { ...current.entries, [kind]: entry } }));
         }, paper);
-        if (epoch.current !== generation) return false;
-        setNotice(result);
+        if (epoch.current !== generation || request.current.get(kind) !== controller) return false;
+        setNotices((current) => ({ ...current, [kind]: result }));
         await reload();
         return result.saved;
       } catch (error) {
         // The image stage may have completed before prose generation failed.
         if (epoch.current === generation && !controller.signal.aborted) await reload();
-        if (epoch.current === generation) setState((current) => ({ ...current, error: controller.signal.aborted ? '已取消本次生成；已保存的记录仍可查看。' : error instanceof Error ? error.message : String(error) }));
+        if (epoch.current === generation && request.current.get(kind) === controller) setJobErrors((current) => ({ ...current, [kind]: controller.signal.aborted ? '已取消本节生成；已保存的内容仍可查看。' : error instanceof Error ? error.message : String(error) }));
         return false;
       } finally {
-        if (epoch.current === generation) { request.current = null; setGenerating(null); setProgress(null); }
+        if (epoch.current === generation && request.current.get(kind) === controller) {
+          request.current.delete(kind);
+          setGenerating((current) => ({ ...current, [kind]: false }));
+          setProgress((current) => ({ ...current, [kind]: undefined }));
+        }
       }
     },
     [key, reload],
   );
 
-  return { ...state, generating, progress, notice, generate, cancel: () => request.current?.abort(), clearNotice: () => setNotice(null), reload };
+  return { ...state, generating, progress, jobErrors, notices, generate, cancel: (kind?: ReadingKind | 'visuals') => { if (kind) request.current.get(kind)?.abort(); else for (const controller of request.current.values()) controller.abort(); }, reload };
 }
 
 /** 把条目 JSON 解析成「分组 → 字段」结构供界面渲染；解析失败时原样给出错误。 */

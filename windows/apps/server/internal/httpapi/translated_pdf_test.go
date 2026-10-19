@@ -19,8 +19,8 @@ import (
 	"cbctv2/server/internal/render"
 )
 
-// RetainPDF 负责生成译文文件；ReadX 的导出接口只校验处理记录并返回现成产物。
-func TestTranslatedPDFReusesRetainArtifact(t *testing.T) {
+// LeePDF 负责生成译文文件；ReadX 的导出接口只校验处理记录并返回现成产物。
+func TestTranslatedPDFReusesLeeArtifact(t *testing.T) {
 	bundle, paths := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
 	encoded, _ := json.Marshal(map[string]any{"pages": []any{map[string]any{"page": 1}}, "pageCount": 1})
@@ -40,10 +40,10 @@ func TestTranslatedPDFReusesRetainArtifact(t *testing.T) {
 	}
 	res, payload := post(t, bundle, http.MethodPost, "/v1/documents/2209.14540/translated-pdf", string(encoded))
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("复用 RetainPDF 译文失败: %d %v", res.StatusCode, payload)
+		t.Fatalf("复用 LeePDF 译文失败: %d %v", res.StatusCode, payload)
 	}
 	if payload["pages"] != float64(1) || payload["blocks"] == float64(0) {
-		t.Fatalf("Retain 产物状态异常: %v", payload)
+		t.Fatalf("Lee 产物状态异常: %v", payload)
 	}
 	output, err := os.ReadFile(filepath.Join(paths.LibraryDir(), "2209.14540-translated.pdf"))
 	if err != nil {
@@ -165,7 +165,7 @@ func TestTranslatedPageOCRReturnsSinglePagePDF(t *testing.T) {
 	}
 }
 
-// TestImportRunsPaddleOCRAndStoresLayout 验证「导入那一步就换成 Retain 的翻译链」：
+// TestImportRunsPaddleOCRAndStoresLayout 验证「导入那一步就换成 Lee 的翻译链」：
 // 配置 OCR 后，导入用 PaddleOCR 识别段落、按策略翻译，并把每页块坐标写入 app_state；
 // 阅读器随后按页渲染时不再调用 OCR。
 func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
@@ -238,7 +238,7 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 	if key == "" {
 		t.Fatalf("没有返回文档 key: %v", entry)
 	}
-	// Retain 本身不做题录识别；导入后应先用 OCR 首页文本补回标题。
+	// Lee 本身不做题录识别；导入后应先用 OCR 首页文本补回标题。
 	if title, _ := document["title"].(string); title != "OCR Import Paper" {
 		t.Fatalf("导入后题名未识别: %q", title)
 	}
@@ -248,14 +248,14 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 	if res.StatusCode != http.StatusOK || layout["available"] != true || layout["pages"] != float64(1) {
 		t.Fatalf("OCR 版式状态异常: %d %v", res.StatusCode, layout)
 	}
-	// 1b) 阅读器段落识别直接读 Retain 段落块。
+	// 1b) 阅读器段落识别直接读 Lee 段落块。
 	res, paragraphs := post(t, bundle, http.MethodGet, "/v1/documents/"+key+"/pages/1/paragraphs", "")
 	if res.StatusCode != http.StatusOK || paragraphs["available"] != true {
-		t.Fatalf("Retain 段落接口异常: %d %v", res.StatusCode, paragraphs)
+		t.Fatalf("Lee 段落接口异常: %d %v", res.StatusCode, paragraphs)
 	}
 	blocks, _ := paragraphs["blocks"].([]any)
 	if len(blocks) == 0 {
-		t.Fatalf("Retain 没有返回段落块: %v", paragraphs)
+		t.Fatalf("Lee 没有返回段落块: %v", paragraphs)
 	}
 	found := false
 	for _, raw := range blocks {
@@ -265,7 +265,7 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("Retain 段落缺少正文块: %v", blocks)
+		t.Fatalf("Lee 段落缺少正文块: %v", blocks)
 	}
 	// 2) OCR 段落的译文已随导入入库（按段落哈希）。
 	var rows int
@@ -313,15 +313,15 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 		t.Fatalf("任务未在 20s 内完成: %v", job)
 	}
 
-	// 3) 导入已由 RetainPDF 生成整本译文，导出接口直接复用该 PDF。
+	// 3) 导入已由 LeePDF 生成整本译文，导出接口直接复用该 PDF。
 	paddle.Close()
 	response, payload := post(t, bundle, http.MethodPost, "/v1/documents/"+key+"/translated-pdf", `{"pageCount":1}`)
 	if response.StatusCode != http.StatusOK {
-		t.Fatalf("复用 RetainPDF 成品失败: %d %v", response.StatusCode, payload)
+		t.Fatalf("复用 LeePDF 成品失败: %d %v", response.StatusCode, payload)
 	}
 	translated, err := os.ReadFile(filepath.Join(paths.LibraryDir(), key+"-translated.pdf"))
 	if err != nil || !bytes.HasPrefix(translated, []byte("%PDF")) {
-		t.Fatalf("RetainPDF 成品无效: %v", err)
+		t.Fatalf("LeePDF 成品无效: %v", err)
 	}
 
 	// 4) 阅读器按页取译文必须复用导入缓存：模型端点已关闭，仍应成功。
@@ -384,13 +384,13 @@ func TestTranslatedPageRejectsMissingSize(t *testing.T) {
 	}
 }
 
-func TestTranslatedPDFRequiresRetainArtifact(t *testing.T) {
+func TestTranslatedPDFRequiresLeeArtifact(t *testing.T) {
 	bundle, _ := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
 	body := `{"pages":[{"page":2,"width":595,"height":842,"blocks":[]}]}`
 	res, payload := post(t, bundle, http.MethodPost, "/v1/documents/2209.14540/translated-pdf", body)
 	if res.StatusCode != http.StatusConflict {
-		t.Fatalf("没有 RetainPDF 产物时应要求重新导入，实际 %d %v", res.StatusCode, payload)
+		t.Fatalf("没有 LeePDF 产物时应要求重新导入，实际 %d %v", res.StatusCode, payload)
 	}
 }
 
@@ -410,7 +410,7 @@ func TestTranslatedPDFDoesNotRunLegacyOCRFallback(t *testing.T) {
 	}
 	res, payload = post(t, bundle, http.MethodPost, "/v1/documents/2209.14540/translated-pdf", `{"pageCount":1}`)
 	if res.StatusCode != http.StatusConflict {
-		t.Fatalf("旧文档无 RetainPDF 成品时应要求重新导入，实际 %d %v", res.StatusCode, payload)
+		t.Fatalf("旧文档无 LeePDF 成品时应要求重新导入，实际 %d %v", res.StatusCode, payload)
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("导出接口不应触发 ReadX 的 OCR 回退，调用 %d 次", calls.Load())

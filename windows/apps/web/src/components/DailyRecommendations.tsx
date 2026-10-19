@@ -90,7 +90,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       const downloaded = await api.downloadPublication(paper.pdfUrl, paper.title, current.signal, (received, total) => {
         setProgress(total > 0 ? `正在下载：${Math.round((received / total) * 100)}%` : `正在下载：${Math.round(received / 1048576)} MB`);
       });
-      setProgress('正在交给 RetainPDF 处理全文…');
+      setProgress('正在交给 LeePDF 处理全文…');
       const hint = {
         title: paper.title,
         author: paper.authors.join(', '),
@@ -108,7 +108,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       setProgress(
         imported?.existing
           ? '论文已在书库中，译文已就绪'
-          : `已导入书库：RetainPDF 译文已保存${imported?.warning ? `（${imported.warning}）` : ''}`,
+          : `已导入书库：LeePDF 译文已保存${imported?.warning ? `（${imported.warning}）` : ''}`,
       );
       onReload();
     } catch (cause) {

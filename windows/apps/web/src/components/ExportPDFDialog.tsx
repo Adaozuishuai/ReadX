@@ -4,7 +4,7 @@ import { api, type TranslatedPDFResponse } from '../api/client';
 /**
  * 生成保留排版的译文 PDF。
  *
- * RetainPDF creates the translated PDF during import. ReadX only reuses and downloads it.
+ * LeePDF creates the translated PDF during import. ReadX only reuses and downloads it.
  */
 type Phase = 'idle' | 'working' | 'done' | 'error';
 
@@ -49,7 +49,7 @@ export function ExportPDFDialog({ documentKey, pageCount, onClose }: Props) {
     setResult(null);
     setProgress('');
     try {
-      setProgress(`正在读取 RetainPDF 已生成的译文（共 ${pageCount} 页）…`);
+      setProgress(`正在读取 LeePDF 已生成的译文（共 ${pageCount} 页）…`);
       const response = await api.translatedPDF(documentKey, { pageCount });
       setResult(response);
       setPhase('done');
@@ -75,7 +75,7 @@ export function ExportPDFDialog({ documentKey, pageCount, onClose }: Props) {
       <header>
         <div>
           <h2>导出译文 PDF</h2>
-          <small>译文由 RetainPDF 在导入时生成；ReadX 直接提供成品下载。</small>
+          <small>译文由 LeePDF 在导入时生成；ReadX 直接提供成品下载。</small>
         </div>
         <button type="button" disabled={phase === 'working'} onClick={onClose}>关闭</button>
       </header>

@@ -1,6 +1,6 @@
 // translated_page.go：阅读器按页取「排版后的译文页」。
 //
-// 这是 RetainPDF 完整翻译链在 ReadX 里的落点：
+// 这是 LeePDF 完整翻译链在 ReadX 里的落点：
 //  1. 用 PaddleOCR 做整篇文档解析（结果按原 PDF 内容哈希缓存在本机）；
 //  2. 按上游 document.v1 的翻译策略挑出正文/标题/摘要/图注块，参考文献、脚注、
 //     页眉页脚、公式、表格、图片一律保留原样；
@@ -82,8 +82,8 @@ type layoutBlock struct {
 	ProviderContinuationOrder int            `json:"providerContinuationOrder"`
 	ProviderContinuationScore float64        `json:"providerContinuationScore"`
 	ProviderContinuationSkip  string         `json:"providerContinuationSkip,omitempty"`
-	RetainMetadata            map[string]any `json:"retainMetadata,omitempty"`
-	RetainContent             map[string]any `json:"retainContent,omitempty"`
+	LeeMetadata            map[string]any `json:"retainMetadata,omitempty"`
+	LeeContent             map[string]any `json:"retainContent,omitempty"`
 }
 
 type layoutPage struct {
@@ -112,7 +112,7 @@ func importPageSizes(pages []publicationPageHint) ([]ocr.Size, bool) {
 	return sizes, complete
 }
 
-// prepareOCRLayoutTranslations 是导入阶段的 RetainPDF 翻译链：
+// prepareOCRLayoutTranslations 是导入阶段的 LeePDF 翻译链：
 // OCR 识别段落 → 按上游策略挑块 → 逐段翻译（含跨页上下文）→ 记录每页块坐标。
 // 返回 handled=false 表示 OCR 没有产生可用页面，导入链路会报错而不静默换成文本层结果。
 func (s *Server) prepareOCRLayoutTranslations(ctx context.Context, pdf []byte, sizes []ocr.Size, metadata *recognizedPaperMetadata, progress ...func(completed, total, start, end, cached, untranslated int)) (bool, error) {
@@ -276,7 +276,7 @@ func (s *Server) prepareOCRLayoutTranslations(ctx context.Context, pdf []byte, s
 	if err != nil {
 		return false, err
 	}
-	// RetainPDF runs repair and final recovery once for the complete document.
+	// LeePDF runs repair and final recovery once for the complete document.
 	// Keep that same document-wide boundary here instead of resetting limits per page.
 	type pendingTranslation struct {
 		item    translate.Item
@@ -459,7 +459,7 @@ func (s *Server) prepareOCRLayoutTranslations(ctx context.Context, pdf []byte, s
 				ProviderContinuationRole: block.ProviderContinuationRole, ProviderContinuationScope: block.ProviderContinuationScope,
 				ProviderContinuationOrder: block.ProviderContinuationOrder, ProviderContinuationScore: block.ProviderContinuationScore,
 				ProviderContinuationSkip: block.ProviderContinuationSkip,
-				RetainMetadata:           block.RetainMetadata, RetainContent: block.RetainContent,
+				LeeMetadata:           block.LeeMetadata, LeeContent: block.LeeContent,
 			})
 			if hasTranslationItem {
 				segments = append(segments, block.Text)
@@ -557,7 +557,7 @@ func layoutOCRPages(layout layoutDoc) []ocr.Page {
 				ProviderContinuationRole: block.ProviderContinuationRole, ProviderContinuationScope: block.ProviderContinuationScope,
 				ProviderContinuationOrder: block.ProviderContinuationOrder, ProviderContinuationScore: block.ProviderContinuationScore,
 				ProviderContinuationSkip: block.ProviderContinuationSkip,
-				RetainMetadata:           block.RetainMetadata,
+				LeeMetadata:           block.LeeMetadata,
 			})
 		}
 		pages[index] = page
@@ -621,7 +621,7 @@ type paragraphBlock struct {
 	Translatable bool       `json:"translatable"`
 }
 
-// handleDocumentParagraphs 返回 Retain document.v1 归一化后的页面段落：
+// handleDocumentParagraphs 返回 Lee document.v1 归一化后的页面段落：
 // 阅读器的「段落识别」直接使用这套块与坐标，不再用 PDF.js 重新切段。
 func (s *Server) handleDocumentParagraphs(w http.ResponseWriter, r *http.Request) {
 	key, ok := pathKey(w, r)
@@ -906,7 +906,7 @@ func (s *Server) renderTranslatedPage(ctx context.Context, key string, source []
 }
 
 // renderTranslatedDocument builds a complete translated PDF from the persisted
-// Retain-normalized layout and ReadX translation cache. OCR and paragraph
+// Lee-normalized layout and ReadX translation cache. OCR and paragraph
 // normalization are only rerun when the document has no saved layout.
 func (s *Server) renderTranslatedDocument(ctx context.Context, key string, source []byte, pages []ocr.Page, renderer *render.Renderer, outputPath string) (render.Report, error) {
 	if len(pages) == 0 {

@@ -16,7 +16,7 @@ import (
 )
 
 // UnrenderableFormula reports a formula rejected by the MathJax engine used by
-// the Retain PDF renderer.
+// the Lee PDF renderer.
 type UnrenderableFormula struct {
 	Tex   string `json:"tex"`
 	Error string `json:"error"`

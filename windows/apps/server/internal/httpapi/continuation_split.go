@@ -21,7 +21,7 @@ const (
 	continuationLeadingPunctuation = `，。、；：！？）】」』,.;:!?)]}`
 )
 
-// splitContinuationTranslation ports RetainPDF's group split policy: preserve
+// splitContinuationTranslation ports LeePDF's group split policy: preserve
 // protected formula tokens as atomic units, use source-length weights, and
 // prefer coherent sentence/clause boundaries in the translated paragraph.
 func splitContinuationTranslation(target string, members []translate.Item) []string {

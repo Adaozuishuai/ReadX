@@ -51,8 +51,8 @@ type garbledOutcome struct {
 	issues []Issue
 }
 
-// runGarbledReconstruction mirrors RetainPDF's post-primary reconstruction phase.
-// OCR imports do not retain RetainPDF formula maps, so this applies only source-text
+// runGarbledReconstruction mirrors LeePDF's post-primary reconstruction phase.
+// OCR imports do not retain LeePDF formula maps, so this applies only source-text
 // candidates available from the current normalized OCR blocks.
 func runGarbledReconstruction(ctx context.Context, generator Generator, items []Item, result *Result) {
 	if !garbledReconstructionEnabled() || ctx.Err() != nil || generator == nil || result == nil {
@@ -148,7 +148,7 @@ func shouldReconstructGarbled(item Item, translated string, issues []Issue) bool
 		if badFormula && lowQuality {
 			return true
 		}
-		// RetainPDF treats a mapped formula as a separate content identity. The
+		// LeePDF treats a mapped formula as a separate content identity. The
 		// OCR path has no formula map, so do not reconstruct ordinary math spans.
 		return false
 	}

@@ -16,12 +16,12 @@ import (
 	"sync"
 )
 
-// The OCR normalizer is the upstream RetainPDF document.v1 implementation.
+// The OCR normalizer is the upstream LeePDF document.v1 implementation.
 // Its source and MIT license are embedded so the desktop app does not depend on
 // the user's tmp/retain-pdf checkout.
 //
 // Go embed ignores underscore-prefixed files reached through directory patterns.
-// Retain's Python packages depend on these package initializers, so list each
+// Lee's Python packages depend on these package initializers, so list each
 // one explicitly in the embedded FS.
 //
 //go:embed retain_runtime
@@ -33,58 +33,58 @@ import (
 //go:embed retain_runtime/retainpdf_pipeline/ocr/document_schema/provider_adapters/common/__init__.py
 //go:embed retain_runtime/retainpdf_pipeline/ocr/document_schema/provider_adapters/mineru/__init__.py
 //go:embed retain_runtime/retainpdf_pipeline/ocr/document_schema/provider_adapters/paddle/__init__.py
-var retainRuntime embed.FS
+var leeRuntime embed.FS
 
 var (
-	retainRuntimeOnce sync.Once
-	retainRuntimePath string
-	retainRuntimeErr  error
+	leeRuntimeOnce sync.Once
+	leeRuntimePath string
+	leeRuntimeErr  error
 )
 
-type retainPageSize struct {
+type leePageSize struct {
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
 }
 
-type retainNormalizationRequest struct {
+type leeNormalizationRequest struct {
 	LayoutParsingResults []json.RawMessage `json:"layoutParsingResults"`
-	PageSizes            []retainPageSize  `json:"pageSizes"`
+	PageSizes            []leePageSize  `json:"pageSizes"`
 	DocumentID           string            `json:"documentId"`
 	ProviderVersion      string            `json:"providerVersion"`
 }
 
-type retainNormalizationResult struct {
-	Document retainDocument `json:"document"`
+type leeNormalizationResult struct {
+	Document leeDocument `json:"document"`
 	Report   map[string]any `json:"report"`
 }
 
-type retainDocument struct {
-	Pages []retainPage `json:"pages"`
+type leeDocument struct {
+	Pages []leePage `json:"pages"`
 }
 
-// ProjectNormalizedDocument converts RetainPDF's canonical document.v1 output
+// ProjectNormalizedDocument converts LeePDF's canonical document.v1 output
 // into the OCR page model used by the ReadX reader. OCR and structural
-// normalization stay owned by Retain; this projection is only the app boundary.
+// normalization stay owned by Lee; this projection is only the app boundary.
 func ProjectNormalizedDocument(data []byte) ([]Page, error) {
-	var document retainDocument
+	var document leeDocument
 	if err := json.Unmarshal(data, &document); err != nil {
-		return nil, fmt.Errorf("解析 RetainPDF document.v1 失败: %w", err)
+		return nil, fmt.Errorf("解析 LeePDF document.v1 失败: %w", err)
 	}
 	if len(document.Pages) == 0 {
-		return nil, errors.New("RetainPDF document.v1 没有页面")
+		return nil, errors.New("LeePDF document.v1 没有页面")
 	}
-	return projectRetainDocument(document)
+	return projectLeeDocument(document)
 }
 
-type retainPage struct {
+type leePage struct {
 	PageIndex int            `json:"page_index"`
 	Width     float64        `json:"width"`
 	Height    float64        `json:"height"`
 	Metadata  map[string]any `json:"metadata"`
-	Blocks    []retainBlock  `json:"blocks"`
+	Blocks    []leeBlock  `json:"blocks"`
 }
 
-type retainBlock struct {
+type leeBlock struct {
 	ID               string          `json:"block_id"`
 	PageIndex        int             `json:"page_index"`
 	Order            int             `json:"order"`
@@ -92,8 +92,8 @@ type retainBlock struct {
 	SubType          string          `json:"sub_type"`
 	BBox             []float64       `json:"bbox"`
 	Text             string          `json:"text"`
-	Lines            []retainLine    `json:"lines"`
-	Segments         []retainSegment `json:"segments"`
+	Lines            []leeLine    `json:"lines"`
+	Segments         []leeSegment `json:"segments"`
 	LayoutRole       string          `json:"layout_role"`
 	SemanticRole     string          `json:"semantic_role"`
 	StructureRole    string          `json:"structure_role"`
@@ -104,13 +104,13 @@ type retainBlock struct {
 	ContinuationHint map[string]any  `json:"continuation_hint"`
 }
 
-type retainLine struct {
+type leeLine struct {
 	BBox      []float64       `json:"bbox"`
 	Precision string          `json:"bbox_precision"`
-	Spans     []retainSegment `json:"spans"`
+	Spans     []leeSegment `json:"spans"`
 }
 
-type retainSegment struct {
+type leeSegment struct {
 	Type      string    `json:"type"`
 	RawType   string    `json:"raw_type"`
 	Text      string    `json:"text"`
@@ -119,23 +119,23 @@ type retainSegment struct {
 	Score     *float64  `json:"score"`
 }
 
-func normalizeWithRetain(ctx context.Context, raw []json.RawMessage, sizes []Size) (retainDocument, error) {
+func normalizeWithLee(ctx context.Context, raw []json.RawMessage, sizes []Size) (leeDocument, error) {
 	if len(raw) == 0 {
-		return retainDocument{}, errors.New("RetainPDF OCR 归一化没有收到页面")
+		return leeDocument{}, errors.New("LeePDF OCR 归一化没有收到页面")
 	}
-	root, err := materializeRetainRuntime()
+	root, err := materializeLeeRuntime()
 	if err != nil {
-		return retainDocument{}, fmt.Errorf("准备 RetainPDF OCR 归一化资源失败: %w", err)
+		return leeDocument{}, fmt.Errorf("准备 LeePDF OCR 归一化资源失败: %w", err)
 	}
-	python, prefixArgs, err := retainPythonCommand()
+	python, prefixArgs, err := leePythonCommand()
 	if err != nil {
-		return retainDocument{}, err
+		return leeDocument{}, err
 	}
-	pageSizes := make([]retainPageSize, len(sizes))
+	pageSizes := make([]leePageSize, len(sizes))
 	for index, size := range sizes {
-		pageSizes[index] = retainPageSize{Width: size.Width, Height: size.Height}
+		pageSizes[index] = leePageSize{Width: size.Width, Height: size.Height}
 	}
-	request := retainNormalizationRequest{
+	request := leeNormalizationRequest{
 		LayoutParsingResults: raw,
 		PageSizes:            pageSizes,
 		DocumentID:           "readx-paddle-ocr",
@@ -143,7 +143,7 @@ func normalizeWithRetain(ctx context.Context, raw []json.RawMessage, sizes []Siz
 	}
 	input, err := json.Marshal(request)
 	if err != nil {
-		return retainDocument{}, fmt.Errorf("准备 RetainPDF OCR 输入失败: %w", err)
+		return leeDocument{}, fmt.Errorf("准备 LeePDF OCR 输入失败: %w", err)
 	}
 	script := filepath.Join(root, "normalize.py")
 	args := append(prefixArgs, script)
@@ -160,19 +160,19 @@ func normalizeWithRetain(ctx context.Context, raw []json.RawMessage, sizes []Siz
 		if detail == "" {
 			detail = err.Error()
 		}
-		return retainDocument{}, fmt.Errorf("RetainPDF OCR 归一化失败: %s", detail)
+		return leeDocument{}, fmt.Errorf("LeePDF OCR 归一化失败: %s", detail)
 	}
-	var result retainNormalizationResult
+	var result leeNormalizationResult
 	if err := json.Unmarshal(output, &result); err != nil {
-		return retainDocument{}, fmt.Errorf("RetainPDF OCR 归一化结果不是合法 JSON: %w", err)
+		return leeDocument{}, fmt.Errorf("LeePDF OCR 归一化结果不是合法 JSON: %w", err)
 	}
 	if len(result.Document.Pages) != len(raw) {
-		return retainDocument{}, fmt.Errorf("RetainPDF document.v1 返回 %d 页，PaddleOCR 返回 %d 页", len(result.Document.Pages), len(raw))
+		return leeDocument{}, fmt.Errorf("LeePDF document.v1 返回 %d 页，PaddleOCR 返回 %d 页", len(result.Document.Pages), len(raw))
 	}
 	return result.Document, nil
 }
 
-func retainPythonCommand() (string, []string, error) {
+func leePythonCommand() (string, []string, error) {
 	if configured := strings.TrimSpace(os.Getenv("READX_PYTHON")); configured != "" {
 		path, err := exec.LookPath(configured)
 		if err != nil {
@@ -188,17 +188,17 @@ func retainPythonCommand() (string, []string, error) {
 	if path, err := exec.LookPath("py"); err == nil {
 		return path, []string{"-3.11"}, nil
 	}
-	return "", nil, errors.New("运行 RetainPDF OCR 归一化需要 Python 3.11 或更高版本；请安装 Python，或设置 READX_PYTHON 指向 python.exe")
+	return "", nil, errors.New("运行 LeePDF OCR 归一化需要 Python 3.11 或更高版本；请安装 Python，或设置 READX_PYTHON 指向 python.exe")
 }
 
-func materializeRetainRuntime() (string, error) {
-	retainRuntimeOnce.Do(func() {
+func materializeLeeRuntime() (string, error) {
+	leeRuntimeOnce.Do(func() {
 		root := filepath.Join(os.TempDir(), "readx-retainpdf-document-v1-4.2.6")
 		if err := os.MkdirAll(root, 0o700); err != nil {
-			retainRuntimeErr = err
+			leeRuntimeErr = err
 			return
 		}
-		retainRuntimeErr = fs.WalkDir(retainRuntime, "retain_runtime", func(name string, entry fs.DirEntry, walkErr error) error {
+		leeRuntimeErr = fs.WalkDir(leeRuntime, "retain_runtime", func(name string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -211,7 +211,7 @@ func materializeRetainRuntime() (string, error) {
 			if entry.IsDir() {
 				return os.MkdirAll(destination, 0o700)
 			}
-			contents, err := retainRuntime.ReadFile(name)
+			contents, err := leeRuntime.ReadFile(name)
 			if err != nil {
 				return err
 			}
@@ -220,18 +220,18 @@ func materializeRetainRuntime() (string, error) {
 			}
 			return os.WriteFile(destination, contents, 0o600)
 		})
-		if retainRuntimeErr == nil {
-			retainRuntimePath = root
+		if leeRuntimeErr == nil {
+			leeRuntimePath = root
 		}
 	})
-	return retainRuntimePath, retainRuntimeErr
+	return leeRuntimePath, leeRuntimeErr
 }
 
-func projectRetainDocument(document retainDocument) ([]Page, error) {
+func projectLeeDocument(document leeDocument) ([]Page, error) {
 	pages := make([]Page, 0, len(document.Pages))
 	for pageIndex, sourcePage := range document.Pages {
 		if sourcePage.Width <= 0 || sourcePage.Height <= 0 {
-			return nil, fmt.Errorf("RetainPDF document.v1 第 %d 页缺少有效尺寸", pageIndex+1)
+			return nil, fmt.Errorf("LeePDF document.v1 第 %d 页缺少有效尺寸", pageIndex+1)
 		}
 		page := Page{
 			Index:            sourcePage.PageIndex,
@@ -246,7 +246,7 @@ func projectRetainDocument(document retainDocument) ([]Page, error) {
 				continue
 			}
 			label := anyString(sourceBlock.Source["raw_type"])
-			kind := retainBlockKind(sourceBlock.Type, sourceBlock.SubType, label)
+			kind := leeBlockKind(sourceBlock.Type, sourceBlock.SubType, label)
 			block := Block{
 				ID:                        sourceBlock.ID,
 				SourceOrder:               sourceBlock.Order,
@@ -263,9 +263,9 @@ func projectRetainDocument(document retainDocument) ([]Page, error) {
 				SemanticRole:              sourceBlock.SemanticRole,
 				StructureRole:             sourceBlock.StructureRole,
 				PolicyReason:              anyString(sourceBlock.Policy["translate_reason"]),
-				Segments:                  projectRetainSegments(sourceBlock.Segments),
-				Lines:                     projectRetainLines(sourceBlock.Lines),
-				LineTexts:                 retainLineTexts(sourceBlock),
+				Segments:                  projectLeeSegments(sourceBlock.Segments),
+				Lines:                     projectLeeLines(sourceBlock.Lines),
+				LineTexts:                 leeLineTexts(sourceBlock),
 				ColumnLayoutMode:          firstNonEmpty(anyString(sourceBlock.Metadata["column_layout_mode"]), page.ColumnLayoutMode),
 				ColumnIndexGuess:          anyString(sourceBlock.Metadata["column_index_guess"]),
 				CrossColumnMergeSuspected: anyBool(sourceBlock.Metadata["cross_column_merge_suspected"]),
@@ -279,8 +279,8 @@ func projectRetainDocument(document retainDocument) ([]Page, error) {
 				ProviderContinuationScope: anyString(sourceBlock.ContinuationHint["scope"]),
 				ProviderContinuationOrder: anyInt(sourceBlock.ContinuationHint["reading_order"]),
 				ProviderContinuationScore: anyFloat(sourceBlock.ContinuationHint["confidence"]),
-				RetainMetadata:            sourceBlock.Metadata,
-				RetainContent:             sourceBlock.Content,
+				LeeMetadata:            sourceBlock.Metadata,
+				LeeContent:             sourceBlock.Content,
 			}
 			block.RawBlockOrder, block.HasRawBlockOrder = anyIntOK(sourceBlock.Metadata["raw_block_order"])
 			if block.ID == "" {
@@ -293,7 +293,7 @@ func projectRetainDocument(document retainDocument) ([]Page, error) {
 	return pages, nil
 }
 
-func retainBlockKind(blockType, subType, rawLabel string) string {
+func leeBlockKind(blockType, subType, rawLabel string) string {
 	subType = strings.ToLower(strings.TrimSpace(subType))
 	switch subType {
 	case "body", "heading", "title", "abstract", "figure_caption", "table_caption", "reference_entry", "formula_number", "footnote", "metadata", "image_footnote", "table_footnote":
@@ -317,7 +317,7 @@ func retainBlockKind(blockType, subType, rawLabel string) string {
 	}
 }
 
-func projectRetainSegments(values []retainSegment) []Segment {
+func projectLeeSegments(values []leeSegment) []Segment {
 	segments := make([]Segment, 0, len(values))
 	for _, value := range values {
 		box, _ := boxFromSlice(value.BBox)
@@ -329,19 +329,19 @@ func projectRetainSegments(values []retainSegment) []Segment {
 	return segments
 }
 
-func projectRetainLines(values []retainLine) []Line {
+func projectLeeLines(values []leeLine) []Line {
 	lines := make([]Line, 0, len(values))
 	for _, value := range values {
 		box, ok := boxFromSlice(value.BBox)
 		if !ok {
 			continue
 		}
-		lines = append(lines, Line{Box: box, Precision: value.Precision, Spans: projectRetainSegments(value.Spans)})
+		lines = append(lines, Line{Box: box, Precision: value.Precision, Spans: projectLeeSegments(value.Spans)})
 	}
 	return lines
 }
 
-func retainLineTexts(block retainBlock) []string {
+func leeLineTexts(block leeBlock) []string {
 	if values, ok := block.Content["line_texts"].([]any); ok {
 		texts := make([]string, 0, len(values))
 		for _, value := range values {

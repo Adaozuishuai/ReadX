@@ -32,7 +32,7 @@ type timedTermReviewGenerator interface {
 	GenerateStructuredWithTimeout(context.Context, string, string, float64, time.Duration, any) (string, error)
 }
 
-// ReviewDocumentTerms implements RetainPDF's editorial preparation stage.
+// ReviewDocumentTerms implements LeePDF's editorial preparation stage.
 // Missing decisions retain the pre-scan lock behavior and make the artifact
 // incomplete so a later run retries review instead of freezing a partial base.
 func ReviewDocumentTerms(ctx context.Context, generator Generator, items []Item, terms []Term, domain, targetLanguage string) ([]Term, error) {
@@ -226,7 +226,7 @@ annotate（首次出现时是否在译文里括注原文，如「位力定理（
 		firstErr = fmt.Errorf("术语审定未覆盖 %d/%d 条候选", missing, len(candidates))
 	}
 	if firstErr != nil {
-		// RetainPDF applies completed review decisions but leaves unreviewed candidates
+		// LeePDF applies completed review decisions but leaves unreviewed candidates
 		// at the pre-scan lock behavior and marks the artifact incomplete. Preserve
 		// that safe fallback for this run; caller will avoid freezing it.
 		combined := append(approved, unreviewedPrescanTerms(candidates, decisions)...)
@@ -271,7 +271,7 @@ func unreviewedPrescanTerms(candidates []Term, decisions map[string]termReviewDe
 		if _, ok := decisions[strings.ToLower(term.Source)]; !ok {
 			term.ReviewStatus = "unreviewed"
 			term.Treatment = "lock"
-			// RetainPDF treats missing annotate as true so an unreviewed
+			// LeePDF treats missing annotate as true so an unreviewed
 			// pre-scan lock retains its first-mention gloss behavior.
 			term.Annotate = true
 			out = append(out, term)

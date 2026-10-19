@@ -9,10 +9,10 @@ import (
 	"cbctv2/server/internal/db"
 )
 
-func TestRetainImportLogStreamsQueueProgressAndSummarizesFailure(t *testing.T) {
+func TestLeeImportLogStreamsQueueProgressAndSummarizesFailure(t *testing.T) {
 	var log bytes.Buffer
-	var events []retainStageObservation
-	w := &retainImportLogWriter{sink: &log, observe: func(event retainStageObservation) {
+	var events []leeStageObservation
+	w := &leeImportLogWriter{sink: &log, observe: func(event leeStageObservation) {
 		events = append(events, event)
 	}}
 	output := "OCR request retry\n" +
@@ -37,7 +37,7 @@ func TestRetainImportLogStreamsQueueProgressAndSummarizesFailure(t *testing.T) {
 	}
 }
 
-func TestRetainQueueProgressKeepsTranslationPendingUntilOCRFinishes(t *testing.T) {
+func TestLeeQueueProgressKeepsTranslationPendingUntilOCRFinishes(t *testing.T) {
 	cfg := defaultTestConfig(t.TempDir())
 	handle, err := db.Open(context.Background(), cfg.DBPath())
 	if err != nil {
@@ -46,13 +46,13 @@ func TestRetainQueueProgressKeepsTranslationPendingUntilOCRFinishes(t *testing.T
 	t.Cleanup(func() { _ = handle.Close() })
 	s := New(cfg, handle)
 	s.beginImportJob("queue-doc", "paper.pdf", 10, nil)
-	s.retainImportObservation("queue-doc", retainStageObservation{UserStage: "ocr", Detail: "等待 OCR 服务空位"})
+	s.leeImportObservation("queue-doc", leeStageObservation{UserStage: "ocr", Detail: "等待 OCR 服务空位"})
 	job, ok := s.loadImportJob(context.Background(), "queue-doc")
 	if !ok || job.Status != "running" || job.stage("ocr").Status != "running" || job.stage("translate").Status != "pending" {
 		t.Fatalf("queue wait must remain an active OCR job: %+v", job)
 	}
 	current, total := 1, 6
-	s.retainImportObservation("queue-doc", retainStageObservation{
+	s.leeImportObservation("queue-doc", leeStageObservation{
 		UserStage: "translation", Detail: "翻译中", Current: &current, Total: &total, Unit: "batch",
 	})
 	job, _ = s.loadImportJob(context.Background(), "queue-doc")
@@ -60,15 +60,15 @@ func TestRetainQueueProgressKeepsTranslationPendingUntilOCRFinishes(t *testing.T
 		t.Fatalf("provider progress must retain its actual unit: %+v", job.Stages)
 	}
 	s.finishImportJob("queue-doc", "cancelled", "已取消")
-	s.retainImportObservation("queue-doc", retainStageObservation{UserStage: "render", Detail: "late event"})
+	s.leeImportObservation("queue-doc", leeStageObservation{UserStage: "render", Detail: "late event"})
 	job, _ = s.loadImportJob(context.Background(), "queue-doc")
 	if job.Status != "cancelled" || job.stage("render").Status != "pending" {
 		t.Fatal("late process output changed a cancelled job")
 	}
 }
 
-func TestRetainUnclassifiedFailurePreservesConcreteCause(t *testing.T) {
-	w := &retainImportLogWriter{sink: &bytes.Buffer{}}
+func TestLeeUnclassifiedFailurePreservesConcreteCause(t *testing.T) {
+	w := &leeImportLogWriter{sink: &bytes.Buffer{}}
 	_, _ = w.Write([]byte(`structured failure json: {"failure_code":"python_unhandled_exception","summary":"任务失败，但暂未识别出明确根因","detail":"missing package: example","traceback":"private traceback"}` + "\n"))
 	if w.failure != "missing package: example" {
 		t.Fatalf("concrete failure cause was hidden: %q", w.failure)

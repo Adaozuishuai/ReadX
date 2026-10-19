@@ -95,7 +95,7 @@ func TestKnownMetadataHintsSurviveModelGaps(t *testing.T) {
 	}
 }
 
-func TestRetainTranslationIsSavedWithPaperImport(t *testing.T) {
+func TestLeeTranslationIsSavedWithPaperImport(t *testing.T) {
 	front, handle, cfg := newTestServer(t, nil)
 	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
@@ -127,7 +127,7 @@ func TestRetainTranslationIsSavedWithPaperImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	if pageCount == 0 || translationCount == 0 {
-		t.Fatalf("Retain 的 OCR 原文与译文应随论文入库：pages=%d translations=%d", pageCount, translationCount)
+		t.Fatalf("Lee 的 OCR 原文与译文应随论文入库：pages=%d translations=%d", pageCount, translationCount)
 	}
 }
 
@@ -180,7 +180,7 @@ func TestPDFImportDoesNotRequireSeparateMetadataRecognition(t *testing.T) {
 	ensureTestOCR(t, bundle)
 	result := uploadPublication(t, bundle, "filename.pdf", testPDF(t), publicationMetadataHint{})
 	if result["error"] != nil {
-		t.Fatalf("Retain processing should not depend on separate metadata recognition: %v", result["error"])
+		t.Fatalf("Lee processing should not depend on separate metadata recognition: %v", result["error"])
 	}
 	if _, err := handle.Exec(`SELECT 1 FROM documents WHERE id=?`, result["document"].(map[string]any)["id"]); err != nil {
 		t.Fatal(err)

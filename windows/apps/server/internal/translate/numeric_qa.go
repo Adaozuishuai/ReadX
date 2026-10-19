@@ -93,7 +93,7 @@ var numericEnglishWords = map[int][]string{
 	8: {"eight", "eighth"}, 9: {"nine", "ninth"}, 10: {"ten", "tenth"},
 }
 
-// BuildNumericQA mirrors RetainPDF's document-wide numeric checks. Continuation
+// BuildNumericQA mirrors LeePDF's document-wide numeric checks. Continuation
 // members are compared as one unit so reordered clauses are not falsely flagged.
 func BuildNumericQA(items []Item, targets []string) NumericQAReport {
 	units := make([]*numericUnit, 0, len(items))

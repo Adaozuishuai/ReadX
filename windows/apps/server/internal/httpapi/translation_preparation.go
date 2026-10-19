@@ -67,7 +67,7 @@ func (store dbTermPrescanStore) SaveBatch(ctx context.Context, batchID, fingerpr
 	return err
 }
 
-// documentTermPrescan keeps the RetainPDF preparation mode opt-in (default
+// documentTermPrescan keeps the LeePDF preparation mode opt-in (default
 // off), freezes a successful artifact per document/configuration, and never
 // writes model suggestions into the user's glossary table.
 func (s *Server) documentTermPrescan(ctx context.Context, key string, cfg ai.Config, items []translate.Item, domain translate.DomainContext, userEntries ...[]translate.Term) ([]translate.Term, error) {

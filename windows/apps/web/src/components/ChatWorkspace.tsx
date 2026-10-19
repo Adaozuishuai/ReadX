@@ -11,9 +11,38 @@ export async function copyText(text: string): Promise<string> {
   try { await navigator.clipboard.writeText(text); return '已复制'; }
   catch { return '复制失败，请选择文字后复制'; }
 }
+function splitMarkdownTableRow(line: string): string[] {
+  const cells: string[] = [];
+  let cell = '';
+  let mathClose = '';
+  let code = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]!;
+    const next = line[i + 1] ?? '';
+    if (mathClose) {
+      if (mathClose === '$$' && line.startsWith('$$', i)) { cell += '$$'; i++; mathClose = ''; continue; }
+      if (mathClose === '$' && char === '$') { cell += char; mathClose = ''; continue; }
+      if ((mathClose === '\\)' && line.startsWith('\\)', i)) || (mathClose === '\\]' && line.startsWith('\\]', i))) { cell += mathClose; i++; mathClose = ''; continue; }
+      cell += char;
+      continue;
+    }
+    if (char === '`') { code = !code; cell += char; continue; }
+    if (!code && line.startsWith('\\(', i)) { mathClose = '\\)'; cell += '\\('; i++; continue; }
+    if (!code && line.startsWith('\\[', i)) { mathClose = '\\]'; cell += '\\['; i++; continue; }
+    if (!code && line.startsWith('$$', i)) { mathClose = '$$'; cell += '$$'; i++; continue; }
+    if (!code && char === '$' && next !== '$') { mathClose = '$'; cell += char; continue; }
+    if (!code && char === '|' && (i === 0 || line[i - 1] !== '\\')) { cells.push(cell); cell = ''; continue; }
+    if (!code && char === '|' && line[i - 1] === '\\') { cell = cell.slice(0, -1) + '|'; continue; }
+    cell += char;
+  }
+  cells.push(cell);
+  if (line.trimStart().startsWith('|')) cells.shift();
+  if (line.trimEnd().endsWith('|') && line.trimEnd().at(-2) !== '\\') cells.pop();
+  return cells;
+}
 function CitedText({ text, onCite }: { text: string; onCite: (page: number) => void }) {
-  return <>{text.split(/\b((?:Page|Chapter)\s+\d+)/g).map((part, i) => {
-    const match = /^(Page|Chapter)\s+(\d+)$/.exec(part);
+  return <>{text.split(/\b((?:Page|Chapter)\s+\d+(?:\s*[-–—]\s*\d+)?)/g).map((part, i) => {
+    const match = /^(Page|Chapter)\s+(\d+)(?:\s*[-–—]\s*\d+)?$/.exec(part);
     return match ? <button type="button" className="assistant-citation" key={i} onClick={() => onCite(Number(match[2]))}>{part}</button> : <MathText key={i} text={part} />;
   })}</>;
 }
@@ -37,8 +66,16 @@ export function AssistantMessage({ text, onCite }: { text: string; onCite: (page
       }
       if (lines.every((line) => /^>\s?/.test(line))) return <blockquote key={`${i}-${j}`}>{inline(lines.map((line) => line.replace(/^>\s?/, '')).join('\n'))}</blockquote>;
       if (lines.length > 2 && lines[0]?.includes('|') && /^\s*\|?\s*:?-{3}/.test(lines[1] ?? '')) {
-        const cells = (line: string) => line.replace(/^\s*\||\|\s*$/g, '').split('|');
-        return <div key={`${i}-${j}`} className="reading-table-scroll"><table><thead><tr>{cells(lines[0]!).map((cell, n) => <th key={n}>{inline(cell)}</th>)}</tr></thead><tbody>{lines.slice(2).map((line, n) => <tr key={n}>{cells(line).map((cell, c) => <td key={c}>{inline(cell)}</td>)}</tr>)}</tbody></table></div>;
+        const cells = splitMarkdownTableRow;
+        const headers = cells(lines[0]!);
+        const rowCells = (line: string) => {
+          const row = cells(line);
+          // A bare |...| in a formula is indistinguishable from Markdown's
+          // column delimiter. Preserve surplus fragments in the final cell.
+          if (row.length > headers.length && headers.length > 0) row.splice(headers.length - 1, row.length, row.slice(headers.length - 1).join(' | '));
+          return row;
+        };
+        return <div key={`${i}-${j}`} className="reading-table-scroll"><table><thead><tr>{headers.map((cell, n) => <th key={n}>{inline(cell)}</th>)}</tr></thead><tbody>{lines.slice(2).map((line, n) => <tr key={n}>{rowCells(line).map((cell, c) => <td key={c}>{inline(cell)}</td>)}</tr>)}</tbody></table></div>;
       }
       return <div className="assistant-paragraph" key={`${i}-${j}`}>{inline(paragraph)}</div>;
     });

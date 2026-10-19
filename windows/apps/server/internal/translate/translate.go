@@ -1,14 +1,14 @@
-// Package translate 是 ReadX 的全文翻译引擎。常规段落链对齐 RetainPDF：
+// Package translate 是 ReadX 的全文翻译引擎。常规段落链对齐 LeePDF：
 // 低风险正文走 tagged 合批，其余走单段纯文本；统一使用 0.2 温度、按需提供
 // 邻段上下文、保护字面量和行内公式，再逐条质检和带问题清单修复。ReadX 输入来自 PaddleOCR，因而没有
-// RetainPDF 的 Mathpix 公式分段、文档术语准备和完整分类阶段所需的结构化数据。
+// LeePDF 的 Mathpix 公式分段、文档术语准备和完整分类阶段所需的结构化数据。
 package translate
 
 import "context"
 
 // Item 是一个待翻译段落。
 //
-// ContextBefore / ContextAfter 只用于消歧：RetainPDF 的实测结论是整页上下文
+// ContextBefore / ContextAfter 只用于消歧：LeePDF 的实测结论是整页上下文
 // 会诱导模型把邻段内容并进当前译文，所以默认只在「当前段落是半句」「跨栏/跨页
 // 续接」时注入，且提示词明确禁止借用。
 type Item struct {
@@ -37,7 +37,7 @@ type Item struct {
 	StructureUnreliable       bool
 }
 
-// Term mirrors RetainPDF glossary levels. preserve keeps the source spelling;
+// Term mirrors LeePDF glossary levels. preserve keeps the source spelling;
 // canonical enforces the configured target; preferred is a matched-only hint.
 type Term struct {
 	Source              string
@@ -72,7 +72,7 @@ type Options struct {
 	BestEffort bool
 	// RepairRounds 是质检不过后的单条重译轮数；0 表示默认 2 轮。
 	RepairRounds int
-	// TailRetry selects RetainPDF's deferred retry timeout profile.
+	// TailRetry selects LeePDF's deferred retry timeout profile.
 	TailRetry bool
 }
 
@@ -105,7 +105,7 @@ const (
 	concurrency     = 3
 	defaultRepair   = 2
 	maxRepairRounds = 3
-	// RetainPDF's translation executor defaults to temperature=0.2 for normal
+	// LeePDF's translation executor defaults to temperature=0.2 for normal
 	// translation requests; deterministic repair/classification paths use 0.0.
 	translationTemp = 0.2
 )

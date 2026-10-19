@@ -30,7 +30,7 @@ type formulaSkeletonPart struct {
 	isSegment bool
 }
 
-// translateFormulaSegments mirrors RetainPDF's risk-gated direct_typst
+// translateFormulaSegments mirrors LeePDF's risk-gated direct_typst
 // segmentation route. Formula and matched-term placeholders stay in the
 // skeleton; only the prose spans between them are sent for translation.
 func translateFormulaSegments(ctx context.Context, generator Generator, item Item, options Options) (string, bool, error) {

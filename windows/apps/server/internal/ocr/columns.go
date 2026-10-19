@@ -13,7 +13,7 @@ var nonBodyColumnLabels = map[string]bool{
 	"header": true, "header_image": true, "number": true, "vision_footnote": true,
 }
 
-// annotateColumnSignals follows RetainPDF's Paddle page signal pass. Empty OCR
+// annotateColumnSignals follows LeePDF's Paddle page signal pass. Empty OCR
 // text blocks are retained in MapLayouts because their geometry can reveal an
 // omitted peer column or text absorbed into the adjacent block.
 func annotateColumnSignals(page *Page) {

@@ -1,6 +1,6 @@
 // import_jobs.go：导入任务的持久化进度（OCR → 翻译 → 渲染）。
 //
-// 对齐 RetainPDF 的任务进度面板：一次导入是一条可查询、可取消、可回看的任务，
+// 对齐 LeePDF 的任务进度面板：一次导入是一条可查询、可取消、可回看的任务，
 // 三个阶段分别记录状态、消息与计数；页面刷新或应用重启后仍能从 app_state 读回。
 package httpapi
 
@@ -75,6 +75,7 @@ func newDocumentJob(key, name string, pages int) *DocumentJob {
 			{Key: "ocr", Label: "OCR", Status: "pending", Unit: "页"},
 			{Key: "translate", Label: "翻译", Status: "pending", Unit: "段"},
 			{Key: "render", Label: "渲染", Status: "pending", Unit: "页"},
+			{Key: "memory", Label: "论文记忆", Status: "pending", Unit: "份"},
 		},
 		Runs: []JobRun{{ID: stamp, StartedAt: stamp, Status: "running", Pages: pages}},
 	}
@@ -254,9 +255,9 @@ func (s *Server) setJobCancel(key string, cancel context.CancelFunc) {
 
 // startDocumentRender 在导入提交后生成完整译文 PDF；任务面板可跟踪并取消渲染。
 func (s *Server) startDocumentRender(key, sourcePath string, pages []layoutPage) {
-	retainOutput := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), key+"-translated.pdf")
-	if existingFile(retainOutput) {
-		s.jobStage(key, "render", "done", "已复用 Retain 排版译文 PDF", len(pages), len(pages))
+	leeOutput := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), key+"-translated.pdf")
+	if existingFile(leeOutput) {
+		s.jobStage(key, "render", "done", "已复用 Lee 排版译文 PDF", len(pages), len(pages))
 		s.finishImportJob(key, "done", "")
 		return
 	}

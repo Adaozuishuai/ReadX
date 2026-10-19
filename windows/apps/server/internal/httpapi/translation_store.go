@@ -1,7 +1,7 @@
 // translation_store.go：译文缓存（按段落哈希）与段落辅助函数。
 //
 // 旧的「按 PDF 文本层分段 → 翻译接口 → 前端排版」链路已整体移除；现在译文只由
-// RetainPDF 链路（OCR 段落 → 翻译 → rpr 排版）产生。translations 表仍是段落级缓存，
+// LeePDF 链路（OCR 段落 → 翻译 → rpr 排版）产生。translations 表仍是段落级缓存，
 // 供 OCR 导入与按页渲染复用。
 package httpapi
 
@@ -31,7 +31,7 @@ func paraHash(source string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// translationCacheHash mirrors RetainPDF's cache identity: a translation is
+// translationCacheHash mirrors LeePDF's cache identity: a translation is
 // reusable only for the same source/context, engine prompt version, provider,
 // model, and endpoint. The legacy paragraph hash remains available to resolve
 // already-cached translations when the AI configuration file is absent.

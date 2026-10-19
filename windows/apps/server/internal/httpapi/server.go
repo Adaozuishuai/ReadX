@@ -37,6 +37,10 @@ type Server struct {
 	// graphMu 只保护「读缓存 → 调 180s 模型 → 写缓存」的短窗口：模型调用期间不持锁，
 	// 否则一次抽取会把图谱读写与其它 app_state 功能一起卡死。
 	graphMu sync.Mutex
+	// Paper memory and visual preparation are shared across five concurrent
+	// section requests. Keyed locks prevent duplicate preparation per document.
+	paperMemoryLocks keyedLockTable
+	paperVisualLocks keyedLockTable
 	// jobsMu 保护导入任务表：任务更新频繁（逐页翻译/渲染），但临界区只有内存改字段，
 	// 落盘在锁外做，不能把 SQLite 写入拖进热点。
 	jobsMu     sync.Mutex

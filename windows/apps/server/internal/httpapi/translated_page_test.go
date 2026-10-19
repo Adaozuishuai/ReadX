@@ -9,7 +9,7 @@ import (
 )
 
 // Reader 从 ocr-layout 还原页面后，翻译身份必须与导入时一致；否则会绕过
-// Retain 导入生成的译文，重新调用一次 Go 翻译引擎。
+// Lee 导入生成的译文，重新调用一次 Go 翻译引擎。
 func TestLayoutRoundTripKeepsTranslationCacheIdentity(t *testing.T) {
 	page := ocr.Page{Index: 0, Width: 595, Height: 842, Blocks: []ocr.Block{{
 		Kind: "text", Text: "We reconstruct attenuation with a learned field.", Translatable: true,
@@ -57,7 +57,7 @@ func TestPageRenderCacheIsScopedToDocumentAndSource(t *testing.T) {
 	}
 }
 
-func TestImportPageSizesRetainsPageCountWhenDimensionsAreMissing(t *testing.T) {
+func TestImportPageSizesLeesPageCountWhenDimensionsAreMissing(t *testing.T) {
 	sizes, complete := importPageSizes([]publicationPageHint{
 		{Page: 1, Width: 595, Height: 842},
 		{Page: 2},

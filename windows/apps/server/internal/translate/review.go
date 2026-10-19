@@ -143,7 +143,7 @@ func reviewPlaceholders(source, target string, tokens []Token) []Issue {
 }
 
 func reviewMathDelimiters(source, target string) []Issue {
-	// RetainPDF repairs an odd source delimiter count when OCR dropped a `$`;
+	// LeePDF repairs an odd source delimiter count when OCR dropped a `$`;
 	// the translated result must be balanced regardless of the source state.
 	if dollarCount(target)%2 == 0 {
 		return nil
@@ -214,7 +214,7 @@ func mathFormulaSpans(text string) []string {
 			end++
 		}
 		if !closed {
-			// No closing delimiter was found; this matches RetainPDF's behavior
+			// No closing delimiter was found; this matches LeePDF's behavior
 			// of excluding unmatched dollars from formula-span validation.
 			start++
 		}
@@ -311,7 +311,7 @@ func reviewNumbers(source, target string) []Issue {
 	if len(preview) > 3 {
 		preview = preview[:3]
 	}
-	// RetainPDF runs semantic numeric QA at document scope, where references,
+	// LeePDF runs semantic numeric QA at document scope, where references,
 	// scientific notation, scale words, and OCR noise can be interpreted
 	// together. A per-item literal-number mismatch must not trigger a rewrite:
 	// that changes the translation path and incorrectly rejects valid Chinese

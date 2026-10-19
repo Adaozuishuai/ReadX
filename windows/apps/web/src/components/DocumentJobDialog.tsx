@@ -47,11 +47,12 @@ function stageCount(stage: JobStage | undefined) {
 
 function stageUnit(stage: JobStage | undefined) {
   if (stage?.unit) return stage.unit;
-  return stage?.key === 'translate' ? '段' : '页';
+  if (stage?.key === 'translate') return '段';
+  return stage?.key === 'memory' ? '份' : '页';
 }
 
 /**
- * 文档任务面板：对齐 RetainPDF 的 OCR → 翻译 → 渲染 进度页。
+ * 文档任务面板：对齐 LeePDF 的 OCR → 翻译 → 渲染 进度页。
  *
  * 左侧是原页封面、题录与下载；右侧分「概览 / 进度 / 文件」三个标签。
  * 任务数据来自导入时持久化的 job，运行中每隔 1.2s 轮询，可随时取消。
@@ -62,6 +63,7 @@ export function DocumentJobDialog({
   coverFile,
   importing = false,
   pending = false,
+  errorMessage = '',
   onClose,
   onOpenReader,
 }: {
@@ -72,10 +74,11 @@ export function DocumentJobDialog({
   coverFile?: File;
   importing?: boolean;
   pending?: boolean;
+  errorMessage?: string;
   onClose: () => void;
   onOpenReader: () => void;
 }) {
-  const effectiveKey = jobKey || document.key;
+  const effectiveKey = pending && !jobKey ? '' : jobKey || document.key;
   const dialog = useRef<HTMLDialogElement>(null);
   const [tab, setTab] = useState<Tab>('progress');
   const [job, setJob] = useState<DocumentJob | null>(null);
@@ -231,7 +234,7 @@ export function DocumentJobDialog({
       : `排版 ${processedPages} / ${renderTotal || '—'} ${renderingUnit}`
     : pending
       ? document.format === 'epub' ? '正在上传文件，任务创建后显示章节导入状态' : '正在上传文件，任务创建后显示 OCR 进度'
-      : document.format === 'epub' ? '导入后这里会显示 EPUB 章节导入状态。' : '导入后这里会显示 RetainPDF 的 OCR、翻译与渲染进度。';
+      : document.format === 'epub' ? '导入后这里会显示 EPUB 章节导入状态。' : '导入后这里会显示 LeePDF 的 OCR、翻译与渲染进度。';
   const openDisabled = importing || !effectiveKey || job?.status === 'failed' || job?.status === 'cancelled';
 
   return (
@@ -244,12 +247,15 @@ export function DocumentJobDialog({
         onClose();
       }}
     >
-      <header>
+      <header className="job-dialog-header">
         <div>
-          <p className="precision-overline">{importing ? 'IMPORT JOB' : 'DOCUMENT JOB'}</p>
+          <p className="precision-overline">{importing ? '正在导入' : '文档处理'}</p>
           <h2>{document.title || '未命名文档'}</h2>
         </div>
-        <button type="button" onClick={onClose} aria-label="关闭任务面板">×</button>
+        <div className="job-header-tools">
+          {job?.status === 'running' ? <span className="job-header-state"><i /> 正在处理</span> : null}
+          <button type="button" onClick={onClose} aria-label="关闭任务面板">×</button>
+        </div>
       </header>
 
       <div className="job-layout">
@@ -257,7 +263,10 @@ export function DocumentJobDialog({
           <div className={`job-cover${cover ? ' has-image' : ''}`}>
             {cover ? <img src={cover} alt="文档封面" /> : <span>{document.title || '未命名文档'}</span>}
           </div>
-          <h3>{document.title || '未命名文档'}</h3>
+          <div className="job-document-heading">
+            <span className="job-document-type">{(document.format || 'PDF').toUpperCase()} 文档</span>
+            <h3>{document.title || '未命名文档'}</h3>
+          </div>
           {document.translatedTitle ? <p className="job-subtitle">{document.translatedTitle}</p> : null}
           <p className="job-author">
             <span aria-hidden="true">◉</span>
@@ -271,7 +280,7 @@ export function DocumentJobDialog({
             <span aria-hidden="true">◉</span> 查看原版
           </button>
           <div className="job-downloads" aria-label="文件下载">
-            <p className="job-side-label">文件下载</p>
+            <p className="job-side-label">文件与阅读</p>
             <div>
               <button type="button" onClick={downloadOriginal} disabled={openDisabled} title="下载原版 PDF" aria-label="下载原版 PDF">⇩</button>
               <button type="button" onClick={() => { if (!openDisabled) onOpenReader(); }} disabled={openDisabled} title="在阅读器中打开" aria-label="在阅读器中打开">▤</button>
@@ -302,29 +311,43 @@ export function DocumentJobDialog({
 
           {tab === 'progress' ? (
             <div className="job-progress">
-              <section className="job-card">
+              <div className="job-progress-heading">
+                <div>
+                  <span className="job-eyebrow">处理工作区</span>
+                  <h3>{statusText}</h3>
+                  <p>{statusDetail}</p>
+                </div>
+                <div className="job-progress-summary">
+                  <span>{document.format === 'epub' ? '章节' : '翻译段落'}</span>
+                  <strong>{document.format === 'epub' ? 'EPUB' : `${translationCompleted}`}<small>{document.format === 'epub' ? '' : ` / ${translationTotal || '—'}`}</small></strong>
+                  {document.format !== 'epub' ? <div className="job-meter" role="progressbar" aria-label="翻译进度" aria-valuemin={0} aria-valuemax={translationTotal || 1} aria-valuenow={translationCompleted}><span style={{ width: `${translationTotal ? Math.min(100, (translationCompleted / translationTotal) * 100) : 0}%` }} /></div> : null}
+                </div>
+              </div>
+
+              <section className="job-card job-pipeline-card">
                 <div className="job-status">
-                  <span className={`job-spinner${running ? ' running' : ''}`} aria-hidden="true">◔</span>
+                  <span className={`job-spinner${running ? ' running' : ''}`} aria-hidden="true">{running ? '↻' : status === 'done' ? '✓' : '!'}</span>
                   <div>
-                    <strong>{statusText}</strong>
-                    <p>{statusDetail}</p>
+                    <strong>处理流程</strong>
+                    <p>{activeMessage || (document.format === 'epub' ? '保留原章节结构并准备阅读' : '识别原文、翻译段落并生成可读译文')}</p>
                   </div>
                 </div>
 
-                <ol className="job-stages" aria-label="导入阶段">
+                <ol className="job-stages job-stages-horizontal" aria-label="导入阶段">
                   {(job?.stages ?? [
                     { key: 'ocr', label: 'OCR', status: 'pending', message: '', completed: 0, total: 0 },
                     { key: 'translate', label: '翻译', status: 'pending', message: '', completed: 0, total: 0 },
                     { key: 'render', label: '渲染', status: 'pending', message: '', completed: 0, total: 0 },
+                    { key: 'memory', label: '论文记忆', status: 'pending', message: '', completed: 0, total: 0 },
                   ]).map((stage, index, list) => (
                     <li key={stage.key} data-status={stage.status}>
-                      <span className="job-stage-dot" aria-hidden="true">{stage.status === 'done' ? '✓' : stage.status === 'running' ? '' : index + 1}</span>
+                      <span className="job-stage-dot" aria-hidden="true">{stage.status === 'done' ? '✓' : stage.status === 'running' ? <i /> : index + 1}</span>
                       <div>
                         <p>
                           <strong>{stage.label}</strong>
                           <span className="job-chip">{STAGE_LABEL[stage.status] ?? stage.status}</span>
-                          {stageCount(stage) ? <span className="job-stage-count">{stageCount(stage)} {stageUnit(stage)}</span> : null}
                         </p>
+                        {stageCount(stage) ? <span className="job-stage-count">{stageCount(stage)} {stageUnit(stage)}</span> : null}
                         {stage.message ? <small>{stage.message}</small> : null}
                       </div>
                       {index < list.length - 1 ? <span className="job-stage-line" aria-hidden="true" /> : null}
@@ -334,11 +357,12 @@ export function DocumentJobDialog({
               </section>
 
               <button type="button" className="job-live" onClick={() => { if (!openDisabled) onOpenReader(); }} disabled={openDisabled}>
-                <span aria-hidden="true">◉</span>
+                <span aria-hidden="true">↗</span>
                 <div>
-                  <strong>{document.format === 'epub' ? '在阅读器中打开 →' : '查看译文 PDF →'}</strong>
+                  <strong>{document.format === 'epub' ? '打开文档阅读器' : '打开译文阅读器'}</strong>
                   <small>{importing ? '处理完成后可打开' : document.format === 'epub' ? '保留 EPUB 原章节结构' : '查看 ReadX 生成的译文 PDF'}</small>
                 </div>
+                <span className="job-live-shortcut">打开</span>
               </button>
 
               <div className="job-actions">
@@ -372,6 +396,7 @@ export function DocumentJobDialog({
               ) : null}
 
               {notice ? <p className="job-notice" role="status">{notice}</p> : null}
+              {errorMessage ? <p className="job-error" role="alert">{errorMessage}</p> : null}
 
               {document.format === 'epub' ? (
                 <section className="job-card" aria-label="EPUB 导入进度">

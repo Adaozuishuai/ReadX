@@ -245,7 +245,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	if body.Workflow == "paper-reader" && body.Kind != "visuals" {
+	if body.Workflow == "paper-reader" {
 		updateProgress(38, "逐页阅读已准备，开始串联图文分析")
 		s.generatePaperReading(r.Context(), key, body, source, config, client, images, updateProgress, emit)
 		return

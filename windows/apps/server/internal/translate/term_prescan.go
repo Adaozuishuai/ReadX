@@ -15,7 +15,7 @@ import (
 	"unicode"
 )
 
-// Retain-compatible document term pre-scan constants. Batching is based on OCR
+// Lee-compatible document term pre-scan constants. Batching is based on OCR
 // translation blocks, not PDF pages, so page count and paragraph count cannot
 // be confused by the import progress UI.
 const (
@@ -69,7 +69,7 @@ func init() {
 	}
 }
 
-// PrepareDocumentTerms follows RetainPDF's terms preparation: mask math, batch
+// PrepareDocumentTerms follows LeePDF's terms preparation: mask math, batch
 // contiguous OCR prose by deterministic token estimate, validate model output,
 // vote once per batch, and keep user glossary decisions authoritative. A failed
 // batch is skipped so an optional preparation step never blocks translation.
@@ -77,7 +77,7 @@ func PrepareDocumentTerms(ctx context.Context, generator Generator, items []Item
 	return PrepareDocumentTermsWithStore(ctx, generator, items, userTerms, targetLanguage, "", "", nil)
 }
 
-// PrepareDocumentTermsWithStore adds RetainPDF-style per-batch checkpoints.
+// PrepareDocumentTermsWithStore adds LeePDF-style per-batch checkpoints.
 // requestIdentity binds cached batches to the provider/model/config identity;
 // each batch digest additionally includes its actual prompt and source text.
 func PrepareDocumentTermsWithStore(ctx context.Context, generator Generator, items []Item, userTerms []Term, targetLanguage, domain, requestIdentity string, store PrescanBatchStore) ([]Term, error) {

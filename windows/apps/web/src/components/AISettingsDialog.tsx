@@ -528,7 +528,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
 
         {provider === 'codex' && <section className="ai-card"><header>推理强度</header><label className="ai-model-controls"><select aria-label="Codex 推理强度" value={reasoningEffort} disabled={busy || loadingModels || !selectedCodexModel} onChange={(e) => setReasoningEffort(e.target.value)}><option value="">跟随模型默认{selectedCodexModel ? ` · ${effortLabel(selectedCodexModel.defaultReasoningEffort)}` : ''}</option>{reasoningEffort && !selectedCodexModel?.supportedReasoningEfforts.some((e) => e.reasoningEffort === reasoningEffort) && <option value={reasoningEffort}>{reasoningEffort} · 待校验</option>}{selectedCodexModel?.supportedReasoningEfforts.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{effortLabel(option.reasoningEffort)}</option>)}</select></label><p className="ai-hint">选项来自本机 Codex，不同模型支持的等级不同。保存后供后续提问与精读生成使用；更高等级通常需要更长时间。</p></section>}
 
-        <section className="ai-card"><header>译前准备</header><label className="ai-model-controls"><select aria-label="译前准备模式" value={translationPreparation} disabled={busy} onChange={(event) => setTranslationPreparation(event.target.value === 'editorial' ? 'editorial' : event.target.value === 'terms+style' ? 'terms+style' : event.target.value === 'terms' ? 'terms' : event.target.value === 'artifacts_only' ? 'artifacts_only' : 'off')}><option value="off">关闭（RetainPDF 默认）</option><option value="artifacts_only">仅生成术语库与风格指南，不注入</option><option value="terms">术语预扫（terms）</option><option value="terms+style">术语预扫与风格指南（terms+style）</option><option value="editorial">术语预扫、审定与风格指南（editorial）</option></select></label><p className="ai-hint">术语建议仅作为翻译提示，不写入用户术语表。Editorial 会按 RetainPDF 规则审定术语并处理人名、出版物与普通词；风格指南失败时保留通用规则继续翻译。</p></section>
+        <section className="ai-card"><header>译前准备</header><label className="ai-model-controls"><select aria-label="译前准备模式" value={translationPreparation} disabled={busy} onChange={(event) => setTranslationPreparation(event.target.value === 'editorial' ? 'editorial' : event.target.value === 'terms+style' ? 'terms+style' : event.target.value === 'terms' ? 'terms' : event.target.value === 'artifacts_only' ? 'artifacts_only' : 'off')}><option value="off">关闭（LeePDF 默认）</option><option value="artifacts_only">仅生成术语库与风格指南，不注入</option><option value="terms">术语预扫（terms）</option><option value="terms+style">术语预扫与风格指南（terms+style）</option><option value="editorial">术语预扫、审定与风格指南（editorial）</option></select></label><p className="ai-hint">术语建议仅作为翻译提示，不写入用户术语表。Editorial 会按 LeePDF 规则审定术语并处理人名、出版物与普通词；风格指南失败时保留通用规则继续翻译。</p></section>
 
         <section className="ai-card ai-test-card">
           <header>
@@ -586,7 +586,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
             模型
             <input value={ocrModel} disabled={savingOCR} onChange={(event) => setOCRModel(event.target.value)} aria-label="PaddleOCR 模型" />
           </label>
-          <p className="ai-hint">RetainPDF 会使用此 OCR 服务完成整篇识别。上传上限默认 512 MB，实际页数与文件限制由 OCR 服务决定；令牌仅保存在本机配置中。</p>
+          <p className="ai-hint">LeePDF 会使用此 OCR 服务完成整篇识别。上传上限默认 512 MB，实际页数与文件限制由 OCR 服务决定；令牌仅保存在本机配置中。</p>
           <div className="ai-ocr-actions">
             <button type="button" className="ai-save-button" disabled={savingOCR || !ocrSettings} onClick={() => void saveOCR()}>
               {savingOCR ? '保存中…' : '保存 OCR 设置'}

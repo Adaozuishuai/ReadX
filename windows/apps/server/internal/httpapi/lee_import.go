@@ -23,11 +23,11 @@ import (
 	"cbctv2/server/internal/ocr"
 )
 
-// runRetainPDFImport runs RetainPDF's provider-case pipeline from the ReadX
-// import action. Retain owns OCR, document.v1 normalization, translation,
+// runLeePDFImport runs LeePDF's provider-case pipeline from the ReadX
+// import action. Lee owns OCR, document.v1 normalization, translation,
 // repair, and the first PDF render; ReadX only projects the returned contract
 // into its library and reader data model.
-func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf []byte, metadata *recognizedPaperMetadata) (string, error) {
+func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []byte, metadata *recognizedPaperMetadata) (string, error) {
 	if metadata == nil {
 		return "", errors.New("导入元数据不可用")
 	}
@@ -56,7 +56,7 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 		filepath.Join(jobRoot, "logs"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return "", fmt.Errorf("创建 Retain 导入目录失败: %w", err)
+			return "", fmt.Errorf("创建 Lee 导入目录失败: %w", err)
 		}
 	}
 	sourcePath := filepath.Join(sourceDir, filepath.Base(name))
@@ -64,7 +64,7 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 		sourcePath = filepath.Join(sourceDir, "source.pdf")
 	}
 	if err := os.WriteFile(sourcePath, pdf, 0o600); err != nil {
-		return "", fmt.Errorf("保存 Retain 输入 PDF 失败: %w", err)
+		return "", fmt.Errorf("保存 Lee 输入 PDF 失败: %w", err)
 	}
 
 	translationBaseURL := strings.TrimSpace(aiConfig.PublicBaseURL())
@@ -73,9 +73,9 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 	if aiConfig.ProviderName() == "anthropic" {
 		translationProtocol = "anthropic"
 	}
-	var bridge *retainAICompatBridge
+	var bridge *leeAICompatBridge
 	if aiConfig.IsCLI() {
-		bridge, err = newRetainAICompatBridge(ai.NewClient(aiConfig))
+		bridge, err = newLeeAICompatBridge(ai.NewClient(aiConfig))
 		if err != nil {
 			return "", fmt.Errorf("连接 ReadX AI 助手失败: %w", err)
 		}
@@ -88,7 +88,7 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 		return "", errors.New("AI 助手设置中缺少模型服务地址")
 	}
 
-	py, prefix, sitePackages, err := retainPipelinePython(s.cfg.DataRoot)
+	py, prefix, sitePackages, err := leePipelinePython(s.cfg.DataRoot)
 	if err != nil {
 		return "", err
 	}
@@ -113,7 +113,7 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 				}
 			}
 		}
-		if sourceRoot := retainSourceRoot(); sourceRoot != "" {
+		if sourceRoot := leeSourceRoot(); sourceRoot != "" {
 			candidate := filepath.Join(sourceRoot, "vendor", "retainpdf", "backend")
 			if _, statErr := os.Stat(filepath.Join(candidate, "pipeline", "retainpdf_pipeline", "entrypoints", "console.py")); statErr == nil {
 				backendRoot = candidate
@@ -121,10 +121,10 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 		}
 	}
 	if _, err := os.Stat(filepath.Join(backendRoot, "pipeline", "retainpdf_pipeline", "entrypoints", "console.py")); err != nil {
-		return "", errors.New("没有找到随 ReadX 提供的 RetainPDF pipeline")
+		return "", errors.New("没有找到随 ReadX 提供的 LeePDF pipeline")
 	}
 
-	jobID, err := randomRetainJobID()
+	jobID, err := randomLeeJobID()
 	if err != nil {
 		return "", err
 	}
@@ -160,7 +160,7 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 		return "", err
 	}
 	if err := os.WriteFile(specPath, encoded, 0o600); err != nil {
-		return "", fmt.Errorf("写入 Retain pipeline 参数失败: %w", err)
+		return "", fmt.Errorf("写入 Lee pipeline 参数失败: %w", err)
 	}
 
 	args := append(prefix, "-m", "retainpdf_pipeline.entrypoints.console", "provider-case", "--spec", specPath)
@@ -191,7 +191,7 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 		}
 	}
 	if _, err := os.Stat(filepath.Join(resourceRoot, "rendering-engine", "engine", "bin", "rpr-retain.js")); err != nil {
-		if sourceRoot := retainSourceRoot(); sourceRoot != "" {
+		if sourceRoot := leeSourceRoot(); sourceRoot != "" {
 			resourceRoot = filepath.Join(sourceRoot, "resources")
 		}
 	}
@@ -209,7 +209,7 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 			}
 		}
 		if _, err := os.Stat(nodeModules); err != nil {
-			if sourceRoot := retainSourceRoot(); sourceRoot != "" {
+			if sourceRoot := leeSourceRoot(); sourceRoot != "" {
 				nodeModules = filepath.Join(sourceRoot, "node_modules")
 			}
 		}
@@ -220,17 +220,17 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 	logPath := filepath.Join(jobRoot, "retain-import.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return "", fmt.Errorf("创建 Retain 日志失败: %w", err)
+		return "", fmt.Errorf("创建 Lee 日志失败: %w", err)
 	}
 	defer logFile.Close()
-	logWriter := &retainImportLogWriter{sink: logFile, observe: func(event retainStageObservation) {
-		s.retainImportObservation(key, event)
+	logWriter := &leeImportLogWriter{sink: logFile, observe: func(event leeStageObservation) {
+		s.leeImportObservation(key, event)
 	}}
 	cmd.Stdout, cmd.Stderr = logWriter, logWriter
-	s.jobStage(key, "ocr", "running", "Retain 正在识别并整理论文", 0, -1)
+	s.jobStage(key, "ocr", "running", "Lee 正在识别并整理论文", 0, -1)
 	s.jobStage(key, "translate", "pending", "等待 OCR 完成", 0, -1)
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("启动 Retain pipeline 失败: %w", err)
+		return "", fmt.Errorf("启动 Lee pipeline 失败: %w", err)
 	}
 	waitErr := cmd.Wait()
 	logWriter.flush()
@@ -254,23 +254,23 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 				}
 			}
 		})
-		return "", fmt.Errorf("Retain 导入处理失败: %s", detail)
+		return "", fmt.Errorf("Lee 导入处理失败: %s", detail)
 	}
 
 	documentPath := filepath.Join(jobRoot, "ocr", "normalized", "document.v1.json")
 	documentJSON, err := os.ReadFile(documentPath)
 	if err != nil {
-		return "", fmt.Errorf("Retain 未生成 document.v1: %w", err)
+		return "", fmt.Errorf("Lee 未生成 document.v1: %w", err)
 	}
 	pages, err := ocr.ProjectNormalizedDocument(documentJSON)
 	if err != nil {
 		return "", err
 	}
-	translations, err := loadRetainTranslations(filepath.Join(jobRoot, "translated"))
+	translations, err := loadLeeTranslations(filepath.Join(jobRoot, "translated"))
 	if err != nil {
 		return "", err
 	}
-	s.jobStage(key, "ocr", "done", "Retain 已完成 OCR 与 document.v1 整理", len(pages), len(pages))
+	s.jobStage(key, "ocr", "done", "Lee 已完成 OCR 与 document.v1 整理", len(pages), len(pages))
 	s.updateImportJob(key, func(job *DocumentJob) {
 		stage := job.stage("translate")
 		if stage == nil {
@@ -280,12 +280,12 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 			stage.Completed, stage.Total, stage.Unit = len(translations), len(translations), "段"
 		}
 		stage.ResultCount, stage.ResultUnit = len(translations), "段"
-		job.setStage("translate", "done", fmt.Sprintf("Retain 已完成全文翻译，生成 %d 段译文", len(translations)), -1, -1)
+		job.setStage("translate", "done", fmt.Sprintf("Lee 已完成全文翻译，生成 %d 段译文", len(translations)), -1, -1)
 	})
-	if err := retainOutputToReadXMetadata(pages, translations, aiConfig, metadata); err != nil {
+	if err := leeOutputToReadXMetadata(pages, translations, aiConfig, metadata); err != nil {
 		return "", err
 	}
-	// Retain 只负责 OCR/翻译/排版，不做题录识别；用 OCR 首页文本补回 ReadX 的
+	// Lee 只负责 OCR/翻译/排版，不做题录识别；用 OCR 首页文本补回 ReadX 的
 	// 题名、作者、期刊、年份、DOI 与中文题名。识别失败不阻断已完成的翻译。
 	if strings.TrimSpace(metadata.Title) == "" && len(metadata.Pages) > 0 {
 		hint := publicationMetadataHint{FirstPage: metadata.Pages[0].Text, DOI: metadata.DOI}
@@ -318,28 +318,28 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 	}
 	translatedPDF := filepath.Join(jobRoot, "rendered", "readx-translated.pdf")
 	if _, err := os.Stat(translatedPDF); err != nil {
-		return "", fmt.Errorf("Retain 未生成译文 PDF: %w", err)
+		return "", fmt.Errorf("Lee 未生成译文 PDF: %w", err)
 	}
 	s.updateImportJob(key, func(job *DocumentJob) {
-		job.setStage("render", "done", "Retain 已完成译文排版", len(pages), len(pages))
+		job.setStage("render", "done", "Lee 已完成译文排版", len(pages), len(pages))
 		job.stage("render").Unit = "页"
 		job.Pages = len(pages)
 	})
 	return translatedPDF, nil
 }
 
-type retainPageTranslation struct {
+type leePageTranslation struct {
 	PageIndex int
 	Source    string
 	Target    string
 }
 
-func loadRetainTranslations(dir string) ([]retainPageTranslation, error) {
+func loadLeeTranslations(dir string) ([]leePageTranslation, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("读取 Retain 翻译产物失败: %w", err)
+		return nil, fmt.Errorf("读取 Lee 翻译产物失败: %w", err)
 	}
-	var records []retainPageTranslation
+	var records []leePageTranslation
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "page-") || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -354,21 +354,21 @@ func loadRetainTranslations(dir string) ([]retainPageTranslation, error) {
 			Target    string `json:"translated_text"`
 		}
 		if err := json.Unmarshal(body, &page); err != nil {
-			return nil, fmt.Errorf("解析 Retain 翻译页 %s 失败: %w", entry.Name(), err)
+			return nil, fmt.Errorf("解析 Lee 翻译页 %s 失败: %w", entry.Name(), err)
 		}
 		for _, item := range page {
 			if strings.TrimSpace(item.Source) != "" && strings.TrimSpace(item.Target) != "" {
-				records = append(records, retainPageTranslation{PageIndex: item.PageIndex, Source: strings.TrimSpace(item.Source), Target: strings.TrimSpace(item.Target)})
+				records = append(records, leePageTranslation{PageIndex: item.PageIndex, Source: strings.TrimSpace(item.Source), Target: strings.TrimSpace(item.Target)})
 			}
 		}
 	}
 	if len(records) == 0 {
-		return nil, errors.New("Retain 没有生成可用的段落译文")
+		return nil, errors.New("Lee 没有生成可用的段落译文")
 	}
 	return records, nil
 }
 
-func retainOutputToReadXMetadata(pages []ocr.Page, translated []retainPageTranslation, cfg ai.Config, metadata *recognizedPaperMetadata) error {
+func leeOutputToReadXMetadata(pages []ocr.Page, translated []leePageTranslation, cfg ai.Config, metadata *recognizedPaperMetadata) error {
 	targets := map[string][]string{}
 	for _, item := range translated {
 		key := fmt.Sprintf("%d\x00%s", item.PageIndex, item.Source)
@@ -403,7 +403,7 @@ func retainOutputToReadXMetadata(pages []ocr.Page, translated []retainPageTransl
 				PeerBlockAbsorbedText: block.PeerBlockAbsorbedText, SuspectedPeerBlockID: block.SuspectedPeerBlockID,
 				ContinuationGroup: block.ContinuationGroup, ProviderContinuationRole: block.ProviderContinuationRole,
 				ProviderContinuationScope: block.ProviderContinuationScope, ProviderContinuationOrder: block.ProviderContinuationOrder,
-				ProviderContinuationScore: block.ProviderContinuationScore, RetainMetadata: block.RetainMetadata, RetainContent: block.RetainContent,
+				ProviderContinuationScore: block.ProviderContinuationScore, LeeMetadata: block.LeeMetadata, LeeContent: block.LeeContent,
 			})
 			if block.Translatable && strings.TrimSpace(block.Text) != "" {
 				segments = append(segments, block.Text)
@@ -434,7 +434,7 @@ func retainOutputToReadXMetadata(pages []ocr.Page, translated []retainPageTransl
 	return nil
 }
 
-func retainPipelinePython(dataRoot string) (string, []string, string, error) {
+func leePipelinePython(dataRoot string) (string, []string, string, error) {
 	if configured := strings.TrimSpace(os.Getenv("READX_PYTHON")); configured != "" {
 		path, err := exec.LookPath(configured)
 		if err != nil {
@@ -453,7 +453,7 @@ func retainPipelinePython(dataRoot string) (string, []string, string, error) {
 		filepath.Join(dataRoot, "windows", ".retain-runtime", "Scripts", "python.exe"),
 		filepath.Join(dataRoot, ".retain-runtime", "Scripts", "python.exe"),
 	}
-	if sourceRoot := retainSourceRoot(); sourceRoot != "" {
+	if sourceRoot := leeSourceRoot(); sourceRoot != "" {
 		candidates = append(candidates, filepath.Join(sourceRoot, ".retain-runtime", "Scripts", "python.exe"))
 	}
 	for _, candidate := range candidates {
@@ -493,7 +493,7 @@ func retainPipelinePython(dataRoot string) (string, []string, string, error) {
 			}
 		}
 	}
-	return "", nil, "", errors.New("RetainPDF 需要 Python 3.11 或 3.12；可设置 READX_PYTHON 指向已安装 Retain 依赖的 python.exe")
+	return "", nil, "", errors.New("LeePDF 需要 Python 3.11 或 3.12；可设置 READX_PYTHON 指向已安装 Lee 依赖的 python.exe")
 }
 
 // venvBasePython 读取 pyvenv.cfg 的 home，返回 venv 背后的基础解释器与 site-packages。
@@ -527,7 +527,7 @@ func venvBasePython(venvPython string) (string, string) {
 	return venvPython, site
 }
 
-func retainSourceRoot() string {
+func leeSourceRoot() string {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok || sourceFile == "" {
 		return ""
@@ -535,7 +535,7 @@ func retainSourceRoot() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", ".."))
 }
 
-func randomRetainJobID() (string, error) {
+func randomLeeJobID() (string, error) {
 	var raw [12]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", err
@@ -566,9 +566,9 @@ func tailTextFile(path string, limit int) string {
 	return text
 }
 
-func (s *Server) adoptRetainTranslatedPDF(key, source string, pages int) error {
+func (s *Server) adoptLeeTranslatedPDF(key, source string, pages int) error {
 	if strings.TrimSpace(source) == "" {
-		return errors.New("Retain 译文 PDF 路径为空")
+		return errors.New("Lee 译文 PDF 路径为空")
 	}
 	target := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), key+"-translated.pdf")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -576,7 +576,7 @@ func (s *Server) adoptRetainTranslatedPDF(key, source string, pages int) error {
 	}
 	input, err := os.Open(source)
 	if err != nil {
-		return fmt.Errorf("打开 Retain 译文 PDF 失败: %w", err)
+		return fmt.Errorf("打开 Lee 译文 PDF 失败: %w", err)
 	}
 	defer input.Close()
 	temporary, err := os.CreateTemp(filepath.Dir(target), ".retain-translated-*.pdf")
@@ -593,14 +593,14 @@ func (s *Server) adoptRetainTranslatedPDF(key, source string, pages int) error {
 		return err
 	}
 	if err = os.Rename(tempPath, target); err != nil {
-		return fmt.Errorf("保存 Retain 译文 PDF 失败: %w", err)
+		return fmt.Errorf("保存 Lee 译文 PDF 失败: %w", err)
 	}
-	s.jobStage(key, "render", "done", fmt.Sprintf("Retain 已排版 %d 页译文", pages), pages, pages)
+	s.jobStage(key, "render", "done", fmt.Sprintf("Lee 已排版 %d 页译文", pages), pages, pages)
 	s.finishImportJob(key, "done", "")
 	return nil
 }
 
-type retainAICompatBridge struct {
+type leeAICompatBridge struct {
 	BaseURL string
 	Token   string
 	server  *http.Server
@@ -611,7 +611,7 @@ func existingFile(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func newRetainAICompatBridge(client *ai.Client) (*retainAICompatBridge, error) {
+func newLeeAICompatBridge(client *ai.Client) (*leeAICompatBridge, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
@@ -696,10 +696,10 @@ func newRetainAICompatBridge(client *ai.Client) (*retainAICompatBridge, error) {
 	})
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = server.Serve(listener) }()
-	return &retainAICompatBridge{BaseURL: "http://" + listener.Addr().String() + "/v1", Token: token, server: server}, nil
+	return &leeAICompatBridge{BaseURL: "http://" + listener.Addr().String() + "/v1", Token: token, server: server}, nil
 }
 
-func (b *retainAICompatBridge) Close() {
+func (b *leeAICompatBridge) Close() {
 	if b == nil {
 		return
 	}

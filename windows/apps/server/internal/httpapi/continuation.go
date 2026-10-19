@@ -131,7 +131,7 @@ func annotateContinuationGroups(ctx context.Context, pages []ocr.Page, reviewer 
 			end := min(start+continuationReviewBatch, len(ambiguous))
 			joins, err := reviewContinuationPairs(ctx, reviewer, ambiguous[start:end])
 			if err != nil {
-				continue // RetainPDF treats this review as advisory; no review result means break.
+				continue // LeePDF treats this review as advisory; no review result means break.
 			}
 			for _, pair := range ambiguous[start:end] {
 				if joins[pair.id] {
@@ -262,7 +262,7 @@ func annotateLayoutZones(pages []ocr.Page) {
 		widths := make([]float64, 0, len(flow))
 		centers := make([]float64, 0, len(flow))
 		leftCenters, rightCenters := []float64{}, []float64{}
-		// RetainPDF computes page_width from every payload bbox, including
+		// LeePDF computes page_width from every payload bbox, including
 		// non-flow OCR blocks. Use the same extent for split and full-width
 		// thresholds so captions/figures cannot silently change the layout.
 		minX, maxX := math.MaxFloat64, -math.MaxFloat64

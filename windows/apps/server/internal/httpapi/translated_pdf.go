@@ -81,19 +81,19 @@ func (s *Server) handleTranslatedPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !hasLayout || len(layout.Pages) == 0 {
-		writeError(w, http.StatusConflict, "这篇论文尚无 RetainPDF 处理记录，请重新导入后再导出译文 PDF")
+		writeError(w, http.StatusConflict, "这篇论文尚无 LeePDF 处理记录，请重新导入后再导出译文 PDF")
 		return
 	}
 	if body.PageCount > 0 && body.PageCount != len(layout.Pages) {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("请求页数 %d 与 RetainPDF 处理页数 %d 不一致", body.PageCount, len(layout.Pages)))
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("请求页数 %d 与 LeePDF 处理页数 %d 不一致", body.PageCount, len(layout.Pages)))
 		return
 	}
 	info, err := os.Stat(outputPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			writeError(w, http.StatusConflict, "RetainPDF 尚未生成译文 PDF，请重新导入论文")
+			writeError(w, http.StatusConflict, "LeePDF 尚未生成译文 PDF，请重新导入论文")
 		} else {
-			writeError(w, http.StatusInternalServerError, "读取 RetainPDF 译文 PDF 失败: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "读取 LeePDF 译文 PDF 失败: "+err.Error())
 		}
 		return
 	}
@@ -195,7 +195,7 @@ func keepOriginalOCRText(text string, pageIndex int, y, pageHeight float64, isol
 		return true
 	}
 	isIsolated := len(isolated) == 0 || isolated[0]
-	if keepOriginalByRetainPolicy(trimmed, isIsolated) {
+	if keepOriginalByLeePolicy(trimmed, isIsolated) {
 		return true
 	}
 	if strings.Contains(trimmed, "@") || strings.Contains(strings.ToLower(trimmed), "doi.org") {
@@ -220,9 +220,9 @@ func keepOriginalOCRText(text string, pageIndex int, y, pageHeight float64, isol
 		strings.HasPrefix(lower, "arxiv")
 }
 
-// keepOriginalByRetainPolicy mirrors RetainPDF's default fast-path keep-origin
+// keepOriginalByLeePolicy mirrors LeePDF's default fast-path keep-origin
 // rules for text blocks whose translation would damage structure or metadata.
-func keepOriginalByRetainPolicy(text string, isolated bool) bool {
+func keepOriginalByLeePolicy(text string, isolated bool) bool {
 	compact := strings.Join(strings.Fields(text), " ")
 	if compact == "" {
 		return true

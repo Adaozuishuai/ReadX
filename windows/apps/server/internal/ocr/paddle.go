@@ -1,7 +1,7 @@
-// Package ocr 接入 RetainPDF 使用的 PaddleOCR 文档解析服务，把扫描版 PDF 变成
+// Package ocr 接入 LeePDF 使用的 PaddleOCR 文档解析服务，把扫描版 PDF 变成
 // 「页 + 文本块 + 坐标」，供排版渲染使用。
 //
-// 这不是本地 OCR 模型：RetainPDF 的 Paddle/MinerU 两条路也都是远程服务。ReadX 只
+// 这不是本地 OCR 模型：LeePDF 的 Paddle/MinerU 两条路也都是远程服务。ReadX 只
 // 内置同一套调用与结果映射，用户需要提供 PaddleOCR 的访问令牌。
 package ocr
 
@@ -26,9 +26,9 @@ import (
 )
 
 const (
-	// DefaultBaseURL 是 PaddleOCR 的官方服务地址（与 RetainPDF 默认一致）。
+	// DefaultBaseURL 是 PaddleOCR 的官方服务地址（与 LeePDF 默认一致）。
 	DefaultBaseURL = "https://paddleocr.aistudio-app.com"
-	// DefaultModel 是 RetainPDF 默认的文档解析模型。
+	// DefaultModel 是 LeePDF 默认的文档解析模型。
 	DefaultModel = "PaddleOCR-VL-1.6"
 	// MaxPDFBytes / MaxPDFPages 跟随 PaddleOCR 本地文件上传规格。
 	MaxPDFBytes = 50 << 20
@@ -59,7 +59,7 @@ type Size struct {
 	Height float64
 }
 
-// Block 是 OCR 结果里的一个块。Kind 是按 RetainPDF 的 document.v1 词汇归一后的
+// Block 是 OCR 结果里的一个块。Kind 是按 LeePDF 的 document.v1 词汇归一后的
 // 块类型（body/heading/title/caption/…）；Translatable 为 false 的块（公式、表格、
 // 图片、页眉页脚、参考文献）保持原样，不覆盖、不翻译。
 type Block struct {
@@ -107,11 +107,11 @@ type Block struct {
 	ProviderContinuationOrder int
 	ProviderContinuationScore float64
 	ProviderContinuationSkip  string
-	RetainMetadata            map[string]any
-	RetainContent             map[string]any
+	LeeMetadata            map[string]any
+	LeeContent             map[string]any
 }
 
-// Segment 保留 RetainPDF document.v1 的正文/公式片段边界。Paddle 不提供
+// Segment 保留 LeePDF document.v1 的正文/公式片段边界。Paddle 不提供
 // glyph 级文本框，因此无明确 inline_formula 匹配时仍使用块级 bbox。
 type Segment struct {
 	Type         string     `json:"type"`
@@ -460,17 +460,17 @@ func MapLayouts(raw []json.RawMessage, sizes []Size) ([]Page, error) {
 	return MapLayoutsContext(ctx, raw, sizes)
 }
 
-// MapLayoutsContext runs RetainPDF's document.v1 adapter and Paddle text-
+// MapLayoutsContext runs LeePDF's document.v1 adapter and Paddle text-
 // geometry normalization before projecting the canonical blocks into ReadX.
 func MapLayoutsContext(ctx context.Context, raw []json.RawMessage, sizes []Size) ([]Page, error) {
 	if len(sizes) > 0 && len(raw) != len(sizes) {
 		return nil, fmt.Errorf("OCR 返回 %d 页，原 PDF 有 %d 页，无法可靠对齐页面；请检查 PDF 后重试", len(raw), len(sizes))
 	}
-	document, err := normalizeWithRetain(ctx, raw, sizes)
+	document, err := normalizeWithLee(ctx, raw, sizes)
 	if err != nil {
 		return nil, err
 	}
-	return projectRetainDocument(document)
+	return projectLeeDocument(document)
 }
 
 func cloneSegments(in []Segment) []Segment {
@@ -923,7 +923,7 @@ func translationPolicyReason(label, kind string) string {
 	}
 }
 
-// KindForLabel 把 Paddle 的原始标签映射成 RetainPDF document.v1 的块类型
+// KindForLabel 把 Paddle 的原始标签映射成 LeePDF document.v1 的块类型
 // （见上游 provider_adapters/paddle/label_catalog.py 与 roles.py）。
 //
 // 返回空串表示「非文本块」：公式、表格、图片、图表、印章、代码块等。

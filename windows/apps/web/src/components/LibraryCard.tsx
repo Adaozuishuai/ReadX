@@ -22,6 +22,7 @@ export function LibraryCard({
   categories,
   selected,
   onSelect,
+  onRetranslate,
   onOpenReproduction,
   onToggleTrash,
   onSetShelves,
@@ -31,6 +32,7 @@ export function LibraryCard({
   categories: Category[];
   selected: boolean;
   onSelect: () => void;
+  onRetranslate: () => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: () => Promise<unknown>;
   onSetShelves: (categories: string[]) => Promise<unknown>;
@@ -134,6 +136,14 @@ export function LibraryCard({
             ))}
           </div>
         </details>
+      ) : null}
+
+      {doc.format !== 'epub' && doc.hasPdf ? (
+        <div className="book-card-footer">
+          <button type="button" className="book-retranslate-button" onClick={onRetranslate}>
+            <span aria-hidden="true">↻</span> 重新翻译
+          </button>
+        </div>
       ) : null}
 
     </article>

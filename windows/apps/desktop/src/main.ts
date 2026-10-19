@@ -1,11 +1,12 @@
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import electronUpdater, { type UpdateInfo } from 'electron-updater';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
-import type { BootstrapInfo, ReadyInfo } from '@cbct/shared';
+import type { BootstrapInfo, DesktopUpdateStatus, ReadyInfo } from '@cbct/shared';
 
 /**
  * Electron 壳只做三件事：拉起 Go server、等就绪、把本地 token 交给渲染进程。
@@ -17,6 +18,9 @@ import type { BootstrapInfo, ReadyInfo } from '@cbct/shared';
 const READY_PREFIX = 'CBCT_V2_READY ';
 const READY_TIMEOUT_MS = 30_000;
 const SHUTDOWN_GRACE_MS = 4_000;
+const { autoUpdater } = electronUpdater;
+let availableUpdateVersion: string | undefined;
+let downloadedUpdateReady = false;
 
 interface ServerHandle {
   info: ReadyInfo;
@@ -43,6 +47,7 @@ if (!app.requestSingleInstanceLock()) {
 
 async function bootstrap(): Promise<void> {
   await app.whenReady();
+  setupUpdater();
 
   // 页面内的应用内跳转一律拦回本地阅读页；但指向外部的 http(s) 链接
   // （如每日推荐的「论文来源」）交给系统浏览器打开——原先 setWindowOpenHandler
@@ -96,6 +101,90 @@ async function bootstrap(): Promise<void> {
       app.quit();
     });
   });
+}
+
+function setupUpdater(): void {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = false;
+
+  autoUpdater.on('checking-for-update', () => publishUpdateStatus({ state: 'checking', currentVersion: app.getVersion() }));
+  autoUpdater.on('update-available', (info) => {
+    availableUpdateVersion = info.version;
+    publishUpdateStatus({
+      state: 'available', currentVersion: app.getVersion(), version: info.version,
+      releaseNotes: releaseNotesText(info.releaseNotes),
+    });
+  });
+  autoUpdater.on('update-not-available', () => publishUpdateStatus({ state: 'current', currentVersion: app.getVersion() }));
+  autoUpdater.on('download-progress', (progress) => publishUpdateStatus({
+    state: 'downloading', currentVersion: app.getVersion(), percent: Math.max(0, Math.min(100, progress.percent)),
+  }));
+  autoUpdater.on('update-downloaded', (info) => {
+    downloadedUpdateReady = true;
+    publishUpdateStatus({ state: 'downloaded', currentVersion: app.getVersion(), version: info.version });
+  });
+  autoUpdater.on('error', (error) => publishUpdateStatus({
+    state: 'error', currentVersion: app.getVersion(), message: error.message || '更新检查失败，请稍后重试。',
+  }));
+
+  ipcMain.handle('readx-updates:check', async (): Promise<DesktopUpdateStatus> => {
+    if (!app.isPackaged || process.platform !== 'win32') {
+      return {
+        state: 'unsupported', currentVersion: app.getVersion(),
+        message: process.platform !== 'win32' ? '应用内更新目前仅支持 Windows 桌面版。' : '本地开发版不能自动替换代码，请安装桌面版后检查更新。',
+      };
+    }
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      return result?.isUpdateAvailable
+        ? {
+          state: 'available', currentVersion: app.getVersion(), version: result.updateInfo.version,
+          releaseNotes: releaseNotesText(result.updateInfo.releaseNotes),
+        }
+        : { state: 'current', currentVersion: app.getVersion() };
+    } catch (error) {
+      const status: DesktopUpdateStatus = { state: 'error', currentVersion: app.getVersion(), message: describe(error) };
+      publishUpdateStatus(status);
+      return status;
+    }
+  });
+
+  ipcMain.handle('readx-updates:download', async (): Promise<DesktopUpdateStatus> => {
+    if (!app.isPackaged || process.platform !== 'win32') {
+      return { state: 'unsupported', currentVersion: app.getVersion(), message: '请在 Windows 桌面安装版中下载更新。' };
+    }
+    if (!availableUpdateVersion) {
+      return { state: 'error', currentVersion: app.getVersion(), message: '请先检查是否有可用更新。' };
+    }
+    try {
+      await autoUpdater.downloadUpdate();
+      return { state: 'downloaded', currentVersion: app.getVersion(), version: availableUpdateVersion };
+    } catch (error) {
+      const status: DesktopUpdateStatus = { state: 'error', currentVersion: app.getVersion(), message: describe(error) };
+      publishUpdateStatus(status);
+      return status;
+    }
+  });
+
+  ipcMain.handle('readx-updates:install', () => {
+    if (!app.isPackaged || process.platform !== 'win32' || !downloadedUpdateReady) return;
+    autoUpdater.quitAndInstall(true, true);
+  });
+}
+
+function publishUpdateStatus(status: DesktopUpdateStatus): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('readx-updates:status', status);
+}
+
+function releaseNotesText(notes: UpdateInfo['releaseNotes']): string | undefined {
+  if (typeof notes === 'string') return notes.trim() || undefined;
+  if (!Array.isArray(notes)) return undefined;
+  return notes
+    .map(({ version, note }) => (note?.trim() ? `v${version}\n${note.trim()}` : ''))
+    .filter(Boolean)
+    .join('\n\n') || undefined;
 }
 
 async function startServer(): Promise<ServerHandle> {

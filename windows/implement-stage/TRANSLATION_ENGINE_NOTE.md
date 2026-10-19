@@ -36,7 +36,7 @@ Windows PDF 导入执行 RetainPDF 的 Python provider pipeline。PaddleOCR 仍�
 | 默认数学直通 | `apps/server/internal/translate/protect.go`、`prompt.go`、`review.go`、`../render/math_check.go` | `math_mode=direct_typst`、`translation_direct_typst_guidance.txt`、`direct_typst.py`、`render_check.py` |
 | 原文快速保留策略 | `apps/server/internal/httpapi/translated_pdf.go` | `services/fast_path/keep_origin.py`、`services/policy/verdict.py`、`special_blocks.py` |
 | macOS 翻译入口 | `../macos/apps/server/internal/ai/translate.go` + `../macos/apps/server/internal/translate/`（同源引擎副本） | 同一套单段请求、质检、Agent 修复与最终恢复 |
-| Windows 导入全文处理 | `apps/server/internal/httpapi/retain_import.go`、`publications.go` | `provider-case`：Paddle OCR、document.v1、translation、repair、RPR render |
+| Windows 导入全文处理 | `apps/server/internal/httpapi/lee_import.go`、`publications.go` | `provider-case`：Paddle OCR、document.v1、translation、repair、RPR render |
 | macOS 导入翻译入口 | `../macos/apps/server/internal/httpapi/import_translation.go` | OCR 段落筛选、翻译、缓存与续接处理 |
 | macOS 阅读器 OCR 译文 | `../macos/apps/server/internal/httpapi/ocr_layout.go`、`../macos/apps/web/src/components/ReaderScreen.tsx` | 按页读取已存 OCR 坐标与块级译文，在原 PDF 上叠加 |
 | macOS 译文 PDF 导出 | `../macos/apps/server/internal/render/render.go`、`../macos/apps/server/internal/httpapi/translated_pdf.go`、`../macos/apps/web/src/components/ExportPDFDialog.tsx` | 复用 RPR 输入协议；用导入时 OCR 版面及段落译文，不把段落数当页数 |

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// 常规段落翻译提示词与 RetainPDF 的 translation_system.txt、
+// 常规段落翻译提示词与 LeePDF 的 translation_system.txt、
 // translation_zh_conventions.txt 和 translation_task.txt 保持同一规则。
 // OCR 识别和版面回填属于 ReadX 的上、下游，本包只处理翻译请求。
 const systemPrompt = `你是一名科研文献翻译助手。请将当前原文译成适合论文排版的简体中文：准确、客观、自然、凝练，长度尽量接近原文。
@@ -29,7 +29,7 @@ const outputProtocol = `你正在翻译一个文本块。
 只返回译文本身，使用纯文本。
 不要返回结构化数据、代码块、标签、编号、决策字段或解释说明。`
 
-// RetainPDF's default math_mode is direct_typst: formulas stay in the source
+// LeePDF's default math_mode is direct_typst: formulas stay in the source
 // sent to the model, and the model returns plain text with LaTeX delimiters.
 const directMathGuidance = `请先理解整句语义，再直接输出简体中文译文。
 公式一律用 LaTeX 写在 $...$ 里，不要改写成 Typst 语法；LaTeX 命令使用单个反斜杠，例如 \mu、\mathrm{M}。
@@ -61,7 +61,7 @@ func BuildBatchSystem() string {
 	return strings.Join([]string{systemPrompt, zhConventions, generalScienceRules, directMathGuidance, batchOutputProtocol}, "\n\n")
 }
 
-// buildSingleUser 构造 RetainPDF 常规生产链使用的单段纯文本请求。
+// buildSingleUser 构造 LeePDF 常规生产链使用的单段纯文本请求。
 // 上下文注入沿用 "needed" 策略：只在半句或跨栏/跨页续接时给前后文。
 func buildSingleUser(item Item, protected string, options Options) string {
 	var builder strings.Builder
@@ -252,7 +252,7 @@ func contextsFor(item Item, options Options) (bool, bool) {
 	return item.ContextBefore != "", item.ContextAfter != ""
 }
 
-// hasTerminal 判断原文是否已经写完一句：RetainPDF 用它决定要不要把邻段上下文
+// hasTerminal 判断原文是否已经写完一句：LeePDF 用它决定要不要把邻段上下文
 // 交给模型，以及要不要提醒「半句照翻半句」。
 func hasTerminal(text string) bool {
 	trimmed := strings.TrimSpace(text)

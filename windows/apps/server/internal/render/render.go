@@ -1,4 +1,4 @@
-// Package render 把「原 PDF + 每页译文 + 版式」交给 RetainPDF 的 rpr 渲染引擎，
+// Package render 把「原 PDF + 每页译文 + 版式」交给 LeePDF 的 rpr 渲染引擎，
 // 生成保留排版的译文 PDF。
 //
 // 引擎本身是 retain-pdf-rendering（MIT，Node.js），随应用放在

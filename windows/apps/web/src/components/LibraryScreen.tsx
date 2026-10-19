@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
+import type { DesktopUpdateStatus } from '@cbct/shared';
 import { statusLabel } from '@cbct/shared';
 import type { Category, DocumentMeta } from '../api/client';
 import { api } from '../api/client';
@@ -75,6 +76,7 @@ interface Props {
   setFilters: (next: Partial<Filters>) => void;
   selectedId: string | null;
   onOpenDocument: (id: string) => void;
+  onRetranslate: (doc: DocumentSummary) => void;
   onOpenImport: () => void;
   onOpenSettings: () => void;
   meta: ReturnType<typeof useLibraryMeta>;
@@ -97,6 +99,7 @@ export function LibraryScreen({
   setFilters,
   selectedId,
   onOpenDocument,
+  onRetranslate,
   onOpenImport,
   onOpenSettings,
   meta,
@@ -318,6 +321,7 @@ export function LibraryScreen({
         {managingCategories ? <CategoryManager meta={meta} onDone={() => setManagingCategories(false)} /> : null}
 
         <div className="sidebar-bottom">
+          <UpdateControl />
           {/* 左下角：AI 助手设置。放在持久可见的侧栏底部，不再占顶栏空间。 */}
           <button type="button" className="nav-item" onClick={onOpenSettings} title="AI 助手设置">
             <WorkspaceIcon name="settings" /><span className="nav-label">AI 助手设置</span>
@@ -465,6 +469,7 @@ export function LibraryScreen({
               meta={meta.items}
               selectedId={selectedId}
               onSelect={onOpenDocument}
+              onRetranslate={onRetranslate}
               onOpenReproduction={onOpenReproduction}
               onToggleTrash={toggleTrash}
               onSetShelves={(key, categories) => meta.patch(key, { categories })}
@@ -481,6 +486,7 @@ export function LibraryScreen({
                   categories={meta.categories}
                   selected={doc.id === selectedId}
                   onSelect={() => onOpenDocument(doc.id)}
+                  onRetranslate={() => onRetranslate(doc)}
                   onOpenReproduction={onOpenReproduction}
                   onToggleTrash={() => toggleTrash(doc.key)}
                   onSetShelves={(categories) => meta.patch(doc.key, { categories })}
@@ -499,6 +505,7 @@ export function LibraryScreen({
                   categories={meta.categories}
                   selected={doc.id === selectedId}
                   onSelect={() => onOpenDocument(doc.id)}
+                  onRetranslate={() => onRetranslate(doc)}
                   onOpenReproduction={onOpenReproduction}
                   onToggleFavorite={() => void meta.patch(doc.key, { favorite: !meta.items[doc.key]?.favorite }).catch(() => undefined)}
                   onToggleTrash={() => toggleTrash(doc.key)}
@@ -515,6 +522,7 @@ export function LibraryScreen({
               sort={sort}
               onSort={toggleSort}
               onSelect={onOpenDocument}
+              onRetranslate={onRetranslate}
               onOpenReproduction={onOpenReproduction}
               onToggleTrash={toggleTrash}
             />
@@ -563,14 +571,114 @@ export function LibraryScreen({
   );
 }
 
+function UpdateControl() {
+  const [status, setStatus] = useState<DesktopUpdateStatus>(() => (
+    window.__READX_DESKTOP_UPDATES__
+      ? { state: 'idle' }
+      : { state: 'unsupported', message: '应用内更新仅在 Windows 桌面安装版中提供。' }
+  ));
+  const [confirmingUpdate, setConfirmingUpdate] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const dismissedVersion = useRef<string | null>(null);
+  const bridge = window.__READX_DESKTOP_UPDATES__;
+
+  useEffect(() => bridge?.onStatus(setStatus), [bridge]);
+  useEffect(() => {
+    if (status.state === 'available' && status.version && dismissedVersion.current !== status.version) {
+      setConfirmingUpdate(true);
+    }
+  }, [status.state, status.version]);
+  useEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    if (confirmingUpdate && !element.open) element.showModal();
+    else if (!confirmingUpdate && element.open) element.close();
+  }, [confirmingUpdate]);
+
+  const postpone = () => {
+    if (status.version) dismissedVersion.current = status.version;
+    setConfirmingUpdate(false);
+  };
+
+  const run = async () => {
+    if (!bridge) return;
+    if (status.state === 'available') {
+      setConfirmingUpdate(false);
+      setStatus({ ...status, state: 'downloading', percent: 0 });
+      setStatus(await bridge.download());
+    } else if (status.state === 'downloaded') {
+      bridge.install();
+    } else {
+      setStatus({ ...status, state: 'checking' });
+      setStatus(await bridge.check());
+    }
+  };
+
+  const busy = status.state === 'checking' || status.state === 'downloading';
+  const label = status.state === 'checking' ? '正在检查更新…'
+    : status.state === 'current' ? `已是最新版本${status.currentVersion ? ` · v${status.currentVersion}` : ''}`
+      : status.state === 'available' ? `下载更新 · v${status.version}`
+        : status.state === 'downloading' ? `正在下载 · ${Math.round(status.percent ?? 0)}%`
+          : status.state === 'downloaded' ? `重启并安装${status.version ? ` · v${status.version}` : ''}`
+            : status.state === 'error' ? '检查更新失败 · 点击重试'
+              : status.state === 'unsupported' ? '桌面版更新'
+                : '检查更新';
+  const detail = status.state === 'error' || status.state === 'unsupported' ? status.message : undefined;
+  const disabled = !bridge || busy;
+
+  return (
+    <>
+      <div className={`sidebar-update${busy ? ' is-busy' : ''}`}>
+        <button
+          type="button"
+          className="nav-item sidebar-update-button"
+          onClick={() => void run()}
+          disabled={disabled}
+          title={detail ?? label}
+          aria-label={detail ? `${label}：${detail}` : label}
+        >
+          <WorkspaceIcon name="reset" />
+          <span className="nav-label">{label}</span>
+        </button>
+        {status.state === 'downloading' ? <div className="sidebar-update-progress" role="progressbar" aria-valuenow={Math.round(status.percent ?? 0)} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${Math.round(status.percent ?? 0)}%` }} /></div> : null}
+        {detail ? <p className="sidebar-update-detail nav-label" title={detail}>{detail}</p> : null}
+      </div>
+      <dialog
+        ref={dialog}
+        className="app-dialog update-confirm-dialog"
+        aria-labelledby="update-confirm-title"
+        onCancel={(event) => { event.preventDefault(); postpone(); }}
+        onClose={() => setConfirmingUpdate(false)}
+      >
+        <header>
+          <div>
+            <p className="section-eyebrow">READX UPDATE</p>
+            <h2 id="update-confirm-title">发现新版本</h2>
+          </div>
+          {status.version ? <span className="update-version-chip">v{status.version}</span> : null}
+        </header>
+        <section className="update-release-notes" aria-label="本次更新功能说明">
+          <h3>本次更新</h3>
+          <pre>{status.releaseNotes || '此版本暂未附更新说明。'}</pre>
+        </section>
+        <footer>
+          <button type="button" className="update-later-button" onClick={postpone}>暂不更新</button>
+          <button type="button" className="update-primary-button" onClick={() => void run()}>立即更新</button>
+        </footer>
+      </dialog>
+    </>
+  );
+}
+
 function ShelfOverview({
-  documents, categories, meta, selectedId, onSelect, onOpenReproduction, onToggleTrash, onSetShelves,
+  documents, categories, meta, selectedId, onSelect, onRetranslate, onOpenReproduction, onToggleTrash, onSetShelves,
 }: {
   documents: DocumentSummary[];
   categories: Category[];
   meta: Record<string, DocumentMeta>;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onRetranslate: (doc: DocumentSummary) => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: (key: string) => Promise<unknown>;
   onSetShelves: (key: string, categories: string[]) => Promise<unknown>;
@@ -605,6 +713,7 @@ function ShelfOverview({
               categories={categories}
               selected={doc.id === selectedId}
               onSelect={() => onSelect(doc.id)}
+              onRetranslate={() => onRetranslate(doc)}
               onOpenReproduction={onOpenReproduction}
               onToggleTrash={() => onToggleTrash(doc.key)}
               onSetShelves={(names) => onSetShelves(doc.key, names)}
@@ -622,6 +731,7 @@ function ListRow({
   categories,
   selected,
   onSelect,
+  onRetranslate,
   onOpenReproduction,
   onToggleFavorite,
   onToggleTrash,
@@ -631,6 +741,7 @@ function ListRow({
   categories: Category[];
   selected: boolean;
   onSelect: () => void;
+  onRetranslate: (doc: DocumentSummary) => void;
   onOpenReproduction: (key: string) => void;
   onToggleFavorite: () => void;
   onToggleTrash: () => Promise<unknown>;
@@ -665,6 +776,7 @@ function ListRow({
         <button type="button" onClick={onToggleFavorite} className={meta?.favorite ? 'text-accent' : 'text-ink-faint hover:text-ink'}>
           {meta?.favorite ? '★' : '☆'}
         </button>
+        {doc.format !== 'epub' && doc.hasPdf ? <button type="button" onClick={() => onRetranslate(doc)} className="text-ink-faint hover:text-accent">重新翻译</button> : null}
         <button type="button" onClick={() => onOpenReproduction(doc.key)} className="text-ink-faint hover:text-accent">
           复现
         </button>
@@ -681,6 +793,7 @@ function DocumentTable({
   sort,
   onSort,
   onSelect,
+  onRetranslate,
   onOpenReproduction,
   onToggleTrash,
 }: {
@@ -690,6 +803,7 @@ function DocumentTable({
   sort: { key: SortKey; reverse: boolean };
   onSort: (key: SortKey) => void;
   onSelect: (id: string) => void;
+  onRetranslate: (doc: DocumentSummary) => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: (key: string) => Promise<unknown>;
 }) {
@@ -741,6 +855,7 @@ function DocumentTable({
               </td>
               <td className="px-2 py-2">
                 <div className="flex items-center gap-2">
+                {doc.format !== 'epub' && doc.hasPdf ? <button type="button" onClick={() => onRetranslate(doc)} className="rounded-md border border-line bg-surface px-2 py-0.5 text-[10px] text-ink-soft transition hover:border-accent hover:text-accent">重新翻译</button> : null}
                 <button
                   type="button"
                   onClick={() => onOpenReproduction(doc.key)}

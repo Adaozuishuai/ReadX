@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-type retainStageObservation struct {
+type leeStageObservation struct {
 	Schema    string `json:"schema"`
 	UserStage string `json:"user_stage"`
 	Substage  string `json:"substage"`
@@ -21,15 +21,15 @@ type retainStageObservation struct {
 // Both child streams share this writer, so os/exec serializes Write calls.
 // Keep the original log and consume complete observations even when writes
 // split a UTF-8 character or combine several records.
-type retainImportLogWriter struct {
+type leeImportLogWriter struct {
 	sink     io.Writer
-	observe  func(retainStageObservation)
+	observe  func(leeStageObservation)
 	line     []byte
 	oversize bool
 	failure  string
 }
 
-func (w *retainImportLogWriter) Write(p []byte) (int, error) {
+func (w *leeImportLogWriter) Write(p []byte) (int, error) {
 	n, err := w.sink.Write(p)
 	if err == nil && n != len(p) {
 		err = io.ErrShortWrite
@@ -53,14 +53,14 @@ func (w *retainImportLogWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (w *retainImportLogWriter) flush() {
+func (w *leeImportLogWriter) flush() {
 	if len(w.line) > 0 && !w.oversize {
 		w.consume(w.line)
 	}
 	w.line = nil
 }
 
-func (w *retainImportLogWriter) consume(line []byte) {
+func (w *leeImportLogWriter) consume(line []byte) {
 	text := strings.TrimSpace(string(line))
 	if payload, ok := strings.CutPrefix(text, "structured failure json:"); ok {
 		var failure struct {
@@ -88,13 +88,13 @@ func (w *retainImportLogWriter) consume(line []byte) {
 		}
 		return
 	}
-	var event retainStageObservation
+	var event leeStageObservation
 	if json.Unmarshal(line, &event) == nil && event.Schema == "pipeline_stage_observation_v1" && w.observe != nil {
 		w.observe(event)
 	}
 }
 
-func (s *Server) retainImportObservation(key string, event retainStageObservation) {
+func (s *Server) leeImportObservation(key string, event leeStageObservation) {
 	stageKey := map[string]string{"ocr": "ocr", "translation": "translate", "render": "render"}[event.UserStage]
 	if stageKey == "" {
 		return
@@ -111,7 +111,7 @@ func (s *Server) retainImportObservation(key string, event retainStageObservatio
 			if key != stageKey {
 				if stage.Status == "running" {
 					stage.Status = "done"
-					stage.Message = "Retain 已完成" + stage.Label
+					stage.Message = "Lee 已完成" + stage.Label
 					stage.Completed = stage.Total
 				}
 				continue
@@ -124,7 +124,7 @@ func (s *Server) retainImportObservation(key string, event retainStageObservatio
 				message = event.Message
 			}
 			job.setStage(key, "running", message, -1, -1)
-			unit := retainProgressUnit(event.Unit, event.Substage)
+			unit := leeProgressUnit(event.Unit, event.Substage)
 			newSubstage := event.Substage != "" && stage.Substage != event.Substage
 			if newSubstage {
 				stage.Completed, stage.Total = 0, 0
@@ -153,7 +153,7 @@ func (s *Server) retainImportObservation(key string, event retainStageObservatio
 // Retain reports counters in units that can change within one user-facing
 // stage. Keep those units distinct so page counts or translation blocks are
 // never presented as completed paragraphs.
-func retainProgressUnit(unit, substage string) string {
+func leeProgressUnit(unit, substage string) string {
 	if mapped := map[string]string{
 		"page":    "页",
 		"batch":   "批",

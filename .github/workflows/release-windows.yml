@@ -38,16 +38,27 @@ jobs:
         working-directory: windows
         run: npm ci
 
-      - name: Build self-contained installer
-        working-directory: windows
-        run: npm run build:release
-
-      - name: Publish installer to GitHub Releases
-        shell: pwsh
+      - name: Draft release with feature notes
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $artifact = Get-ChildItem windows/release/ReadX-Setup-*.exe | Select-Object -First 1
-          if (-not $artifact) { throw 'ReadX installer artifact was not produced.' }
-          gh release create $env:RELEASE_TAG $artifact.FullName --title "ReadX $env:RELEASE_TAG" --generate-notes
+          $notesPath = "windows/release-notes/$env:GITHUB_REF_NAME.md"
+          if (Test-Path $notesPath) {
+            gh release create "$env:GITHUB_REF_NAME" --draft --title "ReadX $env:GITHUB_REF_NAME" --notes-file $notesPath
+          } else {
+            gh release create "$env:GITHUB_REF_NAME" --draft --title "ReadX $env:GITHUB_REF_NAME" --generate-notes
+          }
+
+      - name: Build self-contained installer
+        working-directory: windows
+        run: npm run build:release:publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Publish release after update assets are uploaded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseId = gh release view $env:GITHUB_REF_NAME --json databaseId --jq .databaseId
+          if (-not $releaseId) { throw 'ReadX release was not created.' }
+          gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/$releaseId" -F draft=false

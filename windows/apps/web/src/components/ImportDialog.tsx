@@ -68,17 +68,17 @@ export function ImportDialog({
     try {
       const isPDF = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
       if (file.size > (isPDF ? MAX_PDF_BYTES : MAX_EPUB_BYTES)) {
-        throw new Error(isPDF ? 'PDF 文件不能超过 RetainPDF 默认的 512 MB 上传上限' : '单个 EPUB 文件不超过 100 MB');
+        throw new Error(isPDF ? 'PDF 文件不能超过 LeePDF 默认的 512 MB 上传上限' : '单个 EPUB 文件不超过 100 MB');
       }
       const fileIndex = 1;
       const files = 1;
-      activity.update({ stage: 'upload', message: '正在准备上传，由 RetainPDF 处理论文', name: file.name, file: fileIndex, files, completed: 0, total: 0 });
+      activity.update({ stage: 'upload', message: '正在准备上传，由 LeePDF 处理论文', name: file.name, file: fileIndex, files, completed: 0, total: 0 });
       const hint: ImportMetadataHint = { title: '', author: '', doi: '', arxiv: '', firstPage: '' };
       const source = sources.current.get(file);
       if (source) {
         hint.source = source;
       }
-      // PDF processing is delegated to RetainPDF; EPUB keeps its chapter import flow.
+      // PDF processing is delegated to LeePDF; EPUB keeps its chapter import flow.
       setJobFile(file);
       const result = await api.upload([file], request.signal, [hint], activity.receive);
       const imported = result.results[0];
@@ -86,7 +86,7 @@ export function ImportDialog({
       setActive({ file, result: imported, cancelled: false });
       setResults((current) => [...current, ...result.results]);
       const failed = result.results.filter(item => item.error).length;
-      activity.update({ stage: 'complete', message: failed ? '导入失败，原因见下方' : 'RetainPDF 译文已保存到书库', completed: 1, total: 1 });
+      activity.update({ stage: 'complete', message: failed ? '导入失败，原因见下方' : 'LeePDF 译文已保存到书库', completed: 1, total: 1 });
     } catch (cause) {
       const cancelled = request.signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError');
       const message = cancelled ? '已取消' : String(cause);
@@ -192,7 +192,7 @@ export function ImportDialog({
         onMake={(file) => void upload(file)}
       />
       <p className="text-xs text-ink-faint">
-        PDF 最大 512 MB（RetainPDF 服务会继续校验 OCR 限制）；EPUB 最大 100 MB。相同文件自动去重，投进篮筐开始处理。
+        PDF 最大 512 MB（LeePDF 服务会继续校验 OCR 限制）；EPUB 最大 100 MB。相同文件自动去重，投进篮筐开始处理。
       </p>
       <label className="import-link-field">
         链接、arXiv 编号、DOI 或标题

@@ -14,7 +14,7 @@ var (
 	structuredUnicodeEscapeRE = regexp.MustCompile(`^[0-9a-fA-F]{4}$`)
 )
 
-// parseStructuredJSON follows RetainPDF's tolerant structured-output parser:
+// parseStructuredJSON follows LeePDF's tolerant structured-output parser:
 // it accepts fenced/comment-wrapped JSON, model-added trailing commas,
 // unquoted object keys and LaTeX commands whose backslashes were not escaped.
 func parseStructuredJSON(content string, target any) error {

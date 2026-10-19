@@ -170,7 +170,7 @@ func Translate(ctx context.Context, generator Generator, items []Item, options O
 		failed = retryDeferredTranslations(ctx, generator, system, items, failed, options, &result)
 	}
 	if options.BestEffort && ctx.Err() == nil {
-		// RetainPDF rebuilds OCR-damaged text after the primary pass and before
+		// LeePDF rebuilds OCR-damaged text after the primary pass and before
 		// Agent repair and final untranslated recovery.
 		runGarbledReconstruction(ctx, generator, items, &result)
 		stillFailed := failed[:0]
@@ -183,7 +183,7 @@ func Translate(ctx context.Context, generator Generator, items []Item, options O
 		runFastAgentRepair(ctx, generator, items, &result, len(sortedUnique(failed)))
 	}
 	if options.BestEffort && ctx.Err() == nil && len(failed) > 0 {
-		// RetainPDF 的 final untranslated recovery 是独立的兜底阶段。ReadX
+		// LeePDF 的 final untranslated recovery 是独立的兜底阶段。ReadX
 		// 在同一模型配置下对仍为空的段落再请求一次，成功的结果覆盖空位，
 		// 持续失败的段落保留原文由调用方回填。
 		remaining := make([]int, 0, len(failed))
@@ -212,7 +212,7 @@ func Translate(ctx context.Context, generator Generator, items []Item, options O
 			issues []Issue
 			err    error
 		}
-		// RetainPDF's final-recovery phase uses the configured document worker
+		// LeePDF's final-recovery phase uses the configured document worker
 		// count, capped by its 32-worker service limit. This engine has no
 		// separate worker setting, so use the same cap and the actual queue size.
 		workerCount := min(32, len(recovery))
@@ -253,7 +253,7 @@ func Translate(ctx context.Context, generator Generator, items []Item, options O
 }
 
 func buildBatchRanges(items []Item) []batchRange {
-	pageLocal := retainPageLocalBatchStrategy()
+	pageLocal := leePageLocalBatchStrategy()
 	batchable := make([]int, 0, len(items))
 	singles := make([]int, 0, len(items))
 	for index, item := range items {
@@ -303,14 +303,14 @@ func batchItemIndexes(batch batchRange, itemCount int) []int {
 	return indices
 }
 
-func retainPageLocalBatchStrategy() bool {
+func leePageLocalBatchStrategy() bool {
 	if strings.TrimSpace(os.Getenv("RETAIN_TRANSLATION_TRANSPORT")) != "rust" {
 		return false
 	}
 	return strings.TrimSpace(os.Getenv("RETAIN_TRANSLATION_OPTIMIZATION")) == "page_local_v1"
 }
 
-// batchableItem mirrors RetainPDF's low-risk batched-plain eligibility: only
+// batchableItem mirrors LeePDF's low-risk batched-plain eligibility: only
 // body-like prose with no continuation/group semantics, formulas, or oversized
 // placeholder inventories can share one tagged request.
 func batchableItem(item Item) bool {
@@ -481,7 +481,7 @@ func generateBatch(ctx context.Context, generator Generator, system string, item
 					}
 				}
 			}
-			// RetainPDF's direct_typst route repeats the same plain-text request
+			// LeePDF's direct_typst route repeats the same plain-text request
 			// once after a validation error. The item then follows the deferred
 			// retry path; it is not sent an issue-specific rewrite prompt here.
 			if !plainRetried && !options.TailRetry {
@@ -502,7 +502,7 @@ func generateBatch(ctx context.Context, generator Generator, system string, item
 		}
 		restored, _, _ := Restore(rawTarget, tokens[position])
 		// 占位符清单对不上时宁可保留原文：代码/术语 token 丢了就意味着内容缺失，
-		// 把丢字的译文贴回版面比一段没翻更危险（RetainPDF 也把这类条目标为失败）。
+		// 把丢字的译文贴回版面比一段没翻更危险（LeePDF 也把这类条目标为失败）。
 		if placeholderLoss(current) {
 			targets[index] = ""
 			issueMap[index] = current
@@ -512,7 +512,7 @@ func generateBatch(ctx context.Context, generator Generator, system string, item
 			continue
 		}
 		if hasError(current) {
-			// RetainPDF does not mark an unresolved quality-error output as translated.
+			// LeePDF does not mark an unresolved quality-error output as translated.
 			// Keep it out of the cache/render path so the bounded recovery stage can retry it.
 			targets[index] = ""
 			issueMap[index] = current
@@ -526,7 +526,7 @@ func generateBatch(ctx context.Context, generator Generator, system string, item
 		targets[index] = strings.TrimSpace(restored)
 		issueMap[index] = current
 	}
-	// RetainPDF retries only the batch members rejected by per-item validation
+	// LeePDF retries only the batch members rejected by per-item validation
 	// through its single-item route. Keep already accepted neighbors untouched.
 	for _, index := range fallbackSingles {
 		singleTargets, singleIssues, singleErr := runBatch(ctx, generator, system, items, batchRange{start: index, end: index + 1}, options)
@@ -674,7 +674,7 @@ func sourceCharacterCount(items []Item) int {
 	return count
 }
 
-// finalUntranslatedRecovery follows RetainPDF's last-resort path: one plain
+// finalUntranslatedRecovery follows LeePDF's last-resort path: one plain
 // source block, deterministic temperature, two bounded attempts, then the
 // normal source/token/number/English/truncation quality checks.
 func finalUntranslatedRecovery(ctx context.Context, generator Generator, item Item) (string, []Issue, error) {
@@ -710,7 +710,7 @@ func finalUntranslatedRecovery(ctx context.Context, generator Generator, item It
 	return "", nil, lastErr
 }
 
-// parseSingleReply follows RetainPDF's production plain-text response path,
+// parseSingleReply follows LeePDF's production plain-text response path,
 // while accepting earlier ReadX JSON/tagged replies during transition.
 func parseSingleReply(raw string) (string, error) {
 	if parsed, err := parseBatchReply(raw, []string{"0"}); err == nil && len(parsed) == 1 {

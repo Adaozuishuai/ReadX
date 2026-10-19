@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 const ReaderScreen = lazy(() => import('./components/ReaderScreen').then((module) => ({ default: module.ReaderScreen })));
 const ReproductionSection = lazy(() => import('./components/ReproductionSection').then((module) => ({ default: module.ReproductionSection })));
 import { LibraryScreen } from './components/LibraryScreen';
+import type { DocumentSummary } from '@cbct/shared';
 const KnowledgeGraphSection = lazy(() => import('./components/KnowledgeGraphSection').then((module) => ({ default: module.KnowledgeGraphSection })));
 const ReadingCalendarSection = lazy(() => import('./components/ReadingCalendarSection').then((module) => ({ default: module.ReadingCalendarSection })));
 import { useAnnotations } from './hooks/useAnnotations';
@@ -11,6 +12,7 @@ import { useTheme } from './hooks/useTheme';
 import { useWorkspace } from './hooks/useWorkspace';
 import { WorkspaceIcon } from './components/WorkspaceIcon';
 const ImportDialog = lazy(() => import('./components/ImportDialog').then((module) => ({ default: module.ImportDialog })));
+const RetranslateDialog = lazy(() => import('./components/RetranslateDialog').then((module) => ({ default: module.RetranslateDialog })));
 const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then((module) => ({ default: module.AISettingsDialog })));
 
 /**
@@ -37,6 +39,7 @@ export default function App() {
   >('library');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
+  const [retranslateDocument, setRetranslateDocument] = useState<DocumentSummary | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [libraryView, setLibraryView] = useState<'all' | 'favorite' | 'trash' | 'shelves'>(
     'all',
@@ -172,6 +175,7 @@ export default function App() {
           setFilters={setFilters}
           selectedId={selectedId}
           onOpenDocument={openDocument}
+          onRetranslate={setRetranslateDocument}
           onOpenImport={() => setImportFiles([])}
           onOpenSettings={() => setSettingsOpen(true)}
           meta={libraryMeta}
@@ -241,6 +245,20 @@ export default function App() {
           />
         </Suspense>
       )}
+      {retranslateDocument ? (
+        <Suspense fallback={null}>
+          <RetranslateDialog
+            document={retranslateDocument}
+            onClose={() => setRetranslateDocument(null)}
+            onComplete={reload}
+            onOpenReader={() => {
+              const id = retranslateDocument.id;
+              setRetranslateDocument(null);
+              openDocument(id);
+            }}
+          />
+        </Suspense>
+      ) : null}
       {settingsOpen && (
         <Suspense fallback={null}>
           <AISettingsDialog onClose={() => setSettingsOpen(false)} />

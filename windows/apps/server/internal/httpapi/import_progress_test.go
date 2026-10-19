@@ -46,7 +46,7 @@ func progressUploadRequest(t *testing.T, bundle *httptestServerBundle, count int
 	return req
 }
 
-func TestImportProgressStreamsDuringRetainProcessing(t *testing.T) {
+func TestImportProgressStreamsDuringLeeProcessing(t *testing.T) {
 	front, handle, cfg := newTestServer(t, nil)
 	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}
 	release := make(chan struct{})
@@ -118,7 +118,7 @@ func TestImportProgressStreamsDuringRetainProcessing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !heartbeat || !saved || !completed {
-		t.Fatalf("missing Retain import progress: heartbeat=%v saving=%v result=%v", heartbeat, saved, completed)
+		t.Fatalf("missing Lee import progress: heartbeat=%v saving=%v result=%v", heartbeat, saved, completed)
 	}
 }
 

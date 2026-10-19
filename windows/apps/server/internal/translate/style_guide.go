@@ -24,7 +24,7 @@ type documentStyleResponse struct {
 	Notes          string              `json:"notes"`
 }
 
-// GenerateDocumentStyle mirrors RetainPDF's one-shot terms+style preparation.
+// GenerateDocumentStyle mirrors LeePDF's one-shot terms+style preparation.
 // It freezes book-wide advice and returns a deterministic prompt prefix.
 func GenerateDocumentStyle(ctx context.Context, generator Generator, items []Item, terms []Term, domainContext DomainContext, userGlossary ...[]Term) (string, error) {
 	schema := map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "style_guide_response", "strict": true, "schema": map[string]any{

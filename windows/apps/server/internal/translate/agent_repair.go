@@ -66,7 +66,7 @@ type agentRepairReply struct {
 	Notes             string   `json:"notes"`
 }
 
-// runFastAgentRepair mirrors RetainPDF's fast and quality profile budgets.
+// runFastAgentRepair mirrors LeePDF's fast and quality profile budgets.
 func runFastAgentRepair(ctx context.Context, generator Generator, items []Item, result *Result, blockingCount int) {
 	if !agentRepairEnabled() || result == nil || generator == nil {
 		return

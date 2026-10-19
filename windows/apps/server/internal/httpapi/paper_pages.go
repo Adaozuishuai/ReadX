@@ -16,6 +16,7 @@ import (
 )
 
 const paperReaderVersion = "paper-reader-v1"
+const paperMemoryVersion = "paper-memory-v1"
 
 type paperPageRequest struct {
 	Key         string   `json:"key"`
@@ -28,7 +29,7 @@ type paperPageRequest struct {
 func paperPageKey(page int) string { return fmt.Sprintf("paperPage:%06d", page) }
 
 func paperCacheKind(kind string) bool {
-	return strings.HasPrefix(kind, "paperPage:") || strings.HasPrefix(kind, "paperDigest:") || strings.HasPrefix(kind, "paperHistory:")
+	return strings.HasPrefix(kind, "paperPage:") || strings.HasPrefix(kind, "paperDigest:") || strings.HasPrefix(kind, "paperHistory:") || strings.HasPrefix(kind, "paperMemory:")
 }
 
 func paperCachePrefix(key string) string    { return fmt.Sprintf("paper-reader:%d:%s:", len(key), key) }

@@ -52,7 +52,7 @@ func ProtectWithFormulas(text string, formulas []string) (string, []Token) {
 	return protect(text, formulas)
 }
 
-// ProtectDirectMath preserves RetainPDF's production direct_typst input: formula,
+// ProtectDirectMath preserves LeePDF's production direct_typst input: formula,
 // code, URL, and email spans stay in source text. Hard glossary terms are
 // protected separately by protectTerms.
 func ProtectDirectMath(text string) (string, []Token) {
@@ -123,7 +123,7 @@ func appendExplicitFormulaSpans(spans []protectedSpan, text string, formulas []s
 
 // ProtectSource is for downstream layout algorithms that need source-length
 // weights without counting formulas, links, code, or canonical terms as prose.
-// The model-facing translation path uses ProtectDirectMath to match RetainPDF.
+// The model-facing translation path uses ProtectDirectMath to match LeePDF.
 func ProtectSource(text string, terms []Term) string {
 	protected, tokens := Protect(text)
 	protected, _ = protectTerms(protected, tokens, terms)

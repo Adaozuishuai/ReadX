@@ -1,7 +1,7 @@
 // ocr_settings.go：PaddleOCR 接入配置（扫描版 PDF 的 OCR 阶段）。
 //
 // 密钥与 AI Key 一样只落在本机 app/config.json 的 ocr 段，不回传界面；读取时只
-// 告诉前端「是否已配置」。RetainPDF 的 Paddle/MinerU 两条路同样是远程服务，
+// 告诉前端「是否已配置」。LeePDF 的 Paddle/MinerU 两条路同样是远程服务，
 // 这里接入它的 Paddle 路线。
 package httpapi
 

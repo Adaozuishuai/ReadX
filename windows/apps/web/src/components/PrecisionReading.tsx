@@ -60,23 +60,25 @@ export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pd
   const [active, setActive] = useState<ReadingKind>('motivation');
   const [batch, setBatch] = useState(false);
   const batchLock = useRef(false);
-  const batchCancelled = useRef(false);
   const batchEpoch = useRef(0);
   const [revision, setRevision] = useState(0);
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
   const saveLock = useRef(false);
   const [checklistOpen, setChecklistOpen] = useState(false);
-  useEffect(() => { ++batchEpoch.current; batchCancelled.current = false; batchLock.current = false; setBatch(false); setActive('motivation'); setTextOnly(false); setNotice(''); return () => { ++batchEpoch.current; batchCancelled.current = true; }; }, [apiKey]);
+  useEffect(() => { ++batchEpoch.current; batchLock.current = false; setBatch(false); setActive('motivation'); setTextOnly(false); setNotice(''); return () => { ++batchEpoch.current; }; }, [apiKey]);
   const step = READING_STEPS.find((s) => s.kind === active)!;
   const index = READING_STEPS.indexOf(step);
   const entry = reading.entries[active];
   const waitingPDF = enabled && !pdfDocument;
-  const blocked = disabled || !apiKey || preferences.saving || reading.loading || !!reading.generating || batch || (!textOnly && (!!visualProgress || waitingPDF));
+  const preparationBlocked = disabled || !apiKey || preferences.saving || reading.loading || batch || (!textOnly && (!!visualProgress || waitingPDF));
+  const blocked = preparationBlocked || !!reading.generating[active];
+  const anyGenerating = Object.values(reading.generating).some(Boolean);
   const savedCount = Object.keys(reading.entries).length;
-  const readingLabel = (kind: ReadingKind) => reading.generating === kind ? '正在生成…' : reading.entries[kind]?.readerStatus === 'partial' ? '部分已保存' : reading.entries[kind] ? reading.entries[kind]!.validationError ? '待核对' : '已保存' : '尚未生成';
-  const remaining = READING_STEPS.filter((s) => !reading.entries[s.kind] || reading.entries[s.kind]?.readerStatus === 'partial');
+  const readingLabel = (kind: ReadingKind) => reading.generating[kind] ? '正在生成…' : reading.jobErrors[kind] ? '生成失败' : reading.entries[kind]?.readerStatus === 'partial' ? '部分已保存' : reading.entries[kind] ? reading.entries[kind]!.validationError ? '待核对' : '已保存' : '尚未生成';
+  const remaining = READING_STEPS.filter((s) => (!reading.entries[s.kind] || reading.entries[s.kind]?.readerStatus === 'partial') && !reading.generating[s.kind]);
   const visualReferences = (signal: AbortSignal, report: (value: GenerateProgress) => void) => preparePaperReading(apiKey!, pdfDocument ?? null, visuals, textOnly, signal, report);
+  const runningSteps = READING_STEPS.filter((s) => reading.generating[s.kind]);
   const sharedAnalyses = currentVisualAnalyses(entry?.visuals ?? reading.visualAnalysis?.visuals, visuals);
   const inlineItems = sharedAnalyses.filter((item) => item.step === active);
   let sectionNames: string[] = [];
@@ -91,15 +93,25 @@ export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pd
   const renderVisuals = (section: string) => <ReadingVisuals items={inlineItems.filter((item) => item.section === section)} visuals={visuals} onCite={onCite} />;
   const unplacedSections = entry?.narrative ? [] : [...new Set(inlineItems.filter((item) => !sectionNames.includes(item.section)).map((item) => item.section))];
   const generateRemaining = async () => {
-    if (blocked || batchLock.current) return;
+    if (preparationBlocked || batchLock.current) return;
+    const pending = remaining;
+    if (!pending.length) return;
     const epoch = batchEpoch.current;
-    batchLock.current = true; batchCancelled.current = false; setBatch(true); setNotice('');
+    batchLock.current = true; setBatch(true); setNotice('');
     try {
-      for (const s of remaining) {
-        if (batchCancelled.current || epoch !== batchEpoch.current) break;
-        setActive(s.kind);
-        if (!await reading.generate(s.kind, visualReferences)) break;
+      const preparation = new AbortController();
+      const prepared = await visualReferences(preparation.signal, () => undefined);
+      if (epoch !== batchEpoch.current) return;
+      let sectionInput = prepared;
+      if (!textOnly && prepared.visuals.length > 0) {
+        if (!await reading.generate('visuals', prepared)) throw new Error('共享图表分析未完成，五节尚未启动');
+        sectionInput = { ...prepared, visuals: [] };
       }
+      if (epoch !== batchEpoch.current) return;
+      setBatch(false);
+      await Promise.all(pending.map((s) => reading.generate(s.kind, sectionInput)));
+    } catch (cause) {
+      if (epoch === batchEpoch.current) setNotice(cause instanceof Error ? cause.message : String(cause));
     } finally { if (epoch === batchEpoch.current) { batchLock.current = false; setBatch(false); } }
   };
   const exportAll = () => {
@@ -117,18 +129,19 @@ export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pd
   return <div className="precision-workspace" aria-label="五重奏精读">
     <nav className="precision-rail" aria-label="精读步骤"><div className="precision-rail-head"><span className="precision-overline">PAPER WORKBOOK</span><h2>精读五重奏</h2><p>{savedCount} / 5 项已保存</p></div>
       <div className="precision-step-list" role="tablist">{READING_STEPS.map((s, i) => <button key={s.kind} id={`reading-tab-${s.kind}`} role="tab" aria-selected={active === s.kind} aria-controls={`reading-panel-${s.kind}`} tabIndex={active === s.kind ? 0 : -1} onClick={() => setActive(s.kind)} onKeyDown={(e) => { if (['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(e.key)) { e.preventDefault(); const next = e.key === 'Home' ? 0 : e.key === 'End' ? 4 : (i + (['ArrowDown', 'ArrowRight'].includes(e.key) ? 1 : 4)) % 5; setActive(READING_STEPS[next]!.kind); window.document.getElementById(`reading-tab-${READING_STEPS[next]!.kind}`)?.focus(); } }}><span className="precision-step-number">0{i + 1}</span><span><strong>{s.label}</strong><small>{readingLabel(s.kind)}</small></span><span className="precision-step-mark">{reading.entries[s.kind]?.readerStatus === 'partial' ? '◐' : reading.entries[s.kind] ? reading.entries[s.kind]!.validationError ? '!' : '✓' : '↗'}</span></button>)}</div>
-      <div className="precision-rail-actions"><button className="precision-button primary" disabled={blocked || !remaining.length} onClick={() => void generateRemaining()}>生成剩余 {remaining.length} 项</button><button className="precision-button" disabled={remaining.length === 5} onClick={exportAll}>导出五重奏 ↓</button></div>
+      <div className="precision-rail-actions"><button className="precision-button primary" disabled={preparationBlocked || !remaining.length} onClick={() => void generateRemaining()}>生成剩余 {remaining.length} 项</button><button className="precision-button" disabled={remaining.length === 5} onClick={exportAll}>导出五重奏 ↓</button></div>
     </nav>
     <main className="precision-content" role="tabpanel" id={`reading-panel-${active}`} aria-labelledby={`reading-tab-${active}`}>
       <header className="precision-heading"><div><span className="precision-overline">0{index + 1} / 05 · PAPER WORKBOOK</span><h2>{step.label}</h2></div><AIModelControls preferences={preferences} compact /></header>
-      <div className="precision-actions"><button className="precision-button primary" disabled={blocked} onClick={() => { setNotice(''); void reading.generate(active, visualReferences); }}>{reading.generating === active ? '生成中…' : entry?.readerStatus === 'partial' ? '继续本节' : entry ? '重新生成' : '生成本节'}</button><button className="precision-button" disabled={!entry} onClick={() => entry && onAsk(`请针对「${step.label}」精读笔记继续分析。\n\n${entryMarkdown(step.label, entry!, sharedAnalyses).slice(0, 12000)}\n\n我的问题：${step.questions[0]}`)}>向助教追问 ↗</button><button className="precision-button" disabled={!entry} onClick={() => entry && void copyText(entryMarkdown(step.label, entry, sharedAnalyses)).then(setNotice)}>复制本节</button></div>
+      <div className="precision-actions"><button className="precision-button primary" disabled={blocked} onClick={() => { setNotice(''); void reading.generate(active, visualReferences); }}>{reading.generating[active] ? '本节生成中…' : entry?.readerStatus === 'partial' ? '继续本节' : entry ? '重新生成' : '生成本节'}</button><button className="precision-button" disabled={!entry} onClick={() => entry && onAsk(`请针对「${step.label}」精读笔记继续分析。\n\n${entryMarkdown(step.label, entry!, sharedAnalyses).slice(0, 12000)}\n\n我的问题：${step.questions[0]}`)}>向助教追问 ↗</button><button className="precision-button" disabled={!entry} onClick={() => entry && void copyText(entryMarkdown(step.label, entry, sharedAnalyses)).then(setNotice)}>复制本节</button></div>
       {(waitingPDF || visualProgress) && <p className="precision-muted" role="status">{waitingPDF ? '正在准备 PDF…' : '正在识别图表 · Page ' + visualProgress!.page + ' / ' + visualProgress!.total}</p>}
       {visualError && <div className="precision-alert" role="alert">{visualError}</div>}
-      {(waitingPDF || visualProgress || visualError || textOnly) && <label className="precision-text-mode"><input type="checkbox" checked={textOnly} disabled={!!reading.generating || batch} onChange={(e) => setTextOnly(e.target.checked)} /><span>仅依据正文先生成</span></label>}
-      {(reading.generating || batch) && <div className="precision-progress" role="status"><div><strong>{READING_STEPS.find((s) => s.kind === reading.generating)?.label || (reading.generating === 'visuals' ? '图表助读' : '准备下一项')}</strong><span>{reading.progress?.message || '准备生成…'}</span><button className="precision-button" onClick={() => { batchCancelled.current = true; reading.cancel(); }}>停止生成</button></div>{reading.progress && <progress value={reading.progress.percent} max={100} aria-label="精读生成进度" />}</div>}
+      {(waitingPDF || visualProgress || visualError || textOnly) && <label className="precision-text-mode"><input type="checkbox" checked={textOnly} disabled={anyGenerating || batch} onChange={(e) => setTextOnly(e.target.checked)} /><span>仅依据正文先生成</span></label>}
+      {(batch || anyGenerating) && <div className="precision-progress" role="status" aria-label="精读并行任务进度">{batch && !reading.generating.visuals && <div><strong>正在准备五节并行任务</strong><span>共享论文记忆与图表分析</span></div>}{reading.generating.visuals && <div className="precision-job-progress"><strong>共享图表分析</strong><span>{reading.progress.visuals?.message || '正在整理图表…'}</span><progress value={reading.progress.visuals?.percent ?? 0} max={100} aria-label="共享图表分析进度" /><button className="precision-button" onClick={() => reading.cancel('visuals')}>停止准备</button></div>}{runningSteps.map((item) => <div className="precision-job-progress" key={item.kind}><strong>{item.label}</strong><span>{reading.progress[item.kind]?.message || '正在生成…'}</span><progress value={reading.progress[item.kind]?.percent ?? 0} max={100} aria-label={`${item.label}进度`} /><button className="precision-button" onClick={() => reading.cancel(item.kind)}>停止本节</button></div>)}{runningSteps.length > 1 && <button className="precision-button" onClick={() => reading.cancel()}>停止全部</button>}</div>}
       {reading.error && <div className="precision-alert" role="alert">{reading.error}</div>}
       {notice && <p className="precision-notice" role="status">{notice}</p>}
-      {reading.notice && !reading.notice.saved && <div className="precision-alert" role="alert">生成失败，已保留原记录。{reading.notice.validationError && <details><summary>错误详情</summary>{reading.notice.validationError}</details>}</div>}
+      {reading.jobErrors[active] && <div className="precision-alert" role="alert">{reading.jobErrors[active]}</div>}
+      {reading.notices[active] && !reading.notices[active]!.saved && <div className="precision-alert" role="alert">本节未完成，已保留原记录。{reading.notices[active]!.validationError && <details><summary>错误详情</summary>{reading.notices[active]!.validationError}</details>}</div>}
       {entry && <p className="precision-provenance">{entry.updatedAt ? new Date(entry.updatedAt).toLocaleString() : '旧版记录'} · {entry.model || entry.provider || '模型未记录'} · {entry.reasoningEffort || '默认推理强度'}</p>}
       {reading.loading && <p className="precision-muted">读取已保存的精读记录…</p>}
       {!entry && !reading.loading && <section className="precision-empty"><span>0{index + 1}</span><h3>尚未生成</h3><ul>{step.outline.map((item) => <li key={item}>{item}</li>)}</ul>{waitingPDF || visualProgress ? <small>正在准备 PDF 与图表目录…</small> : null}</section>}

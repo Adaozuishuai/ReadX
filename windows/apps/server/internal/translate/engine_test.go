@@ -101,7 +101,7 @@ func TestProtectRestoresLiterals(t *testing.T) {
 	}
 }
 
-func TestProtectDirectMathMatchesRetainProductionInput(t *testing.T) {
+func TestProtectDirectMathMatchesLeeProductionInput(t *testing.T) {
 	source := "Run `go test`, visit https://example.com/a, email a@b.io, and derive $x_1$."
 	protected, tokens := ProtectDirectMath(source)
 	if protected != source || len(tokens) != 0 {
@@ -192,7 +192,7 @@ func TestTranslatePreservesOrderAndBatchesConcurrently(t *testing.T) {
 
 func TestTranslateDoesNotRetryPerItemNumericWarning(t *testing.T) {
 	var repairCalls atomic.Int32
-	// 数值一致性由 RetainPDF 的全文 QA 负责；逐段检查只留提示，不触发模型重译。
+	// 数值一致性由 LeePDF 的全文 QA 负责；逐段检查只留提示，不触发模型重译。
 	generator := &fakeGenerator{handler: func(system, user string) (string, error) {
 		if strings.Contains(user, "【当前原文开始】") {
 			return "我们使用多个视角训练。", nil

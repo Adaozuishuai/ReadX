@@ -8,7 +8,7 @@ import (
 )
 
 // MatchTerms injects only glossary entries that occur in this segment, matching
-// RetainPDF's matched-only glossary behavior.
+// LeePDF's matched-only glossary behavior.
 func MatchTerms(source string, entries []Term) []Term {
 	matched := make([]Term, 0)
 	seen := map[string]bool{}

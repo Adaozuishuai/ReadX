@@ -5,7 +5,7 @@ export interface ParagraphQuestion {
   nonce: number;
 }
 
-/** 段落浮窗：只保留「以此段提问」。段落翻译已并入 RetainPDF 排版译文，不再单独调用模型。 */
+/** 段落浮窗：只保留「以此段提问」。段落翻译已并入 LeePDF 排版译文，不再单独调用模型。 */
 export function ParagraphActions({
   paragraph,
   onAsk,
@@ -43,6 +43,8 @@ export interface SelectedParagraph {
   text: string;
   position: number;
   index: number;
+  targetY?: number;
+  viewportOffset?: number;
   top: number;
   left: number;
   kind: 'pdf' | 'epub';

@@ -119,7 +119,7 @@ func TestLayoutsRejectsPDFOverPaddleUploadLimitBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestLabelPolicyMatchesRetainPDF(t *testing.T) {
+func TestLabelPolicyMatchesLeePDF(t *testing.T) {
 	// 与上游 provider_adapters/paddle/{label_catalog,roles,translation_policy}.py 对齐：
 	// 正文/标题/摘要/目录/图注翻译；公式、表格、图片、页眉页脚、页码、脚注、参考文献保留。
 	cases := []struct {

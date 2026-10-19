@@ -155,7 +155,7 @@ func statusFailure(response *http.Response, apiKey string) error {
 	return &upstreamStatusError{status: response.StatusCode, message: message, retryAfter: retryAfter}
 }
 
-// IsTransportError matches RetainPDF's retryable transport boundary: network
+// IsTransportError matches LeePDF's retryable transport boundary: network
 // failures and transient upstream statuses may enter the tail retry queue;
 // authentication, quota, request, and response-format failures do not.
 func (c *Client) IsTransportError(err error) bool {
@@ -187,7 +187,7 @@ func (c *Client) GenerateWithTimeout(ctx context.Context, system, user string, t
 	return c.generateWithTimeout(ctx, system, user, temperature, timeout, nil)
 }
 
-// GenerateTranslation applies RetainPDF's default single-item translation
+// GenerateTranslation applies LeePDF's default single-item translation
 // deadlines. Long source blocks get a larger bounded window; other operations
 // continue using Generate/GenerateWithTimeout and their own limits.
 func (c *Client) GenerateTranslation(ctx context.Context, system, user string, temperature float64, sourceChars int) (string, error) {
@@ -204,7 +204,7 @@ func (c *Client) GenerateTranslation(ctx context.Context, system, user string, t
 	return c.GenerateWithTimeout(ctx, system, user, temperature, timeout)
 }
 
-// GenerateTranslationBatch uses RetainPDF's bounded tagged-batch deadline.
+// GenerateTranslationBatch uses LeePDF's bounded tagged-batch deadline.
 func (c *Client) GenerateTranslationBatch(ctx context.Context, system, user string, temperature float64) (string, error) {
 	timeout := 45 * time.Second
 	if c.usesDeepSeekOfficialEndpoint() {
@@ -213,7 +213,7 @@ func (c *Client) GenerateTranslationBatch(ctx context.Context, system, user stri
 	return c.GenerateWithTimeout(ctx, system, user, temperature, timeout)
 }
 
-// GenerateTranslationTail uses RetainPDF's extended timeout for the deferred
+// GenerateTranslationTail uses LeePDF's extended timeout for the deferred
 // transport retry pass. The official DeepSeek profile caps this at 40 seconds.
 func (c *Client) GenerateTranslationTail(ctx context.Context, system, user string, temperature float64, _ int) (string, error) {
 	timeout := 70 * time.Second
@@ -257,7 +257,7 @@ func (c *Client) GenerateStructured(ctx context.Context, system, user string, te
 }
 
 // GenerateStructuredWithTimeout lets bounded preparation phases preserve their
-// own RetainPDF request deadline while using the same strict JSON transport.
+// own LeePDF request deadline while using the same strict JSON transport.
 func (c *Client) GenerateStructuredWithTimeout(ctx context.Context, system, user string, temperature float64, timeout time.Duration, responseFormat any) (string, error) {
 	return c.generateWithTimeout(ctx, system, user, temperature, timeout, responseFormat)
 }

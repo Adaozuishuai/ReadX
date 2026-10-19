@@ -52,14 +52,14 @@ type recognizedPaperMetadata struct {
 	Pages           []publicationPageHint
 	Translations    []translateSegment
 	// LayoutPages 是导入时 OCR 识别出的段落坐标：阅读器据此按原版式渲染译文页。
-	LayoutPages          []layoutPage
-	Untranslated         int
-	TranslationQA        *translate.NumericQAReport
-	Authors              []string
-	DOI                  string
-	Venue                string
-	Year                 int
-	RetainTranslatedPath string
+	LayoutPages       []layoutPage
+	Untranslated      int
+	TranslationQA     *translate.NumericQAReport
+	Authors           []string
+	DOI               string
+	Venue             string
+	Year              int
+	LeeTranslatedPath string
 }
 
 func (s *Server) importPublication(ctx context.Context, name, source string, data []byte, metadata ...recognizedPaperMetadata) (importResult, error) {
@@ -284,7 +284,8 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 							result.Error = "OCR 没有保存可供排版的段落"
 							s.finishImportJob(jobKey, "failed", result.Error)
 						} else {
-							s.jobStage(jobKey, "render", "done", "Retain 已生成译文 PDF", len(metadata.LayoutPages), len(metadata.LayoutPages))
+							s.jobStage(jobKey, "render", "done", "Lee 已生成译文 PDF", len(metadata.LayoutPages), len(metadata.LayoutPages))
+							s.finishImportJob(jobKey, "done", "")
 						}
 					}
 				} else {
@@ -296,6 +297,7 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 					s.jobStage(jobKey, "ocr", "skipped", "EPUB 使用章节结构，无需 OCR", -1, -1)
 					s.jobStage(jobKey, "translate", "skipped", "当前 EPUB 导入流程不执行 PDF 段落翻译", -1, -1)
 					s.jobStage(jobKey, "render", "skipped", "EPUB 按原章节结构阅读，无需 PDF 渲染", -1, -1)
+					s.jobStage(jobKey, "memory", "skipped", "EPUB 使用章节正文，不需要 PDF 论文记忆", -1, -1)
 					report(importProgress{Stage: "saving", Message: "正在解析 EPUB 章节并保存到书库", Name: file.Filename, File: index + 1, Files: len(files), JobKey: jobKey})
 					update("saving", "正在解析 EPUB 章节并保存到书库", 0, 0)
 					source := ""
@@ -325,7 +327,7 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 }
 
 // runLocalPDFImport keeps ReadX as the upload entry point and delegates PDF
-// recognition, translation, and rendering to the vendored RetainPDF pipeline.
+// recognition, translation, and rendering to the vendored LeePDF pipeline.
 func (s *Server) runLocalPDFImport(
 	ctx context.Context,
 	name, source string,
@@ -337,16 +339,16 @@ func (s *Server) runLocalPDFImport(
 	if metadata == nil {
 		metadata = &recognizedPaperMetadata{}
 	}
-	_ = sizes // Retain reads page count and exact geometry directly from the PDF.
+	_ = sizes // Lee reads page count and exact geometry directly from the PDF.
 	if progress != nil {
-		progress("ocr", "Retain 正在识别并处理论文", 0, 0)
+		progress("ocr", "Lee 正在识别并处理论文", 0, 0)
 	}
 	contentHash := sha256.Sum256(pdf)
-	translatedPath, err := s.runRetainPDFImport(ctx, "doc-"+hex.EncodeToString(contentHash[:16]), name, pdf, metadata)
+	translatedPath, err := s.runLeePDFImport(ctx, "doc-"+hex.EncodeToString(contentHash[:16]), name, pdf, metadata)
 	if err != nil {
 		return importResult{Name: name}, err
 	}
-	metadata.RetainTranslatedPath = translatedPath
+	metadata.LeeTranslatedPath = translatedPath
 	if err := ctx.Err(); err != nil {
 		return importResult{Name: name}, err
 	}
@@ -355,12 +357,16 @@ func (s *Server) runLocalPDFImport(
 		return result, err
 	}
 	if result.Document != nil {
-		if err := s.adoptRetainTranslatedPDF(result.Document.Key, translatedPath, len(metadata.LayoutPages)); err != nil {
+		if err := s.adoptLeeTranslatedPDF(result.Document.Key, translatedPath, len(metadata.LayoutPages)); err != nil {
 			return result, err
 		}
+		// OCR and translation have now persisted their source pages. Build the
+		// shared analysis memory before import returns so all five workbook steps
+		// can reuse it without rereading every page on first analysis.
+		_ = s.preparePaperMemoryDuringImport(ctx, result.Document.Key, progress)
 	}
 	if progress != nil {
-		progress("saving", "Retain 处理结果已保存", 1, 1)
+		progress("saving", "Lee 处理结果已保存", 1, 1)
 	}
 	return result, nil
 }
@@ -676,14 +682,14 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 	}
 	s.beginImportJob(key, name, 0, jobCancel)
 	metadata := recognizedPaperMetadata{Title: document.Title}
-	emit(map[string]any{"progress": map[string]any{"stage": "ocr", "message": "Retain 正在识别并处理论文", "completed": 0, "total": 0}})
-	translatedPath, err := s.runRetainPDFImport(jobCtx, key, name, data, &metadata)
+	emit(map[string]any{"progress": map[string]any{"stage": "ocr", "message": "Lee 正在识别并处理论文", "completed": 0, "total": 0}})
+	translatedPath, err := s.runLeePDFImport(jobCtx, key, name, data, &metadata)
 	if err != nil {
 		s.finishImportJob(key, importFailureStatus(jobCtx, err), err.Error())
 		emit(map[string]any{"error": "论文 OCR 与翻译失败: " + err.Error()})
 		return
 	}
-	emit(map[string]any{"progress": map[string]any{"stage": "saving", "message": "正在保存 Retain 处理结果", "completed": 0, "total": 1}})
+	emit(map[string]any{"progress": map[string]any{"stage": "saving", "message": "正在保存 Lee 处理结果", "completed": 0, "total": 1}})
 
 	paths := legacy.NewPaths(s.cfg.DataRoot)
 	dir := paths.LibraryDir()
@@ -755,12 +761,15 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 		emit(map[string]any{"error": "提交论文 OCR 译文失败: " + err.Error()})
 		return
 	}
-	if err := s.adoptRetainTranslatedPDF(key, translatedPath, len(metadata.LayoutPages)); err != nil {
+	if err := s.adoptLeeTranslatedPDF(key, translatedPath, len(metadata.LayoutPages)); err != nil {
 		s.finishImportJob(key, "failed", err.Error())
-		emit(map[string]any{"error": "PDF 已关联，但保存 Retain 译文 PDF 失败: " + err.Error()})
+		emit(map[string]any{"error": "PDF 已关联，但保存 Lee 译文 PDF 失败: " + err.Error()})
 		return
 	}
-	s.jobStage(key, "render", "done", "Retain 已生成译文 PDF", len(metadata.LayoutPages), len(metadata.LayoutPages))
+	s.jobStage(key, "render", "done", "Lee 已生成译文 PDF", len(metadata.LayoutPages), len(metadata.LayoutPages))
+	_ = s.preparePaperMemoryDuringImport(jobCtx, key, func(stage, message string, completed, total int) {
+		emit(map[string]any{"progress": map[string]any{"stage": stage, "message": message, "completed": completed, "total": total}})
+	})
 	s.finishImportJob(key, "done", "")
 	updated, err := s.loadDocument(r.Context(), key)
 	if err != nil {
