@@ -255,3 +255,31 @@ func TestSafeFileStem(t *testing.T) {
 		}
 	}
 }
+
+// 列表接口用 LibraryPDFIndex 每请求只读一次目录，匹配结果必须与逐步调用的
+// PDFFile 完全一致（含"包含匹配"回退），否则列表上的 HasPDF 会和详情页不一致。
+func TestLibraryPDFIndexMatchesPDFFile(t *testing.T) {
+	paths := NewPaths(t.TempDir())
+	if err := os.MkdirAll(paths.LibraryDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"NAF-2209.14540.pdf", "2209.14540.pdf", "other.pdf", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(paths.LibraryDir(), name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	index := paths.LibraryPDFIndex()
+	for _, key := range []string{"2209.14540", "14540", "NAF-2209.14540", "other", "OTHER", "missing", ""} {
+		wantPath, wantOK := paths.PDFFile(key)
+		gotPath, gotOK := index.Match(key)
+		if wantOK != gotOK || wantPath != gotPath {
+			t.Fatalf("key %q: PDFFile=(%q,%v) 与 index.Match=(%q,%v) 不一致", key, wantPath, wantOK, gotPath, gotOK)
+		}
+	}
+
+	// 目录不存在时两者都返回未命中，而不是 panic。
+	missing := NewPaths(filepath.Join(t.TempDir(), "nope"))
+	if _, ok := missing.LibraryPDFIndex().Match("2209.14540"); ok {
+		t.Fatal("目录不存在时不应命中")
+	}
+}

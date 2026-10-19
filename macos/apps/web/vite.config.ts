@@ -46,7 +46,9 @@ export default defineConfig({
   build: {
     target: 'chrome120',
     outDir: 'dist',
-    sourcemap: true,
+    // 生产构建默认不带 sourcemap：本地发布包没必要携带完整源码映射。
+    // 需要排查问题时用 CBCT_SOURCEMAP=1 构建。
+    sourcemap: process.env.CBCT_SOURCEMAP === '1',
     // pdf.js worker 走独立 chunk，主包不内联，保证 CSP script-src 'self' 可守。
     chunkSizeWarningLimit: 900,
   },

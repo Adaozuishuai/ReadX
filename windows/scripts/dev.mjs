@@ -13,6 +13,7 @@ import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
 import { runGo, v2Paths } from './go.mjs';
+import { runtimeEnvironment } from './platform-runtime.mjs';
 import { prepareServerRuntime } from './server-runtime.mjs';
 
 const built = process.argv.includes('--built');
@@ -76,7 +77,7 @@ function startServer() {
   const child = spawn(
     prepareServerRuntime(v2Paths.serverBin),
     ['--exit-on-stdin-eof', '--dev-info', v2Paths.devInfo, '--port', '0'],
-    { stdio: ['pipe', 'pipe', 'inherit'], cwd: v2Paths.serverDir, windowsHide: true, env: process.env },
+    { stdio: ['pipe', 'pipe', 'inherit'], cwd: v2Paths.serverDir, windowsHide: true, env: runtimeEnvironment(v2Paths.root) },
   );
   track(child, 'server');
 

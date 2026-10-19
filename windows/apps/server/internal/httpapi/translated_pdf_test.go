@@ -72,13 +72,13 @@ func TestTranslatedPDFReusesLeeArtifact(t *testing.T) {
 // TestTranslatedPageOCRReturnsSinglePagePDF 覆盖阅读器的按页排版译文：
 // PaddleOCR 识别段落 -> 翻译 -> rpr 只重排这一页 -> 直接回 PDF。
 func TestTranslatedPageOCRReturnsSinglePagePDF(t *testing.T) {
-	root, err := filepath.Abs("../../../../..")
+	root, err := filepath.Abs("../../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CBCT_RENDER_ENGINE_DIR", filepath.Join(root, "windows", "resources", "rendering-engine"))
-	t.Setenv("CBCT_TRANSLATED_PDF_FONT_DIR", filepath.Join(root, "windows", "resources", "fonts"))
-	t.Setenv("CBCT_RENDER_SCRIPT", filepath.Join(root, "windows", "scripts", "render-translated-pdf.cjs"))
+	t.Setenv("CBCT_RENDER_ENGINE_DIR", filepath.Join(root, "resources", "rendering-engine"))
+	t.Setenv("CBCT_TRANSLATED_PDF_FONT_DIR", filepath.Join(root, "resources", "fonts"))
+	t.Setenv("CBCT_RENDER_SCRIPT", filepath.Join(root, "scripts", "render-translated-pdf.cjs"))
 
 	bundle, paths := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
@@ -169,13 +169,13 @@ func TestTranslatedPageOCRReturnsSinglePagePDF(t *testing.T) {
 // 配置 OCR 后，导入用 PaddleOCR 识别段落、按策略翻译，并把每页块坐标写入 app_state；
 // 阅读器随后按页渲染时不再调用 OCR。
 func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
-	root, err := filepath.Abs("../../../../..")
+	root, err := filepath.Abs("../../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CBCT_RENDER_ENGINE_DIR", filepath.Join(root, "windows", "resources", "rendering-engine"))
-	t.Setenv("CBCT_TRANSLATED_PDF_FONT_DIR", filepath.Join(root, "windows", "resources", "fonts"))
-	t.Setenv("CBCT_RENDER_SCRIPT", filepath.Join(root, "windows", "scripts", "render-translated-pdf.cjs"))
+	t.Setenv("CBCT_RENDER_ENGINE_DIR", filepath.Join(root, "resources", "rendering-engine"))
+	t.Setenv("CBCT_TRANSLATED_PDF_FONT_DIR", filepath.Join(root, "resources", "fonts"))
+	t.Setenv("CBCT_RENDER_SCRIPT", filepath.Join(root, "scripts", "render-translated-pdf.cjs"))
 
 	bundle, paths := newImportServer(t)
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
@@ -346,13 +346,13 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 // TestTranslatedPageWithoutBodyReturnsOriginalPage：整页没有可译正文（公式/表格/图片页）
 // 不应让渲染任务失败，而是原样返回这一页，阅读器显示「已保留原页」。
 func TestTranslatedPageWithoutBodyReturnsOriginalPage(t *testing.T) {
-	root, err := filepath.Abs("../../../../..")
+	root, err := filepath.Abs("../../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CBCT_RENDER_ENGINE_DIR", filepath.Join(root, "windows", "resources", "rendering-engine"))
-	t.Setenv("CBCT_TRANSLATED_PDF_FONT_DIR", filepath.Join(root, "windows", "resources", "fonts"))
-	t.Setenv("CBCT_RENDER_SCRIPT", filepath.Join(root, "windows", "scripts", "render-translated-pdf.cjs"))
+	t.Setenv("CBCT_RENDER_ENGINE_DIR", filepath.Join(root, "resources", "rendering-engine"))
+	t.Setenv("CBCT_TRANSLATED_PDF_FONT_DIR", filepath.Join(root, "resources", "fonts"))
+	t.Setenv("CBCT_RENDER_SCRIPT", filepath.Join(root, "scripts", "render-translated-pdf.cjs"))
 	bundle, _ := newImportServer(t)
 	if err := render.New(bundle.cfg.DataRoot).Available(); err != nil {
 		t.Skipf("跳过渲染集成测试：%v", err)

@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   getDocument,
   GlobalWorkerOptions,
   TextLayer,
   type PDFDocumentProxy,
 } from 'pdfjs-dist';
-import { fitPDFWidth, paragraphAt, mergePaperHeadings, typesetPDFTranslation, type TranslatedPDFBlock, type PaperHeading, type PDFLayout, type PDFTranslationPlan } from '@cbct/shared';
+import { fitPDFWidth, paragraphAt, mergePaperHeadings, type PaperHeading, type PDFLayout } from '@cbct/shared';
 import { headingsFromPDFPage } from '../api/pdfOutline';
 import type { SelectedParagraph } from './ParagraphActions';
 import type { TextContent } from 'pdfjs-dist/types/src/display/api';
@@ -28,42 +28,7 @@ export function textFromPDF(content: TextContent): string {
     .trim();
 }
 
-function TranslatedBlock({ block, scale, fontScale, style, onExpand }: { block: TranslatedPDFBlock; scale: number; fontScale: number; style: React.CSSProperties; onExpand: (anchor: DOMRect) => void }) {
-  const element = useRef<HTMLDivElement>(null);
-  const [overflow, setOverflow] = useState(false);
-  useLayoutEffect(() => {
-    const box = element.current;
-    if (!box) return;
-    const base = block.fontSize * scale * fontScale;
-    const minimum = base * .88;
-    const fit = () => {
-      let low = minimum, high = base;
-      box.style.fontSize = `${high}px`;
-      const fits = () => box.scrollHeight <= box.clientHeight + 1 && box.scrollWidth <= box.clientWidth + 1;
-      if (!fits()) {
-        for (let round = 0; round < 6; round++) {
-          const middle = (low + high) / 2;
-          box.style.fontSize = `${middle}px`;
-          if (fits()) low = middle; else high = middle;
-        }
-        box.style.fontSize = `${low}px`;
-      }
-      setOverflow(!fits());
-    };
-    fit();
-    const observer = new ResizeObserver(fit);
-    observer.observe(box);
-    let active = true;
-    void document.fonts.ready.then(() => { if (active) fit(); });
-    return () => { active = false; observer.disconnect(); };
-  }, [block, scale, fontScale, style.width, style.height]);
-  return <div className="pdf-translated-block" data-role={block.role} data-overflow={overflow || undefined} style={style} lang="zh-CN">
-    <div className="pdf-translated-text" ref={element} style={{ lineHeight: block.lineHeight, textAlign: block.align, textIndent: `${block.indent * scale}px` }}>{block.target}</div>
-    {overflow && <button type="button" className="pdf-translation-expand" aria-label="展开完整译文" title="展开完整译文" onClick={event => { event.stopPropagation(); onExpand(event.currentTarget.getBoundingClientRect()); }}>↗</button>}
-  </div>;
-}
-
-export function usePDF(key: string | null) {
+export function usePDF(key: string | null, translated = false) {
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [outline, setOutline] = useState<PDFOutline[]>([]);
   const [error, setError] = useState('');
@@ -75,9 +40,12 @@ export function usePDF(key: string | null) {
     setDocument(null);
     setOutline([]);
     setError('');
+    setIndexing('');
     void (async () => {
       try {
-        const data = await api.file(key, controller.signal);
+        const data = translated
+          ? await api.translatedFile(key, controller.signal)
+          : await api.file(key, controller.signal);
         if (controller.signal.aborted) return;
         task = getDocument({
           data,
@@ -124,6 +92,10 @@ export function usePDF(key: string | null) {
         };
         if (tree) await visit(tree, 0);
         if (!controller.signal.aborted) setOutline(entries);
+        if (translated) {
+          if (!controller.signal.aborted) setIndexing('');
+          return;
+        }
         const cached = new Set(
           (await api.pages(key, controller.signal)).pages.map(
             (item) => item.page,
@@ -148,7 +120,7 @@ export function usePDF(key: string | null) {
         if (!controller.signal.aborted)
           setIndexing(
             empty
-              ? `${empty} 页没有文本层，扫描页暂不支持 OCR`
+              ? `${empty} 页是扫描页；OCR 与译文由 LeePDF 处理，可切换到译文查看`
               : '',
           );
       } catch (cause) {
@@ -164,8 +136,173 @@ export function usePDF(key: string | null) {
       controller.abort();
       void task?.destroy();
     };
-  }, [key]);
+  }, [key, translated]);
   return { document, outline, error, indexing };
+}
+
+/** Continuous document canvas. It preserves a single scroll surface and renders nearby pages lazily. */
+export function PDFDocumentView({
+  document,
+  page,
+  onPage,
+  annotations,
+  focusedId,
+  onSelect,
+  onText,
+  layout,
+  paragraphMode = false,
+  onParagraph,
+  navigationRequest,
+}: {
+  document: PDFDocumentProxy;
+  page: number;
+  onPage: (page: number) => void;
+  annotations: Annotation[];
+  focusedId: string | null;
+  onSelect: (selection: PendingSelection) => void;
+  onText: (text: string) => void;
+  layout?: PDFLayout | null;
+  paragraphMode?: boolean;
+  onParagraph?: (paragraph: SelectedParagraph) => void;
+  navigationRequest?: { page: number; y?: number; viewportOffset?: number; nonce: number };
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  const slots = useRef(new Map<number, HTMLDivElement>());
+  const onPageRef = useRef(onPage);
+  onPageRef.current = onPage;
+  const activePageRef = useRef(page);
+  activePageRef.current = page;
+  const [scrollRoot, setScrollRoot] = useState<HTMLElement | null>(null);
+  const [nearPages, setNearPages] = useState<Set<number>>(() => new Set([page]));
+  const [pageRatios, setPageRatios] = useState<number[]>([]);
+  const [zoom, setZoom] = useState(1);
+
+  useEffect(() => setScrollRoot(root.current), []);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const ratios = await Promise.all(
+        Array.from({ length: document.numPages }, async (_, index) => {
+          const pdfPage = await document.getPage(index + 1);
+          const viewport = pdfPage.getViewport({ scale: 1 });
+          return viewport.width / viewport.height;
+        }).map((ratioPromise) => ratioPromise.catch(() => 0.707)),
+      );
+      if (!cancelled) setPageRatios(ratios);
+    })();
+    return () => { cancelled = true; };
+  }, [document]);
+  useEffect(() => {
+    if (!scrollRoot || pageRatios.length !== document.numPages) return;
+    const nearObserver = new IntersectionObserver((entries) => {
+      setNearPages((previous) => {
+        const next = new Set(previous);
+        for (const entry of entries) {
+          const pageNumber = Number((entry.target as HTMLElement).dataset.page);
+          if (entry.isIntersecting) next.add(pageNumber);
+          else next.delete(pageNumber);
+        }
+        return next;
+      });
+    }, { root: scrollRoot, rootMargin: '1200px 0px' });
+    for (const slot of slots.current.values()) {
+      nearObserver.observe(slot);
+    }
+    let frame = 0;
+    const updateActivePage = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const rootBounds = scrollRoot.getBoundingClientRect();
+        const marker = rootBounds.top + Math.min(96, rootBounds.height * 0.2);
+        let nearestPage = 1;
+        let nearestDistance = Number.POSITIVE_INFINITY;
+        for (const [pageNumber, slot] of slots.current) {
+          const bounds = slot.getBoundingClientRect();
+          if (bounds.top <= marker && bounds.bottom > marker) {
+            nearestPage = pageNumber;
+            nearestDistance = 0;
+            break;
+          }
+          const distance = Math.min(Math.abs(bounds.top - marker), Math.abs(bounds.bottom - marker));
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestPage = pageNumber;
+          }
+        }
+        if (nearestPage !== activePageRef.current) {
+          activePageRef.current = nearestPage;
+          onPageRef.current(nearestPage);
+        }
+      });
+    };
+    scrollRoot.addEventListener('scroll', updateActivePage, { passive: true });
+    updateActivePage();
+    return () => {
+      nearObserver.disconnect();
+      scrollRoot.removeEventListener('scroll', updateActivePage);
+      cancelAnimationFrame(frame);
+    };
+  }, [scrollRoot, document, pageRatios.length]);
+
+  useEffect(() => {
+    if (!scrollRoot || pageRatios.length !== document.numPages) return;
+    const targetPage = navigationRequest?.page ?? page;
+    const slot = slots.current.get(targetPage);
+    if (!slot) return;
+    const rootTop = scrollRoot.getBoundingClientRect().top;
+    const top = slot.getBoundingClientRect().top - rootTop + scrollRoot.scrollTop - 14
+      + Math.max(0, Math.min(1, navigationRequest?.y ?? 0)) * slot.clientHeight
+      - Math.max(0, Math.min(scrollRoot.clientHeight, navigationRequest?.viewportOffset ?? 0));
+    scrollRoot.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  }, [navigationRequest?.nonce, scrollRoot, pageRatios.length, document.numPages]);
+
+  return (
+    <div className="pdf-reader pdf-document-reader">
+      <div className="reader-format-tools">
+        <button onClick={() => setZoom((value) => Math.max(0.5, value - 0.2))} aria-label="缩小">−</button>
+        <span>{Math.round(zoom * 100)}%</span>
+        <button onClick={() => setZoom((value) => Math.min(3, value + 0.2))} aria-label="放大">＋</button>
+        <button onClick={() => setZoom(1)}>适合宽度</button>
+        <span className="pdf-document-page-count">第 {page} / {document.numPages} 页</span>
+      </div>
+      <div className="pdf-document-scroll" ref={root}>
+        {pageRatios.length !== document.numPages ? (
+          <p className="pdf-page-placeholder-status" role="status">正在准备连续阅读…</p>
+        ) : Array.from({ length: document.numPages }, (_, index) => {
+          const pageNumber = index + 1;
+          return (
+            <div
+              className="pdf-page-slot"
+              data-page={pageNumber}
+              key={pageNumber}
+              ref={(element) => {
+                if (!element) { slots.current.delete(pageNumber); return; }
+                slots.current.set(pageNumber, element);
+              }}
+              style={{ aspectRatio: `${(pageRatios[pageNumber - 1] ?? 0.707) / zoom}` }}
+            >
+              {nearPages.has(pageNumber) ? (
+                <PDFPage
+                  document={document}
+                  page={pageNumber}
+                  annotations={annotations}
+                  focusedId={focusedId}
+                  onSelect={onSelect}
+                  onText={onText}
+                  layout={pageNumber === page ? layout : null}
+                  paragraphMode={paragraphMode}
+                  onParagraph={onParagraph}
+                  continuousPage
+                  scrollRoot={scrollRoot}
+                  zoomLevel={zoom}
+                />
+              ) : <span className="pdf-page-placeholder">{pageNumber}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export function PDFPage({
@@ -175,13 +312,12 @@ export function PDFPage({
   focusedId,
   onSelect,
   onText,
-  translation,
   layout,
   paragraphMode = false,
   onParagraph,
-  headingTarget,
-  visionMode = false,
-  onVisionStatus,
+  continuousPage = false,
+  scrollRoot,
+  zoomLevel,
 }: {
   document: PDFDocumentProxy;
   page: number;
@@ -189,21 +325,14 @@ export function PDFPage({
   focusedId: string | null;
   onSelect: (selection: PendingSelection) => void;
   onText: (text: string) => void;
-  translation?: { layout: PDFLayout; targets: string[] };
   layout?: PDFLayout | null;
   paragraphMode?: boolean;
   onParagraph?: (paragraph: SelectedParagraph) => void;
-  headingTarget?: { page: number; y: number; nonce: number } | null;
-  visionMode?: boolean;
-  onVisionStatus?: (status: VisionStatus, detail?: string) => void;
+  continuousPage?: boolean;
+  scrollRoot?: HTMLElement | null;
+  zoomLevel?: number;
 }) {
-  // 视觉结果只作用于「译文分组」这一展示层（分组/角色/丢弃），因此没有译文时不必出图计费。
-  const visionPlan = useVisionLayout({ document, page, layout: translation?.layout ?? layout ?? null, enabled: visionMode && Boolean(translation), onStatus: onVisionStatus });
-  const translatedBlocks = useMemo(
-    () => (translation ? typesetPDFTranslation(translation.layout, translation.targets, visionPlan ?? undefined) : []),
-    [translation?.layout, translation?.targets, visionPlan],
-  );
-  const paragraphLayout = translation ? { ...translation.layout, blocks: translatedBlocks } : layout;
+  const paragraphLayout = layout;
   const container = useRef<HTMLDivElement>(null);
   const paper = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -213,28 +342,18 @@ export function PDFPage({
   const previousRender = useRef<Promise<void>>(Promise.resolve());
   const [width, setWidth] = useState(600);
   const [zoom, setZoom] = useState(1);
-  const [translationFontScale, setTranslationFontScale] = useState(1);
-  const [renderedScale, setRenderedScale] = useState(1);
+  const activeZoom = zoomLevel ?? zoom;
   const [renderedPage, setRenderedPage] = useState<number | null>(null);
   const [rendering, setRendering] = useState(true);
   const [error, setError] = useState('');
   const [hoveredParagraph, setHoveredParagraph] = useState<number | null>(null);
-  const headingRef = useRef(headingTarget);
-  headingRef.current = headingTarget;
-  const scrollToHeading = () => {
-    const target = headingRef.current;
-    if (!target || target.page !== page || !container.current || !paper.current) return;
-    const top = paper.current.getBoundingClientRect().top - container.current.getBoundingClientRect().top + container.current.scrollTop;
-    container.current.scrollTo({ top: Math.max(0, top + target.y * paper.current.clientHeight - 18) });
-  };
-  useEffect(() => { scrollToHeading(); }, [headingTarget?.nonce, page]);
   useEffect(() => setHoveredParagraph(null), [page, layout, paragraphMode]);
   useEffect(() => {
     if (!container.current) return;
     let frame = 0;
     const measure = () => {
       if (!container.current) return;
-      const next = fitPDFWidth(container.current.clientWidth);
+      const next = fitPDFWidth(container.current.clientWidth, continuousPage ? 0 : 40);
       setWidth((current) => current === next ? current : next);
     };
     const observer = new ResizeObserver(() => {
@@ -244,7 +363,7 @@ export function PDFPage({
     measure();
     observer.observe(container.current);
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
-  }, []);
+  }, [continuousPage]);
   useEffect(() => {
     let cancelled = false;
     let render:
@@ -266,9 +385,8 @@ export function PDFPage({
         )
           return;
         const natural = pdfPage.getViewport({ scale: 1 });
-        const scale = (width / natural.width) * zoom;
+        const scale = (width / natural.width) * activeZoom;
         const viewport = pdfPage.getViewport({ scale });
-        setRenderedScale(scale);
         const ratio = Math.min(2, window.devicePixelRatio || 1);
         const element = canvas.current;
         element.width = Math.floor(viewport.width * ratio);
@@ -304,7 +422,6 @@ export function PDFPage({
         if (!cancelled) {
           setRenderedPage(page);
           setRendering(false);
-          scrollToHeading();
         }
       } catch (cause) {
         if (!cancelled) {
@@ -318,16 +435,16 @@ export function PDFPage({
       render?.cancel();
       layer?.cancel();
     };
-  }, [document, page, width, zoom]);
+  }, [document, page, width, activeZoom]);
   useEffect(() => {
-    container.current?.scrollTo(0, 0);
-  }, [page]);
+    if (!continuousPage) container.current?.scrollTo(0, 0);
+  }, [page, continuousPage]);
   useEffect(() => {
     if (!focusedId) return;
-    container.current
+    (scrollRoot ?? container.current)
       ?.querySelector(`[data-annotation-id="${CSS.escape(focusedId)}"]`)
       ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [focusedId, page]);
+  }, [focusedId, page, scrollRoot]);
   const select = () => {
     const selection = window.getSelection();
     if (!selection?.rangeCount || !paper.current) return;
@@ -357,28 +474,31 @@ export function PDFPage({
     });
   };
   return (
-    <div className="pdf-reader">
-      <div className="reader-format-tools">
+    <div className={`pdf-reader${continuousPage ? ' pdf-reader-page' : ''}`}>
+      {!continuousPage && <div className="reader-format-tools">
         <button onClick={() => setZoom((value) => Math.max(0.5, value - 0.2))}>
           −
         </button>
-        <span>{Math.round(zoom * 100)}%</span>
+        <span>{Math.round(activeZoom * 100)}%</span>
         <button onClick={() => setZoom((value) => Math.min(3, value + 0.2))}>
           ＋
         </button>
         <button onClick={() => setZoom(1)}>适合宽度</button>
-        {translation && <label className="pdf-translation-size">译文字号 <select aria-label="译文字号" value={translationFontScale} onChange={event => setTranslationFontScale(Number(event.target.value))}><option value={.9}>90%</option><option value={1}>100%</option><option value={1.1}>110%</option><option value={1.2}>120%</option></select></label>}
         {paragraphMode && paragraphLayout && <select aria-label="选择段落" className="paragraph-picker" value="" onChange={(event) => {
           if (!event.target.value) return;
           const index = Number(event.target.value) - 1;
           const block = paragraphLayout.blocks[index];
           if (!block) return;
           const anchor = event.currentTarget.getBoundingClientRect();
-          onParagraph?.({ text: block.text, translatedText: translation ? translatedBlocks[index]?.target : undefined, position: page, index, kind: 'pdf', top: anchor.bottom, left: anchor.left });
+          const targetY = block.y / paragraphLayout.height;
+          const viewportOffset = paper.current && scrollRoot
+            ? paper.current.getBoundingClientRect().top + targetY * paper.current.getBoundingClientRect().height - scrollRoot.getBoundingClientRect().top
+            : undefined;
+          onParagraph?.({ text: block.text, position: page, index, targetY, viewportOffset, kind: 'pdf', top: anchor.bottom, left: anchor.left });
         }}><option value="">识别 {paragraphLayout.blocks.length} 段 · 点击原文或选择</option>
           {paragraphLayout.blocks.map((block, index) => <option key={index} value={index + 1}>第 {index + 1} 段：{block.text.slice(0, 60)}</option>)}
         </select>}
-      </div>
+      </div>}
       <div className="pdf-scroll" ref={container}>
         {error && <p role="alert">PDF 渲染失败：{error}</p>}
         <div
@@ -387,7 +507,7 @@ export function PDFPage({
           data-rendered-page={renderedPage ?? undefined}
           data-rendering={rendering}
           ref={paper}
-          onMouseUp={translation ? undefined : select}
+          onMouseUp={select}
           onMouseMove={(event) => {
             if (!paragraphMode || !paragraphLayout) return;
             const bounds = event.currentTarget.getBoundingClientRect();
@@ -403,29 +523,22 @@ export function PDFPage({
             const index = paragraphAt(paragraphLayout, (event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
             if (index === null) return;
             const block = paragraphLayout.blocks[index]!;
-            onParagraph?.({ text: block.text, translatedText: translation ? translatedBlocks[index]?.target : undefined, position: page, index, kind: 'pdf', top: event.clientY, left: event.clientX });
+            const targetY = block.y / paragraphLayout.height;
+            const viewportOffset = scrollRoot
+              ? bounds.top + targetY * bounds.height - scrollRoot.getBoundingClientRect().top
+              : undefined;
+            onParagraph?.({ text: block.text, position: page, index, targetY, viewportOffset, kind: 'pdf', top: event.clientY, left: event.clientX });
           }}
           onKeyUp={(event) => {
             if (event.key === 'Shift') select();
           }}
         >
           <canvas ref={canvas} />
-          {headingTarget?.page === page && <div className="pdf-heading-focus" aria-hidden="true" style={{ top: `${headingTarget.y * 100}%` }} />}
-          <div className="textLayer" ref={textLayer} style={translation ? { visibility: 'hidden' } : undefined} />
+          <div className="textLayer" ref={textLayer} />
           {paragraphMode && paragraphLayout && hoveredParagraph !== null && (() => {
             const block = paragraphLayout.blocks[hoveredParagraph];
             return block && <div className="pdf-paragraph-hover" aria-hidden="true" style={{ left: `${block.x / paragraphLayout.width * 100}%`, top: `${block.y / paragraphLayout.height * 100}%`, width: `${block.width / paragraphLayout.width * 100}%`, height: `${block.height / paragraphLayout.height * 100}%` }} />;
           })()}
-          {translation && <div className="pdf-translation-layer">
-            {translation.layout.ornaments?.map((block,index) => <div key={`initial-${page}-${index}`} className="pdf-translation-mask" style={{left:`${block.x/translation.layout.width*100}%`,top:`${block.y/translation.layout.height*100}%`,width:`${block.width/translation.layout.width*100}%`,height:`${block.height/translation.layout.height*100}%`}} />)}
-            {translation.layout.blocks.map((block, index) => <div key={`mask-${page}-${index}`} className="pdf-translation-mask" style={{ left: `${block.x / translation.layout.width * 100}%`, top: `${block.y / translation.layout.height * 100}%`, width: `${block.width / translation.layout.width * 100}%`, height: `${block.height / translation.layout.height * 100}%` }} />)}
-            {translatedBlocks.map((block, index) => <TranslatedBlock
-              key={`${page}-${index}`}
-              block={block} scale={renderedScale} fontScale={translationFontScale}
-              onExpand={anchor => onParagraph?.({ text: block.text, translatedText: block.target, position: page, index, kind: 'pdf', top: anchor.bottom, left: anchor.left })}
-              style={{ left: `${block.x / translation.layout.width * 100}%`, top: `${block.y / translation.layout.height * 100}%`, width: `${block.width / translation.layout.width * 100}%`, height: `${block.height / translation.layout.height * 100}%` }}
-            />)}
-          </div>}
           <div className="pdf-marks">
             {annotations
               .filter((a) => a.page === page)
@@ -450,91 +563,4 @@ export function PDFPage({
       </div>
     </div>
   );
-}
-
-export type VisionStatus = 'idle' | 'rendering' | 'asking' | 'done' | 'cached' | 'failed';
-
-/**
- * 页级版式校正（AI 视觉试点）。
- *
- * 只把整页图像交给模型，换回"哪几块属于同一段、每块什么角色、哪些块该丢弃"的结构计划；
- * **正文一个字都不来自模型**——段落文本仍逐字取自 PDF 文本层的几何块，所以翻译缓存键不受影响。
- * 任何失败（渠道不支持图片、模型输出无法校验、超时）都静默回退几何判读，绝不让版式问题挡住阅读。
- */
-function useVisionLayout({ document, page, layout, enabled, onStatus }: {
-  document: PDFDocumentProxy;
-  page: number;
-  layout: PDFLayout | null;
-  enabled: boolean;
-  onStatus?: (status: VisionStatus, detail?: string) => void;
-}): PDFTranslationPlan | null {
-  const [plan, setPlan] = useState<PDFTranslationPlan | null>(null);
-  const statusRef = useRef(onStatus);
-  statusRef.current = onStatus;
-  const layoutRef = useRef(layout);
-  layoutRef.current = layout;
-  // 依赖块指纹而不是 layout 对象：父组件每次渲染都可能换新对象，否则请求会被反复打断。
-  const signature = layout ? `${page}:${layout.blocks.length}:${layout.blocks[0]?.text.slice(0, 24) ?? ''}:${layout.blocks[layout.blocks.length - 1]?.text.slice(-16) ?? ''}` : '';
-  useEffect(() => {
-    if (!enabled || !signature) {
-      setPlan(null);
-      return;
-    }
-    let cancelled = false;
-    const report = (status: VisionStatus, detail?: string) => {
-      if (!cancelled) statusRef.current?.(status, detail);
-    };
-    void (async () => {
-      try {
-        const current = layoutRef.current;
-        if (!current || !current.blocks.length) return;
-        report('rendering');
-        const pdfPage = await document.getPage(page);
-        const viewport = pdfPage.getViewport({ scale: 2 });
-        const canvas = window.document.createElement('canvas');
-        canvas.width = Math.max(1, Math.ceil(viewport.width));
-        canvas.height = Math.max(1, Math.ceil(viewport.height));
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('无法创建版式校正画布');
-        await pdfPage.render({ canvasContext: context, viewport }).promise;
-        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((value) => resolve(value), 'image/png'));
-        canvas.width = 0;
-        canvas.height = 0;
-        if (!blob) throw new Error('无法编码页面图像');
-        const imageBase64 = await blobBase64(blob);
-        if (cancelled) return;
-        report('asking');
-        const result = await api.visionLayout({
-          page,
-          imageBase64,
-          blocks: current.blocks.map((block, index) => ({
-            index, text: block.text, x: block.x, y: block.y,
-            width: block.width, height: block.height, fontSize: block.fontSize,
-          })),
-        });
-        if (cancelled) return;
-        setPlan(result.plan);
-        report(result.cached ? 'cached' : 'done');
-      } catch (cause) {
-        if (cancelled) return;
-        setPlan(null);
-        report('failed', cause instanceof Error ? cause.message : String(cause));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [enabled, document, page, signature]);
-  return plan;
-}
-
-function blobBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('读取页面图像失败'));
-    reader.onload = () => {
-      const value = typeof reader.result === 'string' ? reader.result : '';
-      const comma = value.indexOf(',');
-      resolve(comma >= 0 ? value.slice(comma + 1) : value);
-    };
-    reader.readAsDataURL(blob);
-  });
 }

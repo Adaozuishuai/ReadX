@@ -40,6 +40,13 @@
       {
         "from": "../../.release-staging/resources",
         "to": "."
+      },
+      {
+        "from": "../../.release-staging/resources/node_modules",
+        "to": "node_modules",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

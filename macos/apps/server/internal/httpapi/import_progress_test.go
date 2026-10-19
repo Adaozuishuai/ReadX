@@ -22,14 +22,18 @@ func progressUploadRequest(t *testing.T, bundle *httptestServerBundle, count int
 	if err != nil {
 		t.Fatal(err)
 	}
-	file.Write([]byte("%PDF-1.4\nprogress fixture"))
+	file.Write(testPDF(t))
 	segments := []string{}
+	pages := []publicationPageHint{}
 	for i := 0; i < count; i++ {
-		segments = append(segments, fmt.Sprintf("Original source paragraph number %d.", i))
+		segment := fmt.Sprintf("Original source paragraph number %d.", i)
+		segments = append(segments, segment)
+		pages = append(pages, publicationPageHint{Page: i + 1, Text: segment, Segments: []string{segment}, Width: 595, Height: 842})
 	}
-	hints, _ := json.Marshal([]publicationMetadataHint{{FirstPage: "Real paper title and authors", Pages: []publicationPageHint{{Page: 1, Text: strings.Join(segments, "\n"), Segments: segments}}}})
+	hints, _ := json.Marshal([]publicationMetadataHint{{FirstPage: "Real paper title and authors", Pages: pages}})
 	form.WriteField("metadata", string(hints))
 	form.Close()
+	ensureTestOCRPages(t, bundle, count)
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	t.Cleanup(cancel)
 	req, err := http.NewRequestWithContext(ctx, "POST", bundle.frontend.URL+"/v1/import/files", &body)
@@ -42,17 +46,15 @@ func progressUploadRequest(t *testing.T, bundle *httptestServerBundle, count int
 	return req
 }
 
-func TestImportProgressStreamsDuringModelWaitAndCountsValidatedBatches(t *testing.T) {
+func TestImportProgressStreamsDuringLeeProcessing(t *testing.T) {
 	front, handle, cfg := newTestServer(t, nil)
 	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}
 	release := make(chan struct{})
 	var once sync.Once
+	var modelWait sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
-		if len(sources) == 0 {
-			<-release
-			return `{"title":"Real paper title","translatedTitle":"真实题名"}`, 200
-		}
+		modelWait.Do(func() { <-release })
 		items := []map[string]any{}
 		for i := range sources {
 			items = append(items, map[string]any{"i": i, "t": fmt.Sprintf("译文%d", i)})
@@ -62,7 +64,7 @@ func TestImportProgressStreamsDuringModelWaitAndCountsValidatedBatches(t *testin
 	})
 	t.Cleanup(unblock)
 	writeAIConfig(t, bundle, upstream.URL)
-	res, err := front.Client().Do(progressUploadRequest(t, bundle, 35))
+	res, err := front.Client().Do(progressUploadRequest(t, bundle, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,8 +73,7 @@ func TestImportProgressStreamsDuringModelWaitAndCountsValidatedBatches(t *testin
 		t.Fatal(res.StatusCode, res.Header)
 	}
 	scanner := bufio.NewScanner(res.Body)
-	sawMetadata, heartbeat, saved := false, false, false
-	completed := []int{}
+	heartbeat, saved, completed := false, false, false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -91,22 +92,13 @@ func TestImportProgressStreamsDuringModelWaitAndCountsValidatedBatches(t *testin
 			if p.File != 1 || p.Files != 1 || p.Name != "paper.pdf" {
 				t.Fatalf("missing file context: %+v", p)
 			}
-			if p.Stage == "metadata" {
-				sawMetadata = true
-			}
-			if p.Stage == "translation" {
-				if p.Total != 35 {
-					t.Fatalf("wrong total: %+v", p)
-				}
-				completed = append(completed, p.Completed)
-			}
 			if p.Stage == "saving" {
 				saved = true
 			}
 		}
 		if event.Heartbeat {
-			if event.Progress != nil || !sawMetadata {
-				t.Fatal("heartbeat advanced work or arrived before model stage")
+			if event.Progress != nil {
+				t.Fatal("heartbeat advanced import progress")
 			}
 			heartbeat = true
 			var count int
@@ -115,27 +107,18 @@ func TestImportProgressStreamsDuringModelWaitAndCountsValidatedBatches(t *testin
 			}
 			unblock()
 		}
-		if event.Results != nil && (len(event.Results) != 1 || event.Results[0].Error != "" || event.Results[0].Document == nil) {
-			t.Fatalf("invalid terminal result: %+v", event.Results)
+		if event.Results != nil {
+			if len(event.Results) != 1 || event.Results[0].Error != "" || event.Results[0].Document == nil {
+				t.Fatalf("invalid terminal result: %+v", event.Results)
+			}
+			completed = true
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if !heartbeat || !saved || len(completed) < 4 || completed[0] != 0 || completed[len(completed)-1] != 35 {
-		t.Fatalf("missing real-time progress: heartbeat=%v saving=%v counters=%v", heartbeat, saved, completed)
-	}
-	sawPartial := false
-	for i, value := range completed {
-		if value > 0 && value < 35 {
-			sawPartial = true
-		}
-		if i > 0 && value < completed[i-1] {
-			t.Fatal("translation progress moved backwards")
-		}
-	}
-	if !sawPartial {
-		t.Fatal("missing intermediate batch completion")
+	if !heartbeat || !saved || !completed {
+		t.Fatalf("missing Lee import progress: heartbeat=%v saving=%v result=%v", heartbeat, saved, completed)
 	}
 }
 

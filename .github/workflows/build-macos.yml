@@ -1,0 +1,38 @@
+name: Build macOS artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: macos/apps/server/go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: macos/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+      - run: node scripts/sync-platforms.mjs --check
+      - name: Install and verify runtime
+        working-directory: macos
+        run: npm ci && npm run setup:runtime && npm run check:runtime
+      - name: Test and package local unsigned artifacts
+        working-directory: macos
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm test && npm run build:release && npm run test:desktop && npm run test:packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReadX-macOS
+          path: |
+            macos/release/*.dmg
+            macos/release/*.zip
+          retention-days: 7

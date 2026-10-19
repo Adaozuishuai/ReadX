@@ -1,37 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary, PDFLayout } from '@cbct/shared';
 import { pageParagraphs, segmentParagraph, statusLabel } from '@cbct/shared';
 import { api, type EPUBSection } from '../api/client';
 import type { DocumentPhase } from '../hooks/useDocument';
-import { useTranslations } from '../hooks/useTranslations';
 import { AssistantSidebar, type AssistantTab } from './AssistantPanels';
 import type { useAnnotations } from '../hooks/useAnnotations';
-import { PDFPage, usePDF, type PendingSelection, type VisionStatus } from './PDFView';
-import { layoutFromPDF } from '../api/pdfLayout';
+import { PDFDocumentView, usePDF, type PendingSelection } from './PDFView';
+import type { LeeParagraphs } from '../api/client';
 import { ResizeHandle } from './ResizeHandle';
 import { EPUBView } from './EPUBView';
 import { ParagraphActions, type SelectedParagraph, type ParagraphQuestion } from './ParagraphActions';
+import { ExportPDFDialog } from './ExportPDFDialog';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 type ReadingMode = 'source' | 'parallel' | 'translation';
-
-/** 版式校正的状态文案：失败必须写明"已回退几何判读"，否则用户会以为段落变少是丢内容。 */
-function visionStatusLabel(state: { status: VisionStatus; detail?: string }): string {
-  switch (state.status) {
-    case 'rendering':
-      return '版式校正：渲染页面…';
-    case 'asking':
-      return '版式校正：询问模型…';
-    case 'done':
-      return '版式校正：已应用';
-    case 'cached':
-      return '版式校正：已应用（缓存）';
-    case 'failed':
-      return `版式校正失败，已回退几何判读${state.detail ? `：${state.detail}` : ''}`;
-    default:
-      return '版式校正：待命';
-  }
-}
 
 interface Props {
   detail: DocumentPhase;
@@ -44,6 +26,22 @@ interface Props {
   annotations: ReturnType<typeof useAnnotations>;
   onFocusAnnotation: (id: string, page: number | null) => void;
   focusedAnnotationId: string | null;
+}
+
+// Lee document.v1 的段落块直接给 PDFView 做命中测试；坐标单位与 page 宽高保持一致。
+function leeLayout(paragraphs: LeeParagraphs): PDFLayout {
+  return {
+    width: paragraphs.width,
+    height: paragraphs.height,
+    blocks: paragraphs.blocks.map((block) => ({
+      text: block.text,
+      x: block.box[0],
+      y: block.box[1],
+      width: Math.max(0, block.box[2] - block.box[0]),
+      height: Math.max(0, block.box[3] - block.box[1]),
+      fontSize: Math.max(8, (block.box[3] - block.box[1]) * 0.8),
+    })),
+  };
 }
 
 export function ReaderScreen({
@@ -61,6 +59,7 @@ export function ReaderScreen({
   const epub = selected?.format === 'epub';
   const documentKey = selected?.key ?? null;
   const pdf = usePDF(!epub ? documentKey : null);
+  const translatedPDF = usePDF(!epub ? documentKey : null, true);
   const [mode, setMode] = useState<ReadingMode>('source');
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 1000);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth >= 1200);
@@ -68,16 +67,21 @@ export function ReaderScreen({
   const [swapped, setSwapped] = useState(false);
   const [divider, setDivider] = useState(50);
   const [leftWidth, setLeftWidth] = useState(() => readPanelWidth('toc', 220));
-  const [rightWidth, setRightWidth] = useState(() => readPanelWidth('assistant', 360));
+  const [rightWidth, setRightWidth] = useState(() => readPanelWidth('assistant', 440));
   const [panelSpace, setPanelSpace] = useState(window.innerWidth);
   const panelRoot = useRef<HTMLDivElement>(null);
-  const [headingTarget, setHeadingTarget] = useState<{ page: number; y: number; nonce: number } | null>(null);
   useEffect(() => {
     if (!panelRoot.current) return;
     const observer = new ResizeObserver(([entry]) => { if (entry) setPanelSpace(entry.contentRect.width); });
     observer.observe(panelRoot.current);
     return () => observer.disconnect();
   }, []);
+  useEffect(() => {
+    setMode('source');
+  }, [documentKey]);
+  useEffect(() => {
+    if (!epub && translatedPDF.document) setMode('translation');
+  }, [documentKey, epub, translatedPDF.document]);
   useEffect(() => {
     try { localStorage.setItem('cbct.reader.panels', JSON.stringify({ toc: leftWidth, assistant: rightWidth })); } catch { /* Storage may be disabled. */ }
   }, [leftWidth, rightWidth]);
@@ -102,11 +106,6 @@ export function ReaderScreen({
   const [section, setSection] = useState<EPUBSection | null>(null);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<PendingSelection | null>(null);
-  const [paragraphMode, setParagraphMode] = useState(true);
-  const [visionMode, setVisionMode] = useState(false);
-  const [visionStatus, setVisionStatus] = useState<{ status: VisionStatus; detail?: string }>({ status: 'idle' });
-  // 每次渲染都会换新函数身份；useVisionLayout 把它收在 ref 里，不会因此重启请求。
-  const handleVisionStatus = (status: VisionStatus, detail?: string) => setVisionStatus({ status, detail });
   const [selectedParagraph, setSelectedParagraph] = useState<SelectedParagraph | null>(null);
   const [paragraphQuestion, setParagraphQuestion] = useState<ParagraphQuestion | null>(null);
   const [note, setNote] = useState('');
@@ -115,8 +114,9 @@ export function ReaderScreen({
   const [saving, setSaving] = useState(false);
   const [flashing, setFlashing] = useState(false);
   const panes = useRef<HTMLDivElement>(null);
-  const translations = useTranslations(documentKey);
   const restored = useRef(false);
+  // 通过 LeePDF 重新处理并获取整本译文 PDF。
+  const [exportOpen, setExportOpen] = useState(false);
   // 由外部出处（图谱证据 / 批注）驱动跳转时置位：不让「恢复上次阅读位置」抢走目标页。
   const citeTakeover = useRef(false);
   const [locationReady, setLocationReady] = useState(false);
@@ -128,6 +128,19 @@ export function ReaderScreen({
     ? sections.length
     : (pdf.document?.numPages ?? cachedPages.length);
   const current = Math.max(1, Math.min(page ?? 1, count || 1));
+  const [navigationRequest, setNavigationRequest] = useState<{ page: number; y?: number; viewportOffset?: number; nonce: number }>(() => ({ page: page ?? 1, nonce: 0 }));
+  const [translationNavigationRequest, setTranslationNavigationRequest] = useState<{ page: number; y?: number; viewportOffset?: number; nonce: number }>(() => ({ page: page ?? 1, nonce: 0 }));
+  const navigatePage = useCallback((targetPage: number, y?: number) => {
+    const target = Math.max(1, Math.min(targetPage, count || targetPage));
+    onPage(target);
+    setNavigationRequest((previous) => ({ page: target, y, nonce: previous.nonce + 1 }));
+    setTranslationNavigationRequest((previous) => ({ page: target, y, nonce: previous.nonce + 1 }));
+  }, [count, onPage]);
+  const navigateTranslationPage = useCallback((targetPage: number, y?: number, viewportOffset?: number) => {
+    const target = Math.max(1, Math.min(targetPage, translatedPDF.document?.numPages ?? targetPage));
+    onPage(target);
+    setTranslationNavigationRequest((previous) => ({ page: target, y, viewportOffset, nonce: previous.nonce + 1 }));
+  }, [onPage, translatedPDF.document?.numPages]);
   const navigation = epub
     ? sections.map((item) => ({
         title: item.title,
@@ -144,10 +157,6 @@ export function ReaderScreen({
         : pdfLayout ? pdfLayout.blocks.map((block) => block.text) : pageParagraphs(sourceText),
     [epub, section, sourceText, pdfLayout],
   );
-  useEffect(() => {
-    if (paragraphs.length && (epub || pdfLayout))
-      void translations.translate(current, paragraphs, true);
-  }, [current, paragraphs, epub, pdfLayout, translations.translate]);
 
   useEffect(() => {
     if (!documentKey || restored.current) return;
@@ -163,7 +172,7 @@ export function ReaderScreen({
       .location(documentKey)
       .then((result) => {
         if (!cancelled && !citeTakeover.current && result.location)
-          onPage(
+          navigatePage(
             result.location.kind === 'pdf'
               ? (result.location.page ?? 1)
               : (result.location.index ?? 1),
@@ -177,7 +186,7 @@ export function ReaderScreen({
       cancelled = true;
       restored.current = false;
     };
-  }, [documentKey, onPage]);
+  }, [documentKey, navigatePage]);
   useEffect(() => {
     if (!documentKey || !locationReady || count === 0) return;
     const chapter = sections.find((item) => item.index === current);
@@ -201,15 +210,14 @@ export function ReaderScreen({
     sections.map((item) => item.href).join('|'),
   ]);
   useEffect(() => {
-    if (!cite) return;
-    // 标记「本次进入阅读页由出处跳转驱动」：恢复上次阅读位置的异步回填要让位给目标页。
+    if (!cite) return;    // 标记「本次进入阅读页由出处跳转驱动」：恢复上次阅读位置的异步回填要让位给目标页。
     citeTakeover.current = true;
     setMode((value) => (value === 'translation' ? 'source' : value));
-    onPage(cite.page);
+    navigatePage(cite.page);
     setFlashing(true);
     const timer = setTimeout(() => setFlashing(false), 1200);
     return () => clearTimeout(timer);
-  }, [cite?.nonce, cite?.page, onPage]);
+  }, [cite?.nonce, cite?.page, navigatePage]);
   useEffect(() => {
     setPending(null);
     setSelectedParagraph(null);
@@ -217,7 +225,6 @@ export function ReaderScreen({
     setPDFLayout(null);
     setSection(null);
     setError('');
-    translations.reset();
     if (!documentKey) return;
     const controller = new AbortController();
     let cancelled = false;
@@ -234,10 +241,14 @@ export function ReaderScreen({
             setSourceText(chapter.text);
           }
         } else if (pdf.document) {
-          const layout = await layoutFromPDF(pdf.document, current);
-          if (!cancelled) {
-            setPDFLayout(layout);
-            setSourceText(layout.blocks.map((block) => block.text).join('\n\n'));
+          // 段落识别直接用 Lee document.v1 的块与坐标，不再用 PDF.js 重新切段。
+          const retained = await api.paragraphs(documentKey, current, controller.signal);
+          if (!cancelled && retained.available) {
+            setPDFLayout(leeLayout(retained));
+            setSourceText(retained.blocks.map((block) => block.text).join('\n\n'));
+          } else if (!cancelled) {
+            setPDFLayout(null);
+            setSourceText('');
           }
         } else {
           const result = await api.page(
@@ -260,7 +271,10 @@ export function ReaderScreen({
   }, [documentKey, current, epub, pdf.document]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setPending(null); setSelectedParagraph(null); }
+      if (event.key === 'Escape') {
+        setPending(null);
+        setSelectedParagraph(null);
+      }
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
@@ -271,6 +285,17 @@ export function ReaderScreen({
     setNote('');
     setTags('');
     setError('');
+  };
+  const openParagraphTranslation = (paragraph: SelectedParagraph) => {
+    if (mode !== 'parallel') return;
+    setPending(null);
+    if (paragraph.kind === 'pdf') {
+      setSelectedParagraph(null);
+      const targetPage = Math.min(paragraph.position, translatedPDF.document?.numPages ?? paragraph.position);
+      navigateTranslationPage(targetPage, paragraph.targetY, paragraph.viewportOffset);
+      return;
+    }
+    setSelectedParagraph(paragraph);
   };
   const create = async (kind: string) => {
     if (!pending || saving) return;
@@ -306,7 +331,9 @@ export function ReaderScreen({
       const chapter = sections.find(
         (value) => value.href === item.locator?.href,
       );
-      if (chapter) onPage(chapter.index);
+      if (chapter) navigatePage(chapter.index);
+    } else if (item?.page && item.locator?.kind === 'pdf') {
+      navigatePage(item.page);
     }
     onFocusAnnotation(id, target);
     setMode((value) => (value === 'translation' ? 'source' : value));
@@ -349,26 +376,25 @@ export function ReaderScreen({
             annotations={annotations.items}
             focusedId={focusedAnnotationId}
             onSelect={select}
-            paragraphMode={paragraphMode}
+            paragraphMode
             onParagraph={(paragraph) => { setPending(null); setSelectedParagraph(paragraph); }}
           />
         ) : (
           <p className="p-6">{error || '加载章节…'}</p>
         )
       ) : pdf.document ? (
-        <PDFPage
+        <PDFDocumentView
           document={pdf.document}
           page={current}
+          onPage={(value) => onPage(Math.min(value, count || value))}
+          navigationRequest={navigationRequest}
           annotations={annotations.items}
           focusedId={focusedAnnotationId}
           onSelect={select}
           onText={() => undefined}
-          headingTarget={headingTarget}
           layout={pdfLayout}
-          paragraphMode={paragraphMode}
-          onParagraph={(paragraph) => { setPending(null); setSelectedParagraph(paragraph); }}
-          visionMode={visionMode}
-          onVisionStatus={handleVisionStatus}
+          paragraphMode
+          onParagraph={openParagraphTranslation}
         />
       ) : (
         <div className="translation-document">
@@ -398,40 +424,26 @@ export function ReaderScreen({
       className="publication-pane"
       style={{ flex: mode === 'parallel' ? `0 0 calc((100% - 1px) * ${(100 - divider) / 100})` : 1 }}
     >
-      {!epub && pdf.document && pdfLayout && translations.phase.kind === 'ready' && translations.activePage === current ? (
-        <PDFPage document={pdf.document} page={current} annotations={[]} focusedId={null}
-          onSelect={select} onText={() => undefined}
-          paragraphMode={paragraphMode}
-          onParagraph={(paragraph) => { setPending(null); setSelectedParagraph(paragraph); }}
-          headingTarget={headingTarget}
-          visionMode={visionMode}
-          onVisionStatus={handleVisionStatus}
-          translation={{ layout: pdfLayout, targets: translations.phase.targets }} />
-      ) : <div className="translation-document">
-        {translations.phase.kind === 'ready' && translations.activePage === current ? (
-          <>
-            <p className="mb-4 text-xs text-ink-faint">
-              AI 译文 · 复用 {translations.phase.cached} 段 / 新译{' '}
-              {translations.phase.newly} 段
-            </p>
-            {translations.phase.targets.map((text, index) => (
-              <section key={index}>
-                <p>{text}</p>
-              </section>
-            ))}
-          </>
-        ) : (
-          <p>
-            {translations.activePage !== null && translations.activePage !== current
-              ? '当前页尚无译文，请点击翻译。'
-              : translations.phase.kind === 'loading'
-              ? '翻译中…'
-              : translations.phase.kind === 'error'
-                ? translations.phase.message
-                : `点击“翻译${epub ? '本章' : '本页'}”开始对照阅读。`}
-          </p>
-        )}
-      </div>}
+      {epub ? (
+        <div className="translation-document">
+          <p>LeePDF 排版译文只适用于 PDF。EPUB 请阅读原文。</p>
+        </div>
+      ) : translatedPDF.document ? (
+        <PDFDocumentView
+          document={translatedPDF.document}
+          page={Math.min(current, translatedPDF.document.numPages)}
+          onPage={(value) => onPage(Math.min(value, count || value))}
+          navigationRequest={translationNavigationRequest}
+          annotations={annotations.items}
+          focusedId={focusedAnnotationId}
+          onSelect={select}
+          onText={() => undefined}
+        />
+      ) : (
+        <div className="translation-document">
+          <p>{translatedPDF.error || '正在加载 LeePDF 译文 PDF…'}</p>
+        </div>
+      )}
     </div>
   );
   return (
@@ -454,22 +466,13 @@ export function ReaderScreen({
           <small>{selected && statusLabel(selected.status)}</small>
         </div>
         <div className="toolbar-actions">
-          <button aria-pressed={paragraphMode} onClick={() => { setParagraphMode((value) => !value); setSelectedParagraph(null); }} title="开启后点击原文段落可翻译或提问，拖选文字仍可批注">段落识别</button>
-          <button
-            aria-pressed={visionMode}
-            onClick={() => { setVisionMode((value) => !value); setVisionStatus({ status: 'idle' }); }}
-            title="用 AI 视觉核对本页版面：只判定段落分组与图注/标题角色，正文仍来自文本层。失败自动回退几何判读。"
-          >
-            AI 版式校正
-          </button>
-          {visionMode ? <small className="text-ink-faint" role="status">{visionStatusLabel(visionStatus)}</small> : null}
           <span className="mode-pills">
             {(['source', 'parallel', 'translation'] as const).map((item) => (
               <button
                 key={item}
                 className="mode-pill"
                 aria-pressed={mode === item}
-                onClick={() => setMode(item)}
+                onClick={() => { setMode(item); navigatePage(current); }}
               >
                 {
                   {
@@ -481,33 +484,42 @@ export function ReaderScreen({
               </button>
             ))}
           </span>
+          {!epub && pdf.document && documentKey ? (
+          <button onClick={() => setExportOpen(true)} title="交给 LeePDF 重新生成整本译文 PDF">
+              导出译文 PDF
+            </button>
+          ) : null}
           <button
-            disabled={
-              !paragraphs.length || (!epub && !pdfLayout) || translations.phase.kind === 'loading'
-            }
+            aria-pressed={rightOpen && tab === 'chat'}
             onClick={() => {
-              if (mode === 'source') setMode('parallel');
-              void translations.translate(current, paragraphs);
+              const shouldOpen = !rightOpen || tab !== 'chat';
+              setTab('chat');
+              setRightOpen(shouldOpen);
+              if (shouldOpen && window.innerWidth < 1000) setLeftOpen(false);
             }}
           >
-            翻译{epub ? '本章' : '本页'}
+            AI 助教
           </button>
-          <button
-            aria-pressed={rightOpen}
-            onClick={() => {
-              setRightOpen((value) => !value);
-              if (window.innerWidth < 1000) setLeftOpen(false);
-            }}
-          >
-            助读
-          </button>
+          {!epub && (
+            <button
+              aria-pressed={rightOpen && tab === 'reading'}
+              onClick={() => {
+                const shouldOpen = !rightOpen || tab !== 'reading';
+                setTab('reading');
+                setRightOpen(shouldOpen);
+                if (shouldOpen && window.innerWidth < 1000) setLeftOpen(false);
+              }}
+            >
+              精读五重奏
+            </button>
+          )}
         </div>
       </header>
       <div className="reader-panels" ref={panelRoot}>
         <aside className="reader-sidebar" data-open={leftOpen} style={{ width: visibleLeft, flexBasis: visibleLeft }}>
           <p className="panel-label">{epub ? '章节目录' : 'PDF 目录与页码'}</p>
           <div className="reader-page-nav">
-            <button disabled={current <= 1} onClick={() => onPage(current - 1)}>
+            <button disabled={current <= 1} onClick={() => navigatePage(current - 1)}>
               上一{epub ? '章' : '页'}
             </button>
             <input
@@ -518,13 +530,13 @@ export function ReaderScreen({
               value={current}
               onChange={(event) => {
                 const value = Number(event.target.value);
-                if (value >= 1 && value <= count) onPage(value);
+                if (value >= 1 && value <= count) navigatePage(value);
               }}
             />
             <span>/ {count || '—'}</span>
             <button
               disabled={current >= count}
-              onClick={() => onPage(current + 1)}
+              onClick={() => navigatePage(current + 1)}
             >
               下一{epub ? '章' : '页'}
             </button>
@@ -537,8 +549,7 @@ export function ReaderScreen({
                     style={{ paddingLeft: 8 + item.depth * 12 }}
                     key={index}
                     onClick={() => {
-                      setHeadingTarget((previous) => ({ page: item.page, y: 'y' in item && typeof item.y === 'number' ? item.y : 0, nonce: (previous?.nonce ?? 0) + 1 }));
-                      onPage(item.page);
+                      navigatePage(item.page, 'y' in item && typeof item.y === 'number' ? item.y : undefined);
                     }}
                   >
                     {item.title}
@@ -548,7 +559,7 @@ export function ReaderScreen({
                   <button
                     key={i}
                     className={`toc-item${i + 1 === current ? ' selected' : ''}`}
-                    onClick={() => onPage(i + 1)}
+                    onClick={() => navigatePage(i + 1)}
                   >
                     Page {i + 1}
                   </button>
@@ -603,9 +614,9 @@ export function ReaderScreen({
             </>
           )}
         </div>
-        <ResizeHandle label="调整助读宽度" value={visibleRight}
+        <ResizeHandle label="调整 AI 助教侧栏宽度" value={visibleRight}
           onStart={() => { const start = visibleRight; return (delta) => resizeRight(start - delta); }}
-          onStep={(delta) => resizeRight(visibleRight - delta)} onReset={() => { setRightWidth(360); setRightOpen(true); }} />
+          onStep={(delta) => resizeRight(visibleRight - delta)} onReset={() => { setRightWidth(440); setRightOpen(true); }} />
         <aside className="assistant-sidebar" data-open={rightOpen} style={{ width: visibleRight, flexBasis: visibleRight }}>
           <AssistantSidebar
             key={documentKey}
@@ -624,7 +635,7 @@ export function ReaderScreen({
       </div>
       {selectedParagraph && documentKey && <ParagraphActions
         key={`${current}-${selectedParagraph.index}-${selectedParagraph.text}`}
-        documentKey={documentKey} paragraph={selectedParagraph}
+        paragraph={selectedParagraph}
         onClose={() => setSelectedParagraph(null)}
         onAsk={() => {
           setRightOpen(true);
@@ -724,6 +735,13 @@ export function ReaderScreen({
           )}
         </div>
       )}
+      {exportOpen && !epub && pdf.document && documentKey ? (
+        <ExportPDFDialog
+          documentKey={documentKey}
+          pageCount={pdf.document.numPages}
+          onClose={() => setExportOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

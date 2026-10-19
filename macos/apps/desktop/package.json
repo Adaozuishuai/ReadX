@@ -1,18 +1,77 @@
 {
   "name": "@cbct/desktop",
-  "version": "0.0.0",
+  "version": "0.1.4",
   "private": true,
   "description": "v2 Electron 壳：负责 Go server 生命周期与本地 token 注入，不含业务逻辑",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "electron ."
+    "start": "electron .",
+    "package:mac": "electron-builder --mac dmg zip --publish never"
   },
   "devDependencies": {
     "@cbct/shared": "0.0.0",
     "@types/node": "^22.0.0",
     "electron": "44.2.0",
     "typescript": "~5.9.2"
+  },
+  "build": {
+    "appId": "com.readx.desktop",
+    "productName": "ReadX",
+    "asar": true,
+    "directories": {
+      "output": "../../release"
+    },
+    "artifactName": "ReadX-${version}-${arch}.${ext}",
+    "files": [
+      "dist/**",
+      "package.json",
+      "icon.icns",
+      "icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../server/bin/server",
+        "to": "server/bin/server"
+      },
+      {
+        "from": "../web/dist",
+        "to": "web/dist"
+      },
+      {
+        "from": "../../.release-staging/resources",
+        "to": "."
+      },
+      {
+        "from": "../../.release-staging/resources/node_modules",
+        "to": "node_modules",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Leechion",
+        "repo": "ReadX",
+        "releaseType": "draft"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.education",
+      "icon": "icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

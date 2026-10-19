@@ -16,13 +16,24 @@ import (
 // 避免把任意键写进 readings 表（旧版 main.ts 也是 kind 白名单）。
 var readingKinds = map[string]bool{"motivation": true, "method": true, "experiment": true, "results": true, "reproduction": true}
 
-// ReadingEntry 是一次生成物的保存形态：原文、降级清单、未核验原因。
-// 三者一起存，界面才能如实标注「哪些字段被降级」「哪份是未核验的」。
+// ReadingEntry keeps readable analysis independent of an optional strict index.
+// Legacy value/demoted/validationError fields remain backward compatible.
 type ReadingEntry struct {
-	Value           string   `json:"value"`
-	Demoted         []string `json:"demoted"`
-	ValidationError *string  `json:"validationError"`
-	UpdatedAt       string   `json:"updatedAt"`
+	Value            string                  `json:"value"`
+	Demoted          []string                `json:"demoted"`
+	ValidationError  *string                 `json:"validationError"`
+	UpdatedAt        string                  `json:"updatedAt"`
+	Provider         string                  `json:"provider,omitempty"`
+	Model            string                  `json:"model,omitempty"`
+	ReasoningEffort  string                  `json:"reasoningEffort,omitempty"`
+	Visuals          []readingVisualAnalysis `json:"visuals,omitempty"`
+	VisualSourceHash string                  `json:"visualSourceHash,omitempty"`
+	Narrative        string                  `json:"narrative,omitempty"`
+	Sections         []paperReadingSection   `json:"narrativeSections,omitempty"`
+	ReaderStatus     string                  `json:"readerStatus,omitempty"`
+	ReaderSourceHash string                  `json:"readerSourceHash,omitempty"`
+	ReaderImageHash  string                  `json:"readerImageHash,omitempty"`
+	ReaderIssues     []string                `json:"readerIssues,omitempty"`
 }
 
 type readingSaveResponse struct {
@@ -76,6 +87,9 @@ func (s *Server) handleReadingPut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entry := ReadingEntry{Demoted: []string{}}
+	if canonical, formatErr := validate.NormalizeJSONObject(body.Value); formatErr == nil {
+		body.Value = canonical
+	}
 	pruned := false
 	if validationErr := validate.ValidateGenerated(kind, body.Value, source); validationErr != nil {
 		if result := validate.PruneGenerated(kind, body.Value, source); result != nil {
@@ -160,6 +174,24 @@ func (s *Server) sourceText(ctx context.Context, key string) (string, error) {
 
 // saveReadingEntry 按 kind 合并进 readings.value_json，保留旧版遗留键不覆盖。
 func (s *Server) saveReadingEntry(ctx context.Context, key, kind string, entry ReadingEntry) error {
+	// Page caches and history are independent rows: opening the workbook does
+	// not download every source page, and each page save stays constant-size.
+	if paperCacheKind(kind) {
+		encoded, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+		result, err := s.handle.ExecContext(ctx, `INSERT INTO app_state(key,value_json,updated_at)
+		 SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM documents WHERE key=?)
+		 ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`, paperCacheKey(key, kind), string(encoded), nowStamp(), key)
+		if err != nil {
+			return err
+		}
+		if count, _ := result.RowsAffected(); count == 0 {
+			return fmt.Errorf("论文已移除，未写入阅读缓存")
+		}
+		return nil
+	}
 	tx, err := s.handle.BeginTx(ctx, nil)
 	if err != nil {
 		return err

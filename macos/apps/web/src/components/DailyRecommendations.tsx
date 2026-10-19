@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
 import { api, type DailyRecommendation } from '../api/client';
-// 与导入对话框一样按需加载：pdf.js 的元数据解析不该进首屏包。
-const readPDFMetadata: typeof import('../api/pdfMetadata').readPDFMetadata = async (...args) =>
-  (await import('../api/pdfMetadata')).readPDFMetadata(...args);
 
 const CACHE_KEY = 'cbct-v2-daily-recommendations';
 type DailyCache = { day: string; fetchedAt: string; papers: DailyRecommendation[] };
@@ -63,17 +60,20 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
     if (!readCache()) void load();
   }, []);
 
+  useEffect(() => () => {
+    // 收起侧栏会卸载本组件：必须中止仍在跑的下载/导入，否则它会继续跑满服务端允许的
+    // 30 分钟，并在卸载后 setState，用户也再找不到「取消导入」按钮。
+    controller.current?.abort();
+    controller.current = null;
+  }, []);
+
   const visible = useMemo(() => {
     const titles = new Set(documents.map((doc) => normalizedTitle(doc.title)));
     const dois = new Set(documents.map((doc) => doc.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//, '')));
     return papers.filter((paper) => !titles.has(normalizedTitle(paper.title)) && (!paper.doi || !dois.has(paper.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//, '')))).slice(0, 5);
   }, [documents, papers]);
 
-  /**
-   * 推荐卡片的导入必须和「选择本地文件 / 从链接导入」走同一条管线：
-   * 先把全文下载到渲染进程、用 pdf.js 抽出版式与段落，再上传给服务端做 AI 元数据识别与全文翻译。
-   * 若图省事直接调 /v1/import/url 一步入库，阅读页只会读到空译文——那里按 cachedOnly 取缓存。
-   */
+  /** 推荐论文下载后走 ReadX 的本地 OCR、翻译与排版流程。 */
   const importPaper = async (paper: DailyRecommendation) => {
     if (!paper.pdfUrl) return;
     // 同一个按钮兼任取消：一次导入要跑完识别＋全文翻译，必须能中途停下。
@@ -90,14 +90,15 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       const downloaded = await api.downloadPublication(paper.pdfUrl, paper.title, current.signal, (received, total) => {
         setProgress(total > 0 ? `正在下载：${Math.round((received / total) * 100)}%` : `正在下载：${Math.round(received / 1048576)} MB`);
       });
-      setProgress('正在解析段落与栏位…');
-      const hint = await readPDFMetadata(downloaded.file, current.signal, (page, total) => setProgress(`正在解析段落与栏位：${page}/${total} 页`));
-      // 卡片已知的题录作为识别种子传下去，避免模型把标题写歪；未知字段仍由模型判定。
-      hint.title = paper.title;
-      hint.doi = paper.doi;
-      hint.author = paper.authors.join(', ');
-      hint.source = downloaded.source;
-      if (!hint.firstPage.trim()) throw new Error('下载文件没有可读取的 PDF 首页，可能是扫描件或登录页，暂无法识别与翻译。');
+      setProgress('正在交给 LeePDF 处理全文…');
+      const hint = {
+        title: paper.title,
+        author: paper.authors.join(', '),
+        doi: paper.doi,
+        arxiv: paper.arxiv ?? '',
+        firstPage: '',
+        source: downloaded.source,
+      };
       const result = await api.upload([downloaded.file], current.signal, [hint], (event) => {
         if (event.progress?.message) setProgress(event.progress.message);
       });
@@ -107,7 +108,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       setProgress(
         imported?.existing
           ? '论文已在书库中，译文已就绪'
-          : `已导入书库：中文题名与全文翻译已保存${imported?.warning ? `（${imported.warning}）` : ''}`,
+          : `已导入书库：LeePDF 译文已保存${imported?.warning ? `（${imported.warning}）` : ''}`,
       );
       onReload();
     } catch (cause) {
@@ -124,10 +125,10 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
 
   return (
     // 侧栏里由外层提供卡片外观与滚动，这里只要一列铺满高度；嵌在列表里时仍是原来的卡片。
-    <section className={embedded ? 'flex h-full min-h-0 flex-col' : 'mb-4 rounded-xl border border-line bg-surface p-3'}>
+    <section className={embedded ? 'recommendations embedded flex h-full min-h-0 flex-col' : 'recommendations mb-4 rounded-xl border border-line bg-surface p-3'}>
       <div className="flex flex-wrap items-center gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-ink">每日论文推荐</h2>
+          {!embedded ? <h2 className="text-sm font-semibold text-ink">每日论文推荐</h2> : null}
           <p className="mt-0.5 text-[11px] text-ink-faint">优先展示 MICCAI、CVPR、ICCV、ECCV、NeurIPS、ICLR、AAAI、TMI 与 Medical Image Analysis</p>
         </div>
         {fetchedAt ? <span className="text-[10px] text-ink-faint">更新于 {fetchedAt.slice(0, 16).replace('T', ' ')}</span> : null}
@@ -139,7 +140,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       {progress ? <p role="status" className="mt-2 text-xs text-accent">{progress}</p> : null}
       <div className={`mt-2 grid gap-2${embedded ? '' : ' xl:grid-cols-2'}`}>
         {visible.map((paper) => (
-          <article key={paper.id} className="rounded-lg border border-line bg-surface-sunk/40 px-3 py-2">
+          <article key={paper.id} className="recommendation-card rounded-lg border border-line bg-surface-sunk/40 px-3 py-2">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <h3 className="text-[13px] font-medium leading-snug text-ink">{paper.title}</h3>

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,6 +21,19 @@ const RequestTimeout = 180 * time.Second
 // its structured output without extending the deadline for other AI actions.
 const ResultsRequestTimeout = 8 * time.Minute
 
+// Codex reasoning-heavy turns need a larger bounded window, and remain cancellable.
+func (c *Client) operationTimeout(requested time.Duration) time.Duration {
+	if c.cfg.ProviderName() == "codex" {
+		switch c.cfg.ReasoningEffort {
+		case "high", "xhigh", "max", "ultra":
+			if requested < 10*time.Minute {
+				return 10 * time.Minute
+			}
+		}
+	}
+	return requested
+}
+
 // Message 是一条对话消息；Role 用 OpenAI 的 system/user/assistant。
 type Message struct {
 	Role    string `json:"role"`
@@ -27,10 +41,11 @@ type Message struct {
 }
 
 type chatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Stream      bool      `json:"stream"`
-	Temperature float64   `json:"temperature"`
+	Model          string    `json:"model"`
+	Messages       []Message `json:"messages"`
+	Stream         bool      `json:"stream"`
+	Temperature    float64   `json:"temperature"`
+	ResponseFormat any       `json:"response_format,omitempty"`
 }
 
 type chatChoice struct {
@@ -53,6 +68,19 @@ type Client struct {
 	cfg     Config
 	http    *http.Client
 }
+
+type transportError struct{ err error }
+
+func (e *transportError) Error() string { return e.err.Error() }
+func (e *transportError) Unwrap() error { return e.err }
+
+type upstreamStatusError struct {
+	status     int
+	message    string
+	retryAfter time.Duration
+}
+
+func (e *upstreamStatusError) Error() string { return e.message }
 
 func NewClient(cfg Config) *Client {
 	// Request deadlines are applied per operation. A fixed http.Client timeout
@@ -98,9 +126,9 @@ func (c *Client) postRaw(ctx context.Context, payload any, timeout time.Duration
 func requestFailure(err error, ctx context.Context, timeout time.Duration) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) ||
 		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return fmt.Errorf("请求超时（%s），未保存，请重试。", timeout.Round(time.Second))
+		return &transportError{err: fmt.Errorf("请求超时（%s），未保存，请重试。", timeout.Round(time.Second))}
 	}
-	return fmt.Errorf("请求失败：%s", err.Error())
+	return &transportError{err: fmt.Errorf("请求失败：%s", err.Error())}
 }
 
 // statusFailure 读取错误响应并脱敏：上游常把 Key 回显在错误体里，直接透传会写进日志与界面。
@@ -118,7 +146,34 @@ func statusFailure(response *http.Response, apiKey string) error {
 	if text != "" {
 		message += "\n服务端返回：" + text
 	}
-	return fmt.Errorf("%s", message)
+	retryAfter := time.Duration(0)
+	if response.StatusCode == http.StatusTooManyRequests {
+		if seconds, err := strconv.Atoi(strings.TrimSpace(response.Header.Get("Retry-After"))); err == nil && seconds > 0 {
+			retryAfter = time.Duration(seconds) * time.Second
+		}
+	}
+	return &upstreamStatusError{status: response.StatusCode, message: message, retryAfter: retryAfter}
+}
+
+// IsTransportError matches LeePDF's retryable transport boundary: network
+// failures and transient upstream statuses may enter the tail retry queue;
+// authentication, quota, request, and response-format failures do not.
+func (c *Client) IsTransportError(err error) bool {
+	var networkErr *transportError
+	if errors.As(err, &networkErr) {
+		return true
+	}
+	var statusErr *upstreamStatusError
+	if errors.As(err, &statusErr) {
+		switch statusErr.status {
+		case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError,
+			http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 529:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // Generate 是非流式生成：结构化精读要整段 JSON，流式拼接无收益。
@@ -129,9 +184,89 @@ func (c *Client) Generate(ctx context.Context, system, user string, temperature 
 // GenerateWithTimeout is the non-streaming JSON generation path with a
 // per-operation deadline.
 func (c *Client) GenerateWithTimeout(ctx context.Context, system, user string, temperature float64, timeout time.Duration) (string, error) {
+	return c.generateWithTimeout(ctx, system, user, temperature, timeout, nil)
+}
+
+// GenerateTranslation applies LeePDF's default single-item translation
+// deadlines. Long source blocks get a larger bounded window; other operations
+// continue using Generate/GenerateWithTimeout and their own limits.
+func (c *Client) GenerateTranslation(ctx context.Context, system, user string, temperature float64, sourceChars int) (string, error) {
+	timeout := 35 * time.Second
+	if sourceChars >= 800 {
+		timeout = 55 * time.Second
+	}
+	if c.usesDeepSeekOfficialEndpoint() {
+		timeout = 20 * time.Second
+		if sourceChars >= 800 {
+			timeout = 30 * time.Second
+		}
+	}
+	return c.GenerateWithTimeout(ctx, system, user, temperature, timeout)
+}
+
+// GenerateTranslationBatch uses LeePDF's bounded tagged-batch deadline.
+func (c *Client) GenerateTranslationBatch(ctx context.Context, system, user string, temperature float64) (string, error) {
+	timeout := 45 * time.Second
+	if c.usesDeepSeekOfficialEndpoint() {
+		timeout = 25 * time.Second
+	}
+	return c.GenerateWithTimeout(ctx, system, user, temperature, timeout)
+}
+
+// GenerateTranslationTail uses LeePDF's extended timeout for the deferred
+// transport retry pass. The official DeepSeek profile caps this at 40 seconds.
+func (c *Client) GenerateTranslationTail(ctx context.Context, system, user string, temperature float64, _ int) (string, error) {
+	timeout := 70 * time.Second
+	if c.usesDeepSeekOfficialEndpoint() {
+		timeout = 40 * time.Second
+	}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		text, err := c.GenerateWithTimeout(ctx, system, user, temperature, timeout)
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		if attempt == 1 || !c.IsTransportError(err) {
+			break
+		}
+		delay := time.Second
+		var statusErr *upstreamStatusError
+		if errors.As(err, &statusErr) && statusErr.retryAfter > 0 {
+			delay = statusErr.retryAfter
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return "", lastErr
+}
+
+func (c *Client) usesDeepSeekOfficialEndpoint() bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(c.cfg.BaseURL)), "api.deepseek.com")
+}
+
+// GenerateStructured requests a strict structured response from OpenAI-compatible providers.
+// Other providers keep their normal response path and rely on the caller's parser.
+func (c *Client) GenerateStructured(ctx context.Context, system, user string, temperature float64, responseFormat any) (string, error) {
+	return c.generateWithTimeout(ctx, system, user, temperature, RequestTimeout, responseFormat)
+}
+
+// GenerateStructuredWithTimeout lets bounded preparation phases preserve their
+// own LeePDF request deadline while using the same strict JSON transport.
+func (c *Client) GenerateStructuredWithTimeout(ctx context.Context, system, user string, temperature float64, timeout time.Duration, responseFormat any) (string, error) {
+	return c.generateWithTimeout(ctx, system, user, temperature, timeout, responseFormat)
+}
+
+func (c *Client) generateWithTimeout(ctx context.Context, system, user string, temperature float64, timeout time.Duration, responseFormat any) (string, error) {
 	if timeout <= 0 {
 		timeout = RequestTimeout
 	}
+	timeout = c.operationTimeout(timeout)
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if c.cfg.ProviderName() != "openai" {
@@ -143,7 +278,8 @@ func (c *Client) GenerateWithTimeout(ctx context.Context, system, user string, t
 			{Role: "system", Content: system},
 			{Role: "user", Content: user},
 		},
-		Temperature: temperature,
+		Temperature:    temperature,
+		ResponseFormat: responseFormat,
 	}
 	response, err := c.post(requestCtx, payload, timeout)
 	if err != nil {
@@ -153,7 +289,7 @@ func (c *Client) GenerateWithTimeout(ctx context.Context, system, user string, t
 
 	body, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
 	if err != nil {
-		return "", fmt.Errorf("读取接口响应失败: %w", err)
+		return "", &transportError{err: fmt.Errorf("读取接口响应失败: %w", err)}
 	}
 	if len(body) > 8<<20 {
 		return "", fmt.Errorf("接口响应超过 8 MiB 上限")
@@ -188,6 +324,7 @@ func (c *Client) StreamWithTimeout(ctx context.Context, messages []Message, temp
 	if timeout <= 0 {
 		timeout = RequestTimeout
 	}
+	timeout = c.operationTimeout(timeout)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if c.cfg.IsCLI() {
@@ -247,13 +384,13 @@ func (c *Client) StreamWithTimeout(ctx context.Context, messages []Message, temp
 		}
 	}
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
-		return full.String(), fmt.Errorf("请求失败：%s", err.Error())
+		return full.String(), &transportError{err: fmt.Errorf("请求失败：%s", err.Error())}
 	}
 	if full.Len() == 0 {
 		return "", fmt.Errorf("（助教没有返回内容，检查 config.json 里的模型名是否正确）")
 	}
 	if !completed {
-		return full.String(), fmt.Errorf("连接中断，回答未完成，未保存，请重试。")
+		return full.String(), &transportError{err: fmt.Errorf("连接中断，回答未完成，未保存，请重试。")}
 	}
 	return full.String(), nil
 }

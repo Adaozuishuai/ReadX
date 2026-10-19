@@ -72,7 +72,7 @@ ReadX 的论文、阅读位置、批注和精读内容保存在本机。使用�
 
 ## 开发者
 
-Windows 开发环境需要 Node.js 20.19+ 和 Go 1.27+：
+Windows 开发环境需要 Node.js 22.8+ 和 Go 1.27+：
 
 ```powershell
 cd windows
@@ -85,6 +85,8 @@ npm run dev
 ```powershell
 npm run build
 ```
+
+macOS 已同步核心源码并提供本机开发及打包入口，见 [`macos/README.md`](macos/README.md)。源码一致性规则见 [`docs/architecture.md`](docs/architecture.md)。本仓库的现有公开下载说明仍以 Windows Release 为准。
 
 完整的 Windows 功能、AI 接入、数据位置和构建说明见 [`windows/README.md`](windows/README.md)。
 
@@ -115,7 +117,7 @@ Download the Windows installer from [the latest GitHub Release](https://github.c
 
 ### Build from source
 
-Requires Node.js 20.19+ and Go 1.27+.
+Requires Node.js 22.8+ and Go 1.27+.
 
 ```powershell
 cd windows

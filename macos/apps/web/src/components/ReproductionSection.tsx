@@ -140,7 +140,7 @@ export function ReproductionSection({
       }
       const result = await api.repoChecks(files);
       setRepoChecks(result.checks);
-      setMessage(`仓库核对：识别出 ${result.checks.length} 项（仅提示，需人工确认）。`);
+      setMessage(`仓库核对：识别出 ${result.checks.length} 项。`);
     } catch (cause) {
       setMessage(`扫描失败：${cause instanceof Error ? cause.message : String(cause)}`);
     }
@@ -212,16 +212,12 @@ export function ReproductionSection({
             </button>
             {message ? <span className="text-[12px] leading-relaxed text-ink-soft">{message}</span> : null}
           </div>
-          <p className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
-            校验要求：每组 1–4 项、标题不重复、字段/分析/核对行动都不为空；「论文原文」字段必须有页码与逐字摘录；
-            分析与行动里引用的 Page N 必须真实存在。未知项（page: null）仍必须给出核对行动。
-          </p>
         </section>
 
         {analysis ? (
           <section className="card-surface rounded-card px-4 py-3">
             <p className="text-[12px] text-ink-soft">
-              共 {allItems.length} 项，其中 {unknownCount} 项为未知（需人工核对）。未知不计入「已确认」。
+              共 {allItems.length} 项，其中 {unknownCount} 项为未知。
             </p>
             <div className="mt-2 space-y-3">
               {GROUPS.map((group) => {
@@ -284,16 +280,12 @@ export function ReproductionSection({
           </section>
         ) : (
           <section className="card-surface rounded-card px-4 py-6 text-center">
-            <p className="text-[13px] leading-relaxed text-ink-soft">还没有复现分析。粘贴 AI 产出的 JSON 后点「校验并保存」。</p>
+            <p className="text-[13px] leading-relaxed text-ink-soft">暂无复现分析</p>
           </section>
         )}
 
         <section className="card-surface rounded-card px-4 py-3">
           <h3 className="text-[13px] font-semibold">仓库依赖核对（R-11）</h3>
-          <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">
-            粘贴代码快照：每行一个文件路径，其后缩进行为该文件内容（也可只贴依赖文件）。
-            扫描只做规则匹配——不执行仓库代码、不发网络请求，结果仅作核对提示。
-          </p>
           <textarea
             value={snapshot}
             onChange={(event) => setSnapshot(event.target.value)}

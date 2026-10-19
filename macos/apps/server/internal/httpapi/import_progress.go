@@ -18,6 +18,8 @@ type importProgress struct {
 	Files     int    `json:"files,omitempty"`
 	Completed int    `json:"completed"`
 	Total     int    `json:"total"`
+	// JobKey 让前端在文件刚进篮筐时就打开任务面板并轮询 /job（OCR/翻译/渲染）。
+	JobKey string `json:"jobKey,omitempty"`
 }
 
 // JSON remains available to existing clients. SSE carries real work counters;

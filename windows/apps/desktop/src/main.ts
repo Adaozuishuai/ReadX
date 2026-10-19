@@ -31,6 +31,15 @@ let server: ServerHandle | null = null;
 let allowedOrigin = '';
 let stopping = false;
 let stopRequested = false;
+let recoveringServer = false;
+let fatalServerDialog = false;
+const restartTimes: number[] = [];
+
+// Keep source launches and the packaged macOS app on the same persistent library.
+if (process.platform === 'darwin' && !process.env.CBCT_DATA_ROOT) {
+  app.setName('ReadX');
+  app.setPath('userData', path.join(app.getPath('appData'), 'ReadX'));
+}
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -95,6 +104,7 @@ async function bootstrap(): Promise<void> {
     // 先拦住退出：子进程没关干净就 quit，会留下占着 SQLite 与端口的孤儿进程。
     event.preventDefault();
     stopRequested = true;
+    stopping = true;
     void stopServer().finally(() => {
       stopping = true;
       app.quit();
@@ -128,10 +138,10 @@ function setupUpdater(): void {
   }));
 
   ipcMain.handle('readx-updates:check', async (): Promise<DesktopUpdateStatus> => {
-    if (!app.isPackaged || process.platform !== 'win32') {
+    if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform)) {
       return {
         state: 'unsupported', currentVersion: app.getVersion(),
-        message: process.platform !== 'win32' ? '应用内更新目前仅支持 Windows 桌面版。' : '本地开发版不能自动替换代码，请安装桌面版后检查更新。',
+        message: '请使用已发布的 Windows 或 macOS 安装版检查更新；开发版不会自动替换源码。',
       };
     }
     try {
@@ -150,8 +160,8 @@ function setupUpdater(): void {
   });
 
   ipcMain.handle('readx-updates:download', async (): Promise<DesktopUpdateStatus> => {
-    if (!app.isPackaged || process.platform !== 'win32') {
-      return { state: 'unsupported', currentVersion: app.getVersion(), message: '请在 Windows 桌面安装版中下载更新。' };
+    if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform)) {
+      return { state: 'unsupported', currentVersion: app.getVersion(), message: '请在已发布的桌面安装版中下载更新。' };
     }
     if (!availableUpdateVersion) {
       return { state: 'error', currentVersion: app.getVersion(), message: '请先检查是否有可用更新。' };
@@ -167,7 +177,7 @@ function setupUpdater(): void {
   });
 
   ipcMain.handle('readx-updates:install', () => {
-    if (!app.isPackaged || process.platform !== 'win32' || !downloadedUpdateReady) return;
+    if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform) || !downloadedUpdateReady) return;
     autoUpdater.quitAndInstall(true, true);
   });
 }
@@ -186,7 +196,7 @@ function releaseNotesText(notes: UpdateInfo['releaseNotes']): string | undefined
     .join('\n\n') || undefined;
 }
 
-async function startServer(): Promise<ServerHandle> {
+async function startServer(previous?: ReadyInfo): Promise<ServerHandle> {
   // attached 模式：dev.mjs 已经起了 server（Vite proxy 要读它的 dev-info.json），壳只连接。
   if (process.env.CBCT_V2_ATTACH === '1') {
     const info = readDevInfo();
@@ -198,12 +208,16 @@ async function startServer(): Promise<ServerHandle> {
 
   const binary = serverBinary();
   const args: string[] = ['--exit-on-stdin-eof'];
+  if (previous) args.push('--port', String(previous.port));
   // Packaged installs keep the user's library/config outside Program Files;
   // development still defaults to the repository root via the Go server.
   const dataRoot = process.env.CBCT_DATA_ROOT || app.getPath('userData');
   args.push('--data-root', dataRoot);
 
-  const webDist = path.resolve(app.getAppPath(), '..', 'web', 'dist');
+  fs.mkdirSync(dataRoot, { recursive: true });
+  const webDist = app.isPackaged
+    ? path.join(process.resourcesPath, 'web', 'dist')
+    : path.resolve(app.getAppPath(), '..', 'web', 'dist');
   // dev 下前端由 Vite 提供；只有直接跑壳（npm start / 打包）才让 server 托管静态页。
   if (!process.env.ELECTRON_START_URL && fs.existsSync(webDist)) args.push('--static', webDist);
 
@@ -211,20 +225,31 @@ async function startServer(): Promise<ServerHandle> {
     cwd: dataRoot ?? app.getAppPath(),
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-    env: { ...renderEnvironment(), CBCT_DATA_ROOT: dataRoot },
+    env: { ...renderEnvironment(), CBCT_DATA_ROOT: dataRoot, CBCT_SERVER_TOKEN: previous?.token || '' },
   });
 
+  let stderrTail = '';
   child.stderr?.setEncoding('utf8');
-  child.stderr?.on('data', (chunk: string) => process.stderr.write(`[server] ${chunk}`));
+  child.stderr?.on('data', (chunk: string) => {
+    stderrTail = (stderrTail + chunk).slice(-4000);
+    process.stderr.write(`[server] ${chunk}`);
+  });
   child.stdout?.setEncoding('utf8');
   child.on('error', (error) => {
-    if (!stopping) void reportServerLost(`无法启动 ${binary}：${error.message}`);
+    logLifecycle(`后端进程错误：${error.message}`);
   });
 
-  const info = await waitForReady(child);
+  let info: ReadyInfo;
+  try {
+    info = await waitForReady(child);
+  } catch (error) {
+    child.kill();
+    await waitForExit(child, SHUTDOWN_GRACE_MS);
+    throw error;
+  }
   child.on('exit', (code, signal) => {
-    if (stopping) return;
-    void reportServerLost(`Go server 意外退出（code=${code ?? 'null'} signal=${signal ?? 'none'}）`);
+    if (stopping || stopRequested) return;
+    void recoverServer(child, `Go server 意外退出（code=${code ?? 'null'} signal=${signal ?? 'none'}）\n${stderrTail.trim()}`);
   });
   return { info, child };
 }
@@ -238,14 +263,25 @@ function renderEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   if (process.resourcesPath) {
     env.READX_RESOURCES_DIR = process.resourcesPath;
-    const portablePython = path.join(process.resourcesPath, 'python', 'python.exe');
+    const portablePython = path.join(process.resourcesPath, 'python', ...(process.platform === 'win32' ? ['python.exe'] : ['bin', 'python3']));
     if (fs.existsSync(portablePython)) env.READX_PYTHON = portablePython;
-    const bundledTypst = path.join(process.resourcesPath, 'typst', 'typst.exe');
+    const bundledTypst = path.join(process.resourcesPath, 'typst', process.platform === 'win32' ? 'typst.exe' : 'typst');
     if (fs.existsSync(bundledTypst)) env.TYPST_BIN = bundledTypst;
   }
-  const windowsRoot = path.resolve(app.getAppPath(), '..', '..');
+  const workspaceRoot = path.resolve(app.getAppPath(), '..', '..');
+  // Finder launches omit Homebrew and user CLI locations. Preserve explicit PATH first.
+  if (process.platform === 'darwin') {
+    env.PATH = [env.PATH, '/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.npm-global', 'bin')].filter(Boolean).join(path.delimiter);
+  }
+  if (!env.READX_PYTHON && !app.isPackaged) {
+    const python = path.join(workspaceRoot, '.retain-runtime', ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python3']));
+    if (fs.existsSync(python)) env.READX_PYTHON = python;
+  }
+  env.READX_WORKSPACE_DIR = workspaceRoot;
+  const devTypst = path.join(workspaceRoot, '.retain-runtime', 'typst', process.platform === 'win32' ? 'typst.exe' : 'typst');
+  if (!env.TYPST_BIN && fs.existsSync(devTypst)) env.TYPST_BIN = devTypst;
   const candidates = [
-    path.join(windowsRoot, 'resources', 'rendering-engine'),
+    path.join(workspaceRoot, 'resources', 'rendering-engine'),
     path.join(process.resourcesPath ?? '', 'resources', 'rendering-engine'),
     path.join(process.resourcesPath ?? '', 'rendering-engine'),
   ];
@@ -259,14 +295,15 @@ function renderEnvironment(): NodeJS.ProcessEnv {
   const packagedScript = path.join(process.resourcesPath ?? '', 'scripts', 'render-translated-pdf.cjs');
   const script = fs.existsSync(packagedScript)
     ? packagedScript
-    : path.join(windowsRoot, 'scripts', 'render-translated-pdf.cjs');
+    : path.join(workspaceRoot, 'scripts', 'render-translated-pdf.cjs');
   if (fs.existsSync(script)) env.CBCT_RENDER_SCRIPT = script;
   env.CBCT_NODE_BIN = process.execPath;
   env.CBCT_ELECTRON_AS_NODE = '1';
   return env;
 }
 
-function waitForReady(child: ChildProcessWithoutNullStreams): Promise<ReadyInfo> {  const stdout = child.stdout;
+function waitForReady(child: ChildProcessWithoutNullStreams): Promise<ReadyInfo> {
+  const stdout = child.stdout;
   if (!stdout) return Promise.reject(new Error('Go server 没有 stdout 管道，无法读取就绪信息'));
 
   return new Promise<ReadyInfo>((resolve, reject) => {
@@ -285,11 +322,13 @@ function waitForReady(child: ChildProcessWithoutNullStreams): Promise<ReadyInfo>
       reject(new Error('Go server 在打印就绪信息前就退出了，请查看 [server] 日志'));
     };
     stdout.once('close', onClose);
+    child.once('error', reject);
 
     lines.on('line', (line) => {
       if (!line.startsWith(READY_PREFIX)) return;
       clearTimeout(timer);
       stdout.removeListener('close', onClose);
+      child.removeListener('error', reject);
       lines.close();
       try {
         resolve(JSON.parse(line.slice(READY_PREFIX.length)) as ReadyInfo);
@@ -323,9 +362,59 @@ function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): 
   });
 }
 
-async function reportServerLost(message: string): Promise<void> {
-  stopping = true;
-  await dialog.showMessageBox({ type: 'error', message: '本地服务已停止', detail: message });
+function logLifecycle(message: string): void {
+  // Never log READY/stdout: it contains the ephemeral bearer token.
+  console.error(`[desktop] ${message}`);
+  try {
+    const logDir = path.join(process.env.CBCT_DATA_ROOT || app.getPath('userData'), 'app', 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    const file = path.join(logDir, 'desktop.log');
+    if (fs.existsSync(file) && fs.statSync(file).size > 1024 * 1024) {
+      fs.renameSync(file, `${file}.previous`);
+    }
+    fs.appendFileSync(file, `${new Date().toISOString()} ${message}\n`, { mode: 0o600 });
+  } catch { /* Logging must never take down the desktop process. */ }
+}
+
+async function recoverServer(child: ChildProcessWithoutNullStreams, reason: string): Promise<void> {
+  if (stopping || stopRequested || recoveringServer || server?.child !== child) return;
+  recoveringServer = true;
+  logLifecycle(reason);
+  const previous = server.info;
+  mainWindow?.setTitle('ReadX · 正在重新连接本地服务');
+  try {
+    while (!stopping && !stopRequested) {
+      const now = Date.now();
+      while (restartTimes.length && now - restartTimes[0]! > 60_000) restartTimes.shift();
+      if (restartTimes.length >= 3) break;
+      restartTimes.push(now);
+      await new Promise(resolve => setTimeout(resolve, 300 * restartTimes.length));
+      if (stopping || stopRequested) return;
+      try {
+        // Preserve the origin/token so the open reader can continue using its API.
+        const replacement = await startServer(previous);
+        if (stopping || stopRequested) {
+          replacement.child?.stdin.end();
+          return;
+        }
+        server = replacement;
+        mainWindow?.setTitle('ReadX');
+        logLifecycle('本地服务已自动恢复');
+        return;
+      } catch (error) {
+        logLifecycle(`重启后端失败：${describe(error)}`);
+      }
+    }
+  } finally {
+    recoveringServer = false;
+  }
+  if (stopping || stopRequested || fatalServerDialog) return;
+  fatalServerDialog = true;
+  logLifecycle('一分钟内已尝试重启三次，停止自动重试');
+  await dialog.showMessageBox({
+    type: 'error', message: '本地服务连续退出',
+    detail: `${reason}\n已尝试自动恢复。请重新启动应用；退出信息保存在数据目录 app/logs/desktop.log。`,
+  });
   app.quit();
 }
 
@@ -344,7 +433,7 @@ function createWindow(): void {
     title: 'ReadX',
     // 应用图标（书页 + 锥束射线母题）：dist/main.js 的 __dirname 是 apps/desktop/dist，
     // ico 放在 apps/desktop/ 下，源码运行与打包后都按这个相对位置解析。
-    icon: path.join(__dirname, '..', 'icon.ico'),
+    icon: path.join(__dirname, '..', process.platform === 'darwin' ? 'icon.png' : 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -398,6 +487,7 @@ function serverBinary(): string {
   const candidates = [
     process.env.CBCT_V2_SERVER,
     path.resolve(app.getAppPath(), '..', 'server', 'bin', name),
+    process.resourcesPath ? path.join(process.resourcesPath, 'server', 'bin', name) : '',
     process.resourcesPath ? path.join(process.resourcesPath, 'bin', name) : '',
   ].filter((item): item is string => Boolean(item));
 

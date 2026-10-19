@@ -23,3 +23,10 @@ config.json
 !config.example.json
 *.bak
 *.lnk
+
+# Vendored CLI entrypoints are source, not build output.
+!resources/rendering-engine/engine/bin/
+!resources/rendering-engine/engine/bin/*.js
+!vendor/retainpdf/backend/rendering-engine/engine/bin/
+!vendor/retainpdf/backend/rendering-engine/engine/bin/*.js
+vendor/retainpdf/data/

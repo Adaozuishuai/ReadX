@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { prepareServerRuntime } from './server-runtime.mjs';
 import { runGo, v2Paths } from './go.mjs';
 
 const rebuild = process.argv.includes('--force');
@@ -9,6 +10,7 @@ if (!rebuild && fs.existsSync(v2Paths.serverBin)) {
   const binaryTime = fs.statSync(v2Paths.serverBin).mtimeMs;
   const newer = listGoSources().find((file) => fs.statSync(file).mtimeMs > binaryTime);
   if (!newer) {
+    prepareServerRuntime(v2Paths.serverBin);
     console.log(`server 已是最新：${v2Paths.serverBin}`);
     process.exit(0);
   }
@@ -21,6 +23,7 @@ if (result.status !== 0) {
   console.error(`go build 失败（exit ${result.status}）`);
   process.exit(result.status ?? 1);
 }
+prepareServerRuntime(v2Paths.serverBin);
 console.log(`构建完成：${v2Paths.serverBin}（${result.go.version}）`);
 
 function listGoSources() {

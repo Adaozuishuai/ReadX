@@ -54,7 +54,7 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 	set.StringVar(&o.host, "host", "127.0.0.1", "监听地址，只允许回环")
 	set.IntVar(&o.port, "port", 0, "监听端口，0 表示让系统分配")
 	set.StringVar(&o.dataRoot, "data-root", "", "数据根目录（默认使用 v2 仓库根目录，兼容已有 queue.json / papers/）")
-	set.StringVar(&o.token, "token", "", "本地 bearer token，留空则随机生成")
+	set.StringVar(&o.token, "token", os.Getenv("CBCT_SERVER_TOKEN"), "本地 bearer token，留空则随机生成")
 	set.StringVar(&o.staticDir, "static", "", "前端构建产物目录（apps/web/dist），留空则只提供 API")
 	set.StringVar(&o.devInfoPath, "dev-info", "", "把就绪信息写入该 JSON 文件，供 Vite dev proxy 读取")
 	set.BoolVar(&o.exitOnStdinEOF, "exit-on-stdin-eof", false, "stdin 关闭（父进程退出）即停机，避免孤儿进程")

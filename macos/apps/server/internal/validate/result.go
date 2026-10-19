@@ -76,12 +76,9 @@ var resultsArrayKeys = []string{"tables", "stability", "ablation", "generalizati
 // DecodeResultsAnalysis 与 TS decodeResultsAnalysis 一致：去围栏、解析、检查必需数组字段。
 // 缺字段在解码期就报错，而不是让后续校验崩在 nil 切片上。
 func DecodeResultsAnalysis(raw string) (ResultsAnalysis, error) {
-	text := strings.TrimSpace(raw)
-	if strings.HasPrefix(text, "```") {
-		lines := strings.Split(text, "\n")
-		if len(lines) >= 2 {
-			text = strings.Join(lines[1:len(lines)-1], "\n")
-		}
+	text, formatErr := NormalizeJSONObject(raw)
+	if formatErr != nil {
+		return ResultsAnalysis{}, fmt.Errorf("结果分析不是合法 JSON：%w", formatErr)
 	}
 	var probe any
 	if err := json.Unmarshal([]byte(text), &probe); err != nil {

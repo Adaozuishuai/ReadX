@@ -22,6 +22,7 @@ export function LibraryCard({
   categories,
   selected,
   onSelect,
+  onRetranslate,
   onOpenReproduction,
   onToggleTrash,
   onSetShelves,
@@ -31,6 +32,7 @@ export function LibraryCard({
   categories: Category[];
   selected: boolean;
   onSelect: () => void;
+  onRetranslate: () => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: () => Promise<unknown>;
   onSetShelves: (categories: string[]) => Promise<unknown>;
@@ -55,7 +57,6 @@ export function LibraryCard({
         </span>
         <span className="cover-text">
           <span className="cover-title">{doc.title || '（无标题）'}</span>
-          {doc.translatedTitle && <span className="cover-translation">{doc.translatedTitle}</span>}
           <span className="cover-author">
             {doc.authors[0] ?? '作者未知'}
             {doc.authors.length > 1 ? ' 等' : ''}
@@ -69,7 +70,7 @@ export function LibraryCard({
       </div>
 
       <div className="book-meta">
-        <span className="book-title">{doc.title || '（无标题）'}</span>
+        <span className="book-title" title={doc.translatedTitle || doc.title}>{doc.translatedTitle || doc.title || '（无标题）'}</span>
         <span className="flex items-center gap-1">
           {meta?.favorite ? <span className="text-accent">★</span> : null}
           <button
@@ -84,8 +85,8 @@ export function LibraryCard({
       </div>
 
       <div className="book-status">
-        <span>{statusLabel(doc.status)}</span>
-        <span>{doc.venue || ''}</span>
+        <span className="book-status-badge" data-status={doc.status}>{statusLabel(doc.status)}</span>
+        <span title={doc.venue}>{doc.venue || ''}</span>
       </div>
 
       {categories.length ? (
@@ -137,18 +138,14 @@ export function LibraryCard({
         </details>
       ) : null}
 
-      <div className="book-progress">
-        <div
-          style={{
-            width:
-              doc.status === 'done'
-                ? '100%'
-                : doc.status === 'reading'
-                  ? '45%'
-                  : '0%',
-          }}
-        />
-      </div>
+      {doc.format !== 'epub' && doc.hasPdf ? (
+        <div className="book-card-footer">
+          <button type="button" className="book-retranslate-button" onClick={onRetranslate}>
+            <span aria-hidden="true">↻</span> 重新翻译
+          </button>
+        </div>
+      ) : null}
+
     </article>
   );
 }

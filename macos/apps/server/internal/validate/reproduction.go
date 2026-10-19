@@ -48,12 +48,9 @@ func ReproductionGroups(x ReproductionAnalysis) []struct {
 // DecodeReproductionAnalysis 与 TS 一致：解码期就检查五组是否齐全且为数组，
 // 否则「模型少给一组」会变成后续 nil 切片上的崩溃而不是可读错误。
 func DecodeReproductionAnalysis(raw string) (ReproductionAnalysis, error) {
-	text := strings.TrimSpace(raw)
-	if strings.HasPrefix(text, "```") {
-		lines := strings.Split(text, "\n")
-		if len(lines) >= 2 {
-			text = strings.Join(lines[1:len(lines)-1], "\n")
-		}
+	text, formatErr := NormalizeJSONObject(raw)
+	if formatErr != nil {
+		return ReproductionAnalysis{}, fmt.Errorf("复现分析不是合法 JSON：%w", formatErr)
 	}
 	var probe any
 	if err := json.Unmarshal([]byte(text), &probe); err != nil {

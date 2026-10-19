@@ -9,15 +9,18 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
 type Config struct {
-	Provider string `json:"provider,omitempty"`
-	BaseURL  string `json:"baseURL"`
-	Model    string `json:"model"`
-	APIKey   string `json:"apiKey"`
+	Provider               string `json:"provider,omitempty"`
+	BaseURL                string `json:"baseURL"`
+	Model                  string `json:"model"`
+	APIKey                 string `json:"apiKey"`
+	ReasoningEffort        string `json:"reasoningEffort,omitempty"`
+	TranslationPreparation string `json:"translationPreparation,omitempty"`
+	tempRoot               string
 }
 
 func (c Config) ProviderName() string {
@@ -30,7 +33,6 @@ func (c Config) IsCLI() bool {
 	p := c.ProviderName()
 	return p == "codex" || p == "claude" || p == "kimi"
 }
-func CLIAvailable(name string) bool { _, err := exec.LookPath(name); return err == nil }
 
 // PlaceholderMarker 与旧版一致：配置文件里留的中文占位符不算已配置。
 const PlaceholderMarker = "在这里填入"
@@ -48,6 +50,9 @@ func LoadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(body, &cfg); err != nil {
 		return Config{}, fmt.Errorf("app/config.json 不是合法 JSON: %w", err)
 	}
+	// Keep request scratch files beside application data, where the local server
+	// has write access even if Windows denies access to the global temp folder.
+	cfg.tempRoot = filepath.Join(filepath.Dir(path), "data", "v2", "tmp")
 	return cfg, nil
 }
 
@@ -110,11 +115,12 @@ func (c Config) ModelName() string {
 
 // Redacted 是给界面看的配置状态：只有「是否配置 + 模型 + 地址主机」，永不含 key。
 type Redacted struct {
-	Provider   string `json:"provider"`
-	Configured bool   `json:"configured"`
-	Model      string `json:"model"`
-	Host       string `json:"host"`
-	Error      string `json:"error,omitempty"`
+	Provider        string `json:"provider"`
+	Configured      bool   `json:"configured"`
+	Model           string `json:"model"`
+	Host            string `json:"host"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 func (c Config) Redact() Redacted {
@@ -122,6 +128,9 @@ func (c Config) Redact() Redacted {
 		message := "请在 AI 设置中配置地址、模型和 Key"
 		if c.IsCLI() {
 			message = "未找到 " + c.ProviderName() + " CLI，请先安装并在终端登录"
+			if c.ProviderName() == "codex" {
+				message = "未找到 Codex Desktop 或 CLI，请先安装并登录 Codex"
+			}
 		}
 		return Redacted{Provider: c.ProviderName(), Configured: false, Error: message}
 	}
@@ -129,5 +138,5 @@ func (c Config) Redact() Redacted {
 	if u, err := url.Parse(c.BaseURL); err == nil {
 		host = u.Host
 	}
-	return Redacted{Provider: c.ProviderName(), Configured: true, Model: c.ModelName(), Host: host}
+	return Redacted{Provider: c.ProviderName(), Configured: true, Model: c.ModelName(), ReasoningEffort: c.ReasoningEffort, Host: host}
 }

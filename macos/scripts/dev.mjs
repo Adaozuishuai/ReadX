@@ -13,6 +13,8 @@ import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
 import { runGo, v2Paths } from './go.mjs';
+import { runtimeEnvironment } from './platform-runtime.mjs';
+import { prepareServerRuntime } from './server-runtime.mjs';
 
 const built = process.argv.includes('--built');
 const VITE_PORT = Number(process.env.CBCT_VITE_PORT ?? 5183);
@@ -42,7 +44,7 @@ async function main() {
       await runNpm(['run', 'build', '-w', '@cbct/web'], v2Paths.root);
     }
     // 托管模式：server 由 Electron 壳负责拉起与回收，编排脚本只启动壳。
-    await launchDesktop({ ELECTRON_START_URL: '' });
+    await launchDesktop({ ELECTRON_START_URL: '', CBCT_V2_SERVER: prepareServerRuntime(v2Paths.serverBin) });
     return;
   }
 
@@ -73,9 +75,9 @@ function buildServer() {
 
 function startServer() {
   const child = spawn(
-    v2Paths.serverBin,
+    prepareServerRuntime(v2Paths.serverBin),
     ['--exit-on-stdin-eof', '--dev-info', v2Paths.devInfo, '--port', '0'],
-    { stdio: ['pipe', 'pipe', 'inherit'], cwd: v2Paths.serverDir, windowsHide: true, env: process.env },
+    { stdio: ['pipe', 'pipe', 'inherit'], cwd: v2Paths.serverDir, windowsHide: true, env: runtimeEnvironment(v2Paths.root) },
   );
   track(child, 'server');
 

@@ -1,3 +1,5 @@
+> 历史实现记录。当前双端架构与验证入口以 `../../docs/architecture.md` 和 `../README.md` 为准；下文不能作为本次 macOS 验收结果。
+
 # Feature Specification — Figure-aware five-step reading
 
 - **Target:** Improve v2 paper ingestion so malformed paragraph-translation JSON cannot discard a paper, parallelize translation batches, and report any untranslated text. Preserve caption-indexed high-resolution figure/table crops, five-step analysis, LaTeX formulas, Times New Roman app digits, and live generation progress.
