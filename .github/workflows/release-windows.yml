@@ -1,0 +1,53 @@
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Build ReadX Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: windows/apps/server/go.mod
+          cache-dependency-path: windows/apps/server/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19'
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install JavaScript dependencies
+        working-directory: windows
+        run: npm ci
+
+      - name: Build self-contained installer
+        working-directory: windows
+        run: npm run build:release
+
+      - name: Publish installer to GitHub Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $artifact = Get-ChildItem windows/release/ReadX-Setup-*.exe | Select-Object -First 1
+          if (-not $artifact) { throw 'ReadX installer artifact was not produced.' }
+          gh release create $env:RELEASE_TAG $artifact.FullName --title "ReadX $env:RELEASE_TAG" --generate-notes

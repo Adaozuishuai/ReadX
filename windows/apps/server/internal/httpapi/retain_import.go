@@ -93,6 +93,12 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 		return "", err
 	}
 	backendRoot := filepath.Join(s.cfg.DataRoot, "windows", "vendor", "retainpdf", "backend")
+	if resourcesRoot := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resourcesRoot != "" {
+		candidate := filepath.Join(resourcesRoot, "vendor", "retainpdf", "backend")
+		if _, statErr := os.Stat(filepath.Join(candidate, "pipeline", "retainpdf_pipeline", "entrypoints", "console.py")); statErr == nil {
+			backendRoot = candidate
+		}
+	}
 	if _, err := os.Stat(filepath.Join(backendRoot, "pipeline", "retainpdf_pipeline", "entrypoints", "console.py")); err != nil {
 		// Development and installed desktop layouts have different app roots.
 		if executable, exeErr := os.Executable(); exeErr == nil {
@@ -179,6 +185,11 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 	env = setEnv(env, "RETAIN_PADDLE_API_TOKEN", ocrConfig.Token)
 	env = setEnv(env, "READX_RETAIN_TRANSLATION_API_KEY", translationAPIKey)
 	resourceRoot := filepath.Join(s.cfg.DataRoot, "windows", "resources")
+	if resources := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resources != "" {
+		if _, statErr := os.Stat(filepath.Join(resources, "rendering-engine", "engine", "bin", "rpr-retain.js")); statErr == nil {
+			resourceRoot = resources
+		}
+	}
 	if _, err := os.Stat(filepath.Join(resourceRoot, "rendering-engine", "engine", "bin", "rpr-retain.js")); err != nil {
 		if sourceRoot := retainSourceRoot(); sourceRoot != "" {
 			resourceRoot = filepath.Join(sourceRoot, "resources")
@@ -191,6 +202,12 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 	}
 	if runtime.GOOS == "windows" {
 		nodeModules := filepath.Join(s.cfg.DataRoot, "windows", "node_modules")
+		if resources := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resources != "" {
+			candidate := filepath.Join(resources, "node_modules")
+			if _, statErr := os.Stat(candidate); statErr == nil {
+				nodeModules = candidate
+			}
+		}
 		if _, err := os.Stat(nodeModules); err != nil {
 			if sourceRoot := retainSourceRoot(); sourceRoot != "" {
 				nodeModules = filepath.Join(sourceRoot, "node_modules")
@@ -416,7 +433,14 @@ func retainPipelinePython(dataRoot string) (string, []string, string, error) {
 		if err != nil {
 			return "", nil, "", fmt.Errorf("READX_PYTHON 指定的 Python 不可用: %w", err)
 		}
-		return path, nil, "", nil
+		sitePackages := ""
+		if resourcesRoot := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resourcesRoot != "" {
+			candidate := filepath.Join(resourcesRoot, "python", "Lib", "site-packages")
+			if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+				sitePackages = candidate
+			}
+		}
+		return path, nil, sitePackages, nil
 	}
 	candidates := []string{
 		filepath.Join(dataRoot, "windows", ".retain-runtime", "Scripts", "python.exe"),
@@ -433,6 +457,12 @@ func retainPipelinePython(dataRoot string) (string, []string, string, error) {
 			// 加进 PYTHONPATH，既保留依赖又避免低完整性限制。
 			base, site := venvBasePython(candidate)
 			return base, nil, site, nil
+		}
+	}
+	if resourcesRoot := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resourcesRoot != "" {
+		candidate := filepath.Join(resourcesRoot, "python", "python.exe")
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil, filepath.Join(resourcesRoot, "python", "Lib", "site-packages"), nil
 		}
 	}
 	if runtime.GOOS == "windows" {

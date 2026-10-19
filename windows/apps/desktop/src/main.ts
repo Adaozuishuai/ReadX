@@ -110,8 +110,10 @@ async function startServer(): Promise<ServerHandle> {
 
   const binary = serverBinary();
   const args: string[] = ['--exit-on-stdin-eof'];
-  const dataRoot = process.env.CBCT_DATA_ROOT;
-  if (dataRoot) args.push('--data-root', dataRoot);
+  // Packaged installs keep the user's library/config outside Program Files;
+  // development still defaults to the repository root via the Go server.
+  const dataRoot = process.env.CBCT_DATA_ROOT || app.getPath('userData');
+  args.push('--data-root', dataRoot);
 
   const webDist = path.resolve(app.getAppPath(), '..', 'web', 'dist');
   // dev 下前端由 Vite 提供；只有直接跑壳（npm start / 打包）才让 server 托管静态页。
@@ -121,7 +123,7 @@ async function startServer(): Promise<ServerHandle> {
     cwd: dataRoot ?? app.getAppPath(),
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-    env: renderEnvironment(),
+    env: { ...renderEnvironment(), CBCT_DATA_ROOT: dataRoot },
   });
 
   child.stderr?.setEncoding('utf8');
@@ -146,6 +148,11 @@ async function startServer(): Promise<ServerHandle> {
  */
 function renderEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
+  if (process.resourcesPath) {
+    env.READX_RESOURCES_DIR = process.resourcesPath;
+    const portablePython = path.join(process.resourcesPath, 'python', 'python.exe');
+    if (fs.existsSync(portablePython)) env.READX_PYTHON = portablePython;
+  }
   const windowsRoot = path.resolve(app.getAppPath(), '..', '..');
   const candidates = [
     path.join(windowsRoot, 'resources', 'rendering-engine'),
@@ -159,7 +166,10 @@ function renderEnvironment(): NodeJS.ProcessEnv {
   const resources = path.dirname(engine);
   env.CBCT_RENDER_ENGINE_DIR = engine;
   env.CBCT_TRANSLATED_PDF_FONT_DIR = path.join(resources, 'fonts');
-  const script = path.join(windowsRoot, 'scripts', 'render-translated-pdf.cjs');
+  const packagedScript = path.join(process.resourcesPath ?? '', 'scripts', 'render-translated-pdf.cjs');
+  const script = fs.existsSync(packagedScript)
+    ? packagedScript
+    : path.join(windowsRoot, 'scripts', 'render-translated-pdf.cjs');
   if (fs.existsSync(script)) env.CBCT_RENDER_SCRIPT = script;
   env.CBCT_NODE_BIN = process.execPath;
   env.CBCT_ELECTRON_AS_NODE = '1';

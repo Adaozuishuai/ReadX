@@ -4,6 +4,9 @@ bin/
 .retain-runtime/
 .retain-pip-cache/
 .retain-tmp/
+.release-staging/
+.npm-cache/
+release/
 .tmp-smoke/
 apps/server/dev-info.json
 apps/server/dev-info.json.tmp
