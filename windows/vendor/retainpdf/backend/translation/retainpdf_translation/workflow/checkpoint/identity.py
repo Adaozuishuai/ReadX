@@ -77,6 +77,16 @@ def build_translation_identity(
             for entry in plan.glossary_entries
         ],
     }
+    # ReadX's CLI providers are exposed to Retain through a short-lived local
+    # OpenAI-compatible bridge. Its TCP port changes on each import retry, but
+    # that transport detail does not change the translation engine. Bind the
+    # checkpoint to the actual CLI provider instead of the ephemeral URL.
+    invocation = request.invocation if isinstance(request.invocation, dict) else {}
+    translation_provider = str(invocation.get("translation_provider", "") or "").strip().lower()
+    if translation_provider:
+        parameters["translation_provider"] = translation_provider
+    if translation_provider in {"codex", "claude", "kimi"}:
+        parameters["base_url"] = f"readx-cli://{translation_provider}"
     preparation = getattr(plan, "preparation", None)
     if preparation is not None:
         # 只有开了译前准备才加这个键：off 时参数集合与改动前逐字节相同，

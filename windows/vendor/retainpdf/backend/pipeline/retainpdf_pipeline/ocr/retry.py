@@ -4,6 +4,7 @@ import os
 import random
 import time
 from typing import Any
+from typing import Callable
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
 
@@ -110,15 +111,55 @@ def request_with_retry(
     attempts: int,
     backoff_seconds: float,
     label: str,
+    retryable_response: Callable[[requests.Response], bool] | None = None,
+    provider_queue_wait_seconds: float = 0,
+    on_provider_queue_wait: Callable[[int, float, float], None] | None = None,
     **kwargs: Any,
 ) -> requests.Response:
     last_summary: str | None = None
     terminal_error: Exception | None = None
     status_code: int | None = None
+    retryable_provider_response = False
     accumulated_rate_limit_wait = 0.0
+    queue_started_at: float | None = None
+    queue_retries = 0
     for attempt in range(1, attempts + 1):
         try:
-            response = session.request(method, url, timeout=timeout, **kwargs)
+            while True:
+                response = session.request(method, url, timeout=timeout, **kwargs)
+                if not (
+                    provider_queue_wait_seconds > 0
+                    and retryable_response is not None
+                    and retryable_response(response)
+                ):
+                    break
+                # An explicit queue-full response means the job was rejected,
+                # so it is safe to resubmit. Network failures still use the
+                # short retry policy below rather than this queue-wait budget.
+                now = time.monotonic()
+                if queue_started_at is None:
+                    queue_started_at = now
+                elapsed = now - queue_started_at
+                remaining = provider_queue_wait_seconds - elapsed
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+                if remaining <= 0:
+                    raise RetainRateLimitError(
+                        f"{label} provider queue full (code 10010) after waiting "
+                        f"{elapsed:.0f}s: {sanitize_url_for_log(url)}"
+                    ) from None
+                retry_after = str(response.headers.get("Retry-After", "") or "").strip()
+                delay = min(30.0, 15.0 * (2 ** min(queue_retries, 1)))
+                if retry_after.isdigit():
+                    delay = max(delay, float(retry_after))
+                delay = min(delay, remaining)
+                queue_retries += 1
+                if on_provider_queue_wait is not None:
+                    on_provider_queue_wait(queue_retries, delay, elapsed)
+                else:
+                    print(f"{label} queue full; waiting {delay:.0f}s before retry {queue_retries}", flush=True)
+                time.sleep(delay)
             response.raise_for_status()
             return response
         except (requests.Timeout, requests.ConnectionError, requests.RequestException) as err:
@@ -137,6 +178,13 @@ def request_with_retry(
                 err,
                 (requests.Timeout, requests.ConnectionError),
             )
+            retryable_provider_response = False
+            if isinstance(err, requests.HTTPError) and err.response is not None and retryable_response is not None:
+                try:
+                    retryable_provider_response = retryable_response(err.response)
+                except Exception:
+                    retryable_provider_response = False
+                retryable = retryable or retryable_provider_response
             if not retryable:
                 # Preserve callers' exception/status classification, but raise
                 # outside this handler so no raw exception context survives.
@@ -153,12 +201,16 @@ def request_with_retry(
                 sleep_seconds = float(max(1, int(retry_after)))
             else:
                 sleep_seconds = min(30.0, backoff_seconds * (2 ** max(0, attempt - 1)))
+                if retryable_provider_response:
+                    # Paddle's HTTP 400 / provider code 10010 means its job
+                    # submission queue is full. Give the queue time to drain.
+                    sleep_seconds = min(30.0, max(2.0, sleep_seconds))
                 sleep_seconds += random.uniform(0.0, max(0.1, sleep_seconds * 0.25))
-            if status_code == 429:
+            if status_code == 429 or retryable_provider_response:
                 accumulated_rate_limit_wait += sleep_seconds
                 if accumulated_rate_limit_wait > RATE_LIMIT_WAIT_MAX_SECONDS:
                     terminal_error = RetainRateLimitError(
-                        f"{label} rate limited: retry-after budget exceeded for {sanitize_url_for_log(url)}"
+                        f"{label} retry budget exceeded for {sanitize_url_for_log(url)}"
                     )
                     break
             print(
@@ -170,9 +222,10 @@ def request_with_retry(
     if terminal_error is not None:
         raise terminal_error from None
     assert last_summary is not None
-    if status_code == 429:
+    if status_code == 429 or retryable_provider_response:
+        reason = "provider queue full (code 10010)" if retryable_provider_response else "rate limited"
         raise RetainRateLimitError(
-            f"{label} rate limited after {attempts} attempts: {sanitize_url_for_log(url)}"
+            f"{label} {reason} after {attempts} attempts: {sanitize_url_for_log(url)}"
         ) from None
     raise RetainNetworkError(
         f"{label} network request failed after {attempts} attempts: {last_summary}"

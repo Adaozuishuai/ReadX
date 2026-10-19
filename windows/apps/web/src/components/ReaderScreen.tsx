@@ -6,7 +6,7 @@ import type { DocumentPhase } from '../hooks/useDocument';
 import { AssistantSidebar, type AssistantTab } from './AssistantPanels';
 import type { useAnnotations } from '../hooks/useAnnotations';
 import { PDFPage, usePDF, type PendingSelection } from './PDFView';
-import { layoutFromPDF } from '../api/pdfLayout';
+import type { RetainParagraphs } from '../api/client';
 import { ResizeHandle } from './ResizeHandle';
 import { EPUBView } from './EPUBView';
 import { ParagraphActions, type SelectedParagraph, type ParagraphQuestion } from './ParagraphActions';
@@ -26,7 +26,22 @@ interface Props {
   annotations: ReturnType<typeof useAnnotations>;
   onFocusAnnotation: (id: string, page: number | null) => void;
   focusedAnnotationId: string | null;
-  onOpenAISettings: () => void;
+}
+
+// Retain document.v1 的段落块直接给 PDFView 做命中测试；坐标单位与 page 宽高保持一致。
+function retainLayout(paragraphs: RetainParagraphs): PDFLayout {
+  return {
+    width: paragraphs.width,
+    height: paragraphs.height,
+    blocks: paragraphs.blocks.map((block) => ({
+      text: block.text,
+      x: block.box[0],
+      y: block.box[1],
+      width: Math.max(0, block.box[2] - block.box[0]),
+      height: Math.max(0, block.box[3] - block.box[1]),
+      fontSize: Math.max(8, (block.box[3] - block.box[1]) * 0.8),
+    })),
+  };
 }
 
 export function ReaderScreen({
@@ -40,7 +55,6 @@ export function ReaderScreen({
   annotations,
   onFocusAnnotation,
   focusedAnnotationId,
-  onOpenAISettings,
 }: Props) {
   const epub = selected?.format === 'epub';
   const documentKey = selected?.key ?? null;
@@ -215,10 +229,14 @@ export function ReaderScreen({
             setSourceText(chapter.text);
           }
         } else if (pdf.document) {
-          const layout = await layoutFromPDF(pdf.document, current);
-          if (!cancelled) {
-            setPDFLayout(layout);
-            setSourceText(layout.blocks.map((block) => block.text).join('\n\n'));
+          // 段落识别直接用 Retain document.v1 的块与坐标，不再用 PDF.js 重新切段。
+          const retained = await api.paragraphs(documentKey, current, controller.signal);
+          if (!cancelled && retained.available) {
+            setPDFLayout(retainLayout(retained));
+            setSourceText(retained.blocks.map((block) => block.text).join('\n\n'));
+          } else if (!cancelled) {
+            setPDFLayout(null);
+            setSourceText('');
           }
         } else {
           const result = await api.page(
@@ -695,7 +713,6 @@ export function ReaderScreen({
           documentKey={documentKey}
           pageCount={pdf.document.numPages}
           onClose={() => setExportOpen(false)}
-          onOpenAISettings={() => { setExportOpen(false); onOpenAISettings(); }}
         />
       ) : null}
     </div>

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,57 +19,31 @@ import (
 	"cbctv2/server/internal/render"
 )
 
-// TestTranslatedPDFRendersWithEmbeddedEngine 是渲染链的端到端冒烟：
-// 真 PDF -> rpr 输入 -> Node 渲染引擎 -> pdf-lib 叠回 -> 下载。
-// 缺少资源（未 npm install / 没装 Node）时跳过，不影响普通单测。
-func TestTranslatedPDFRendersWithEmbeddedEngine(t *testing.T) {
-	root, err := filepath.Abs("../../../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	engineDir := filepath.Join(root, "windows", "resources", "rendering-engine")
-	fontDir := filepath.Join(root, "windows", "resources", "fonts")
-	script := filepath.Join(root, "windows", "scripts", "render-translated-pdf.cjs")
-	t.Setenv("CBCT_RENDER_ENGINE_DIR", engineDir)
-	t.Setenv("CBCT_TRANSLATED_PDF_FONT_DIR", fontDir)
-	t.Setenv("CBCT_RENDER_SCRIPT", script)
-	t.Setenv("CBCT_NODE_BIN", "")
-
+// RetainPDF 负责生成译文文件；ReadX 的导出接口只校验处理记录并返回现成产物。
+func TestTranslatedPDFReusesRetainArtifact(t *testing.T) {
 	bundle, paths := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
-	if err := render.New(bundle.cfg.DataRoot).Available(); err != nil {
-		t.Skipf("跳过渲染集成测试：%v", err)
+	encoded, _ := json.Marshal(map[string]any{"pages": []any{map[string]any{"page": 1}}, "pageCount": 1})
+	if err := os.WriteFile(filepath.Join(paths.LibraryDir(), "2209.14540-translated.pdf"), testPDF(t), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	fixture, err := os.ReadFile("testdata/translated-source.pdf")
+	tx, err := bundle.handle.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(paths.LibraryDir(), "2209.14540.pdf"), fixture, 0o600); err != nil {
+	if err := saveLayoutTx(context.Background(), tx, "2209.14540", []layoutPage{{Page: 1, Width: 595, Height: 842, Blocks: []layoutBlock{{Kind: "text", Text: "source", Box: [4]float64{20, 20, 100, 60}}}}}); err != nil {
+		_ = tx.Rollback()
 		t.Fatal(err)
 	}
-	upstream := fakeUpstream(t, func(sources []string) (string, int) {
-		items := make([]map[string]any, len(sources))
-		for index, source := range sources {
-			items[index] = map[string]any{"i": index, "t": "译文：" + source}
-		}
-		body, _ := json.Marshal(map[string]any{"items": items})
-		return string(body), http.StatusOK
-	})
-	writeAIConfig(t, bundle, upstream.URL)
-	ensureTestOCR(t, bundle)
-	body := map[string]any{
-		"pages": []any{map[string]any{
-			"page": 1, "width": 595, "height": 842, "blocks": []any{},
-		}},
-		"ocr": true,
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
-	encoded, _ := json.Marshal(body)
 	res, payload := post(t, bundle, http.MethodPost, "/v1/documents/2209.14540/translated-pdf", string(encoded))
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("生成译文 PDF 失败: %d %v", res.StatusCode, payload)
+		t.Fatalf("复用 RetainPDF 译文失败: %d %v", res.StatusCode, payload)
 	}
 	if payload["pages"] != float64(1) || payload["blocks"] == float64(0) {
-		t.Fatalf("渲染计数异常: %v", payload)
+		t.Fatalf("Retain 产物状态异常: %v", payload)
 	}
 	output, err := os.ReadFile(filepath.Join(paths.LibraryDir(), "2209.14540-translated.pdf"))
 	if err != nil {
@@ -202,7 +177,7 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 	t.Setenv("CBCT_TRANSLATED_PDF_FONT_DIR", filepath.Join(root, "windows", "resources", "fonts"))
 	t.Setenv("CBCT_RENDER_SCRIPT", filepath.Join(root, "windows", "scripts", "render-translated-pdf.cjs"))
 
-	bundle, _ := newImportServer(t)
+	bundle, paths := newImportServer(t)
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
 		if len(sources) == 0 {
 			return `{"title":"OCR Import Paper","translatedTitle":"OCR 导入论文","authors":["Ada"]}`, http.StatusOK
@@ -263,11 +238,34 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 	if key == "" {
 		t.Fatalf("没有返回文档 key: %v", entry)
 	}
+	// Retain 本身不做题录识别；导入后应先用 OCR 首页文本补回标题。
+	if title, _ := document["title"].(string); title != "OCR Import Paper" {
+		t.Fatalf("导入后题名未识别: %q", title)
+	}
 
 	// 1) 版式数据在导入时写入。
 	res, layout := post(t, bundle, http.MethodGet, "/v1/documents/"+key+"/layout", "")
 	if res.StatusCode != http.StatusOK || layout["available"] != true || layout["pages"] != float64(1) {
 		t.Fatalf("OCR 版式状态异常: %d %v", res.StatusCode, layout)
+	}
+	// 1b) 阅读器段落识别直接读 Retain 段落块。
+	res, paragraphs := post(t, bundle, http.MethodGet, "/v1/documents/"+key+"/pages/1/paragraphs", "")
+	if res.StatusCode != http.StatusOK || paragraphs["available"] != true {
+		t.Fatalf("Retain 段落接口异常: %d %v", res.StatusCode, paragraphs)
+	}
+	blocks, _ := paragraphs["blocks"].([]any)
+	if len(blocks) == 0 {
+		t.Fatalf("Retain 没有返回段落块: %v", paragraphs)
+	}
+	found := false
+	for _, raw := range blocks {
+		block, _ := raw.(map[string]any)
+		if strings.Contains(fmt.Sprint(block["text"]), "Scanned import paragraph") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Retain 段落缺少正文块: %v", blocks)
 	}
 	// 2) OCR 段落的译文已随导入入库（按段落哈希）。
 	var rows int
@@ -315,28 +313,33 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 		t.Fatalf("任务未在 20s 内完成: %v", job)
 	}
 
-	// 3) 关掉 Paddle 后再请求渲染：命中导入时保存的版式，不应再访问 OCR。
+	// 3) 导入已由 RetainPDF 生成整本译文，导出接口直接复用该 PDF。
 	paddle.Close()
-	if err := render.New(bundle.cfg.DataRoot).Available(); err != nil {
-		t.Skipf("跳过渲染验证：%v", err)
+	response, payload := post(t, bundle, http.MethodPost, "/v1/documents/"+key+"/translated-pdf", `{"pageCount":1}`)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("复用 RetainPDF 成品失败: %d %v", response.StatusCode, payload)
 	}
-	req, err := http.NewRequest(http.MethodPost, bundle.frontend.URL+"/v1/documents/"+key+"/pages/1/translated-page", strings.NewReader(`{"width":595,"height":842}`))
+	translated, err := os.ReadFile(filepath.Join(paths.LibraryDir(), key+"-translated.pdf"))
+	if err != nil || !bytes.HasPrefix(translated, []byte("%PDF")) {
+		t.Fatalf("RetainPDF 成品无效: %v", err)
+	}
+
+	// 4) 阅读器按页取译文必须复用导入缓存：模型端点已关闭，仍应成功。
+	upstream.Close()
+	request, err := http.NewRequest(http.MethodPost, bundle.frontend.URL+"/v1/documents/"+key+"/pages/1/translated-page", strings.NewReader(`{"width":595,"height":842}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+bundle.token)
-	req.Header.Set("Content-Type", "application/json")
-	response, err := bundle.frontend.Client().Do(req)
+	request.Header.Set("Authorization", "Bearer "+bundle.token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err = bundle.frontend.Client().Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	pdfBytes, _ := io.ReadAll(response.Body)
-	if response.StatusCode != http.StatusOK || !bytes.HasPrefix(pdfBytes, []byte("%PDF")) {
-		t.Fatalf("按导入版式渲染失败: %d %s", response.StatusCode, pdfBytes)
-	}
-	if got := response.Header.Get("X-CBCT-Page-Blocks"); got != "1" {
-		t.Fatalf("页眉/公式不应被翻译，应只有 1 个可译块，实际 header=%q", got)
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("阅读器没有复用导入译文: %d %s", response.StatusCode, body)
 	}
 }
 
@@ -381,80 +384,35 @@ func TestTranslatedPageRejectsMissingSize(t *testing.T) {
 	}
 }
 
-func TestTranslatedPDFRejectsNonContiguousPages(t *testing.T) {
+func TestTranslatedPDFRequiresRetainArtifact(t *testing.T) {
 	bundle, _ := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
 	body := `{"pages":[{"page":2,"width":595,"height":842,"blocks":[]}]}`
 	res, payload := post(t, bundle, http.MethodPost, "/v1/documents/2209.14540/translated-pdf", body)
-	if res.StatusCode != http.StatusBadRequest {
-		t.Fatalf("页码不连续应 400，实际 %d %v", res.StatusCode, payload)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("没有 RetainPDF 产物时应要求重新导入，实际 %d %v", res.StatusCode, payload)
 	}
 }
 
-// TestTranslatedPDFOCRRunsPaddleThenRender 覆盖扫描件路径：PaddleOCR -> 翻译 -> rpr 渲染。
-// Paddle 服务与模型都用本地假端点，不访问外网、不花额度。
-func TestTranslatedPDFOCRRunsPaddleThenRender(t *testing.T) {
-	root, err := filepath.Abs("../../../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CBCT_RENDER_ENGINE_DIR", filepath.Join(root, "windows", "resources", "rendering-engine"))
-	t.Setenv("CBCT_TRANSLATED_PDF_FONT_DIR", filepath.Join(root, "windows", "resources", "fonts"))
-	t.Setenv("CBCT_RENDER_SCRIPT", filepath.Join(root, "windows", "scripts", "render-translated-pdf.cjs"))
-
-	bundle, paths := newImportServer(t)
+// Exporting a legacy paper must not silently run the old ReadX Paddle/translation pipeline.
+func TestTranslatedPDFDoesNotRunLegacyOCRFallback(t *testing.T) {
+	bundle, _ := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
-	if err := render.New(bundle.cfg.DataRoot).Available(); err != nil {
-		t.Skipf("跳过 OCR 渲染集成测试：%v", err)
-	}
-	fixture, err := os.ReadFile("testdata/translated-source.pdf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(paths.LibraryDir(), "2209.14540.pdf"), fixture, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	upstream := fakeUpstream(t, func(sources []string) (string, int) {
-		items := make([]map[string]any, len(sources))
-		for index, source := range sources {
-			items[index] = map[string]any{"i": index, "t": "OCR 翻译：" + source}
-		}
-		body, _ := json.Marshal(map[string]any{"items": items})
-		return string(body), http.StatusOK
-	})
-	writeAIConfig(t, bundle, upstream.URL)
-
-	var paddle *httptest.Server
-	paddle = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v2/ocr/jobs":
-			_ = json.NewEncoder(w).Encode(map[string]any{"errorCode": 0, "data": map[string]any{"jobId": "job-ocr"}})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v2/ocr/jobs/job-ocr":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"errorCode": 0,
-				"data":      map[string]any{"state": "done", "resultUrl": map[string]any{"jsonUrl": paddle.URL + "/result.jsonl"}},
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/result.jsonl":
-			_, _ = w.Write([]byte(`{"result":{"layoutParsingResults":[{"prunedResult":{"width":595,"height":842,"parsing_res_list":[{"block_label":"text","block_content":"Scanned paragraph.","block_bbox":[72,72,500,140]},{"block_label":"display_formula","block_content":"E=mc^2","block_bbox":[72,160,300,220]}]}}]}}`))
-		default:
-			http.NotFound(w, r)
-		}
+	var calls atomic.Int32
+	ocr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, "legacy OCR must not run", http.StatusInternalServerError)
 	}))
-	defer paddle.Close()
-
-	res, payload := post(t, bundle, http.MethodPut, "/v1/ocr/settings", fmt.Sprintf(`{"token":"test-token","baseURL":%q}`, paddle.URL))
+	defer ocr.Close()
+	res, payload := post(t, bundle, http.MethodPut, "/v1/ocr/settings", fmt.Sprintf(`{"token":"test-token","baseURL":%q}`, ocr.URL))
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("保存 OCR 配置失败: %d %v", res.StatusCode, payload)
 	}
-	body := `{"pages":[{"page":1,"width":595,"height":842,"blocks":[]}],"ocr":true}`
-	res, payload = post(t, bundle, http.MethodPost, "/v1/documents/2209.14540/translated-pdf", body)
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("OCR 译文 PDF 失败: %d %v", res.StatusCode, payload)
+	res, payload = post(t, bundle, http.MethodPost, "/v1/documents/2209.14540/translated-pdf", `{"pageCount":1}`)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("旧文档无 RetainPDF 成品时应要求重新导入，实际 %d %v", res.StatusCode, payload)
 	}
-	if payload["pages"] != float64(1) {
-		t.Fatalf("应渲染 1 页: %v", payload)
-	}
-	if _, err := os.Stat(filepath.Join(paths.LibraryDir(), "2209.14540-translated.pdf")); err != nil {
-		t.Fatalf("译文 PDF 未落盘: %v", err)
+	if calls.Load() != 0 {
+		t.Fatalf("导出接口不应触发 ReadX 的 OCR 回退，调用 %d 次", calls.Load())
 	}
 }

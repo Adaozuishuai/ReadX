@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "retainpdf-translation"
 version = "4.2.6"
 description = "RetainPDF translation: normalized document.v1 to per-page translation payloads and manifest"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11,<3.13"
 dependencies = [
   # 领域推断读源 PDF 前几页的文字（llm/domain_context.py）。
   "PyMuPDF==1.26.5",

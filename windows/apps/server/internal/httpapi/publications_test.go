@@ -189,7 +189,7 @@ func TestPDFFileAuthenticationAndRectangles(t *testing.T) {
 		return `{"items":[{"i":0,"t":"译文"}]}`, http.StatusOK
 	})
 	writeAIConfig(t, b, upstream.URL)
-	data := []byte("%PDF-1.4\nfixture")
+	data := testPDF(t)
 	result := uploadPublication(t, b, "sample.pdf", data)
 	if result["error"] != nil {
 		t.Fatalf("PDF 导入失败: %v", result)
@@ -304,7 +304,18 @@ func TestDownloadProgressAndIncompleteBodies(t *testing.T) {
 	}
 }
 func TestOnlineImportStreamsProgressAndCommitsOnlyCompletedFiles(t *testing.T) {
-	_, handle, cfg := newTestServer(t, nil)
+	front, handle, cfg := newTestServer(t, nil)
+	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}
+	upstream := fakeUpstream(t, func(sources []string) (string, int) {
+		items := make([]map[string]any, len(sources))
+		for index, source := range sources {
+			items[index] = map[string]any{"i": index, "t": "译文：" + source}
+		}
+		body, _ := json.Marshal(map[string]any{"items": items})
+		return string(body), http.StatusOK
+	})
+	writeAIConfig(t, bundle, upstream.URL)
+	ensureTestOCR(t, bundle)
 	for _, failure := range []bool{true, false} {
 		server := New(cfg, handle)
 		server.downloadPublication = func(_ context.Context, raw string, _ int64, progress func(int64, int64)) ([]byte, string, error) {
@@ -312,7 +323,7 @@ func TestOnlineImportStreamsProgressAndCommitsOnlyCompletedFiles(t *testing.T) {
 			if failure {
 				return nil, "", io.ErrUnexpectedEOF
 			}
-			return []byte("%PDF-1.4\nfixture"), raw, nil
+			return testPDF(t), raw, nil
 		}
 		req := httptest.NewRequest("POST", "http://127.0.0.1/v1/import/url", strings.NewReader(`{"value":"https://public.test/paper.pdf"}`))
 		req.Header.Set("Authorization", "Bearer "+cfg.Token)
@@ -339,6 +350,17 @@ func TestOnlineImportStreamsProgressAndCommitsOnlyCompletedFiles(t *testing.T) {
 
 func TestAttachArxivPDFToExistingBookEntry(t *testing.T) {
 	_, handle, cfg := newTestServer(t, nil)
+	bundle := &httptestServerBundle{token: cfg.Token, cfg: cfg, handle: handle}
+	upstream := fakeUpstream(t, func(sources []string) (string, int) {
+		items := make([]map[string]any, len(sources))
+		for index, source := range sources {
+			items[index] = map[string]any{"i": index, "t": "译文：" + source}
+		}
+		body, _ := json.Marshal(map[string]any{"items": items})
+		return string(body), http.StatusOK
+	})
+	writeAIConfig(t, bundle, upstream.URL)
+	ensureTestOCR(t, bundle)
 	key := "saved-title-only-paper"
 	if _, err := handle.Exec(`INSERT INTO documents(id,key,title,authors,format) VALUES(?,?,?,?,?)`, key, key, "A Paper With An Exact Title", `[]`, "pdf"); err != nil {
 		t.Fatal(err)
@@ -349,7 +371,7 @@ func TestAttachArxivPDFToExistingBookEntry(t *testing.T) {
 			t.Fatalf("unexpected arXiv URL: %s", raw)
 		}
 		progress(8, 16)
-		return []byte("%PDF-1.4\nfixture"), raw, nil
+		return testPDF(t), raw, nil
 	}
 	frontend := httptest.NewServer(server.Handler())
 	defer frontend.Close()

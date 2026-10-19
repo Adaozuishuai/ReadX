@@ -56,6 +56,10 @@ def _extract_upstream_host(text: str) -> str:
 
 def infer_failure_stage(*, default_stage: str, trace_text: str, detail: str) -> str:
     combined = f"{trace_text}\n{detail}".lower()
+    # Queue-full failures can bubble through normalization/runner frames even
+    # though OCR never produced an artifact. Keep the failure attached to OCR.
+    if "10010" in combined and any(token in combined for token in ("paddle", "queue full", "queue is full")):
+        return "ocr_processing"
     if any(
         token in combined
         for token in (
@@ -91,7 +95,7 @@ def _http_status_code(exc: BaseException, text: str) -> int | None:
 
 def _extract_provider_code(text: str) -> str:
     patterns = (
-        r"\bcode\s*[=:]\s*([A-Z]\d{3,}|[A-Z]{1,10}-\d{2,}|\d{3,})\b",
+        r"\bcode\s*[=:]?\s*([A-Z]\d{3,}|[A-Z]{1,10}-\d{2,}|\d{3,})\b",
         r"\berror[_\s-]*code\s*[=:]\s*([A-Z]\d{3,}|[A-Z]{1,10}-\d{2,}|\d{3,})\b",
         r"\blogId\s*[=:]\s*([A-Za-z0-9_-]{6,})\b",
     )
@@ -208,7 +212,14 @@ def classify_exception(exc: BaseException, *, default_stage: str, provider: str 
     summary = "任务失败，但暂未识别出明确根因"
     retryable = True
 
-    if any(token in lowered for token in ("failed to resolve", "temporary failure in name resolution", "nameresolutionerror", "socket.gaierror")):
+    paddle_queue_full = "10010" in lowered and any(
+        token in lowered for token in ("paddle", "queue full", "queue is full")
+    )
+    if paddle_queue_full:
+        error_type = "upstream_rate_limited"
+        summary = "Paddle OCR 提交队列已满（10010）"
+        stage = "ocr_processing"
+    elif any(token in lowered for token in ("failed to resolve", "temporary failure in name resolution", "nameresolutionerror", "socket.gaierror")):
         error_type = "dns_resolution_failed"
         summary = "外部服务域名解析失败"
     elif any(token in lowered for token in ("readtimeout", "connecttimeout", "timed out")):
@@ -303,6 +314,8 @@ def classify_exception(exc: BaseException, *, default_stage: str, provider: str 
         failure_category=failure_category,
         provider=provider,
     )
+    if paddle_queue_full:
+        suggestion = "Paddle OCR 提交队列已满（10010）。稍后重新导入；无需修改 PDF 或令牌。"
     raw_excerpt = _build_raw_excerpt(detail, raw_traceback)
 
     return StructuredFailure(

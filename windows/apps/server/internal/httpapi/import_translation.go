@@ -21,7 +21,7 @@ type publicationPageHint struct {
 	Height float64 `json:"height"`
 }
 
-// requireImportProviders 是 PDF 导入的硬前提：RetainPDF 链路必须有 PaddleOCR 与模型。
+// requireImportProviders 是 PDF 导入的硬前提：本地处理链需要 PaddleOCR 与翻译模型。
 // 缺任何一个都直接失败，不再退回文本层分段翻译。
 func (s *Server) requireImportProviders() error {
 	config, err := s.aiConfig()

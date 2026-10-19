@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Callable
 import requests
 
 from retainpdf_base.local_env import get_secret
+from retainpdf_base.events import emit_stage_progress
 from retainpdf_pipeline.ocr.retry import RetainNetworkError
 from retainpdf_pipeline.ocr.retry import RetainRateLimitError
 from retainpdf_pipeline.ocr.retry import direct_session
@@ -23,6 +25,7 @@ PADDLE_TOKEN_ENV = "RETAIN_PADDLE_API_TOKEN"
 PADDLE_ENV_FILE = "paddle.env"
 PADDLE_RETRY_ATTEMPTS_ENV = "RETAIN_PADDLE_RETRY_ATTEMPTS"
 PADDLE_RETRY_BACKOFF_ENV = "RETAIN_PADDLE_RETRY_BACKOFF_SECONDS"
+PADDLE_QUEUE_WAIT_ENV = "RETAIN_PADDLE_QUEUE_WAIT_SECONDS"
 PADDLE_MAX_INPUT_IMAGES = 999
 _SESSION: requests.Session | None = None
 
@@ -57,9 +60,9 @@ def build_headers(token: str) -> dict[str, str]:
 def _retry_attempts() -> int:
     raw = os.environ.get(PADDLE_RETRY_ATTEMPTS_ENV, "").strip()
     try:
-        value = int(raw) if raw else 3
+        value = int(raw) if raw else 5
     except ValueError:
-        value = 3
+        value = 5
     return max(1, value)
 
 
@@ -83,7 +86,43 @@ def _get_session() -> requests.Session:
     return _SESSION
 
 
-def _request_with_retry(method: str, url: str, *, timeout: int, **kwargs: Any) -> requests.Response:
+def _queue_wait_seconds() -> float:
+    try:
+        value = float(os.environ.get(PADDLE_QUEUE_WAIT_ENV, "600"))
+    except ValueError:
+        value = 600.0
+    return min(1800.0, max(0.0, value)) if math.isfinite(value) else 600.0
+
+
+def _emit_queue_wait(retry_count: int, delay: float, elapsed: float) -> None:
+    message = f"等待 OCR 服务空位，{math.ceil(delay)} 秒后自动重试（已等待 {int(elapsed)} 秒）"
+    emit_stage_progress(
+        stage="ocr_processing",
+        substage="ocr_queue_wait",
+        message=message,
+        stage_detail=message,
+        provider="paddle",
+        provider_stage="paddle_submit",
+        retry_count=retry_count,
+        elapsed_ms=int(elapsed * 1000),
+        payload={"provider_code": "10010", "progress_unit": "none"},
+    )
+
+
+def _is_queue_full_response(response: requests.Response) -> bool:
+    try:
+        payload = response.json()
+    except (ValueError, requests.RequestException):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    code = payload.get("code", payload.get("errorCode"))
+    return str(code or "").strip() == "10010"
+
+
+def _request_with_retry(
+    method: str, url: str, *, timeout: int, queue_wait_seconds: float = 0, **kwargs: Any
+) -> requests.Response:
     try:
         return request_with_retry(
             _get_session(),
@@ -93,6 +132,9 @@ def _request_with_retry(method: str, url: str, *, timeout: int, **kwargs: Any) -
             attempts=_retry_attempts(),
             backoff_seconds=_retry_backoff_seconds(),
             label="Paddle OCR",
+            retryable_response=_is_queue_full_response,
+            provider_queue_wait_seconds=queue_wait_seconds,
+            on_provider_queue_wait=_emit_queue_wait,
             **kwargs,
         )
     except RetainRateLimitError as err:
@@ -181,9 +223,12 @@ def build_optional_payload(model: str) -> dict[str, Any]:
 
 
 def _check_envelope(payload: dict[str, Any], *, stage: str) -> dict[str, Any]:
-    if int(payload.get("errorCode", 0) or 0) != 0:
+    code = payload.get("code", payload.get("errorCode", 0))
+    if int(code or 0) != 0:
         raise RuntimeError(
-            f"Paddle {stage} failed: code={payload.get('errorCode')} msg={payload.get('errorMsg', '')} logId={payload.get('logId', '')}"
+            f"Paddle {stage} failed: code={code} "
+            f"msg={payload.get('msg', payload.get('errorMsg', ''))} "
+            f"traceId={payload.get('traceId', payload.get('logId', ''))}"
         )
     return payload
 
@@ -212,13 +257,14 @@ def submit_local_file(
         data=form_data,
         files={"file": (file_path.name, file_bytes)},
         timeout=120,
+        queue_wait_seconds=_queue_wait_seconds(),
     )
     envelope = _check_envelope(response.json(), stage="submit")
     data = dict(envelope.get("data") or {})
     job_id = str(data.get("jobId", "") or "").strip()
     if not job_id:
         raise RuntimeError("Paddle submit returned empty jobId")
-    return job_id, str(envelope.get("logId", "") or "").strip()
+    return job_id, str(envelope.get("traceId", envelope.get("logId", "")) or "").strip()
 
 
 def submit_remote_url(
@@ -244,13 +290,14 @@ def submit_remote_url(
         headers={**build_headers(token), "Content-Type": "application/json"},
         json=body,
         timeout=120,
+        queue_wait_seconds=_queue_wait_seconds(),
     )
     envelope = _check_envelope(response.json(), stage="submit")
     data = dict(envelope.get("data") or {})
     job_id = str(data.get("jobId", "") or "").strip()
     if not job_id:
         raise RuntimeError("Paddle submit returned empty jobId")
-    return job_id, str(envelope.get("logId", "") or "").strip()
+    return job_id, str(envelope.get("traceId", envelope.get("logId", "")) or "").strip()
 
 
 def query_job(*, token: str, job_id: str, base_url: str = "") -> dict[str, Any]:

@@ -42,6 +42,12 @@ class ResumeCandidateFingerprintMismatch(RuntimeError):
         self.source_attempt_id = source_attempt_id
 
 
+class CurrentAttemptFingerprintMismatch(RuntimeError):
+    def __init__(self, attempt_id: str) -> None:
+        super().__init__("Translation checkpoint fingerprint changed; starting a fresh translation attempt")
+        self.attempt_id = attempt_id
+
+
 def _timed(stage: str):
     def decorate(function):
         @wraps(function)
@@ -137,7 +143,7 @@ class TranslationCheckpointSession:
             previous_attempt = str(previous.get("attempt_id", "") or "")
             if previous_attempt and previous_attempt != self.attempt_id:
                 raise ResumeCandidateFingerprintMismatch(previous_attempt)
-            raise RuntimeError("Translation checkpoint fingerprint mismatch within the same attempt")
+            raise CurrentAttemptFingerprintMismatch(self.attempt_id)
         if previous is not None:
             self._replay_durable_checkpoint(previous)
         self.payload = new_checkpoint(

@@ -277,6 +277,24 @@ export interface AnnotationListResponse {
   total: number;
 }
 
+export interface RetainParagraph {
+  index: number;
+  text: string;
+  box: [number, number, number, number];
+  kind: string;
+  role?: string;
+  sourceOrder?: number;
+  translatable: boolean;
+}
+
+export interface RetainParagraphs {
+  available: boolean;
+  page: number;
+  width: number;
+  height: number;
+  blocks: RetainParagraph[];
+}
+
 export interface TranslatedPDFResponse {
   key: string;
   pages: number;
@@ -522,6 +540,7 @@ export interface ImportedDocument {
 }
 export interface DailyRecommendation {
   id: string;
+  arxiv?: string;
   title: string;
   authors: string[];
   venue: string;
@@ -816,6 +835,11 @@ export const api = {
         { signal },
       )
     ).arrayBuffer(),
+  paragraphs: (key: string, page: number, signal?: AbortSignal) =>
+    request<RetainParagraphs>(
+      `/v1/documents/${encodeURIComponent(key)}/pages/${page}/paragraphs`,
+      { signal },
+    ),
   section: (key: string, index: number, signal?: AbortSignal) =>
     request<EPUBSection>(
       `/v1/documents/${encodeURIComponent(key)}/sections/${index}`,
@@ -906,7 +930,7 @@ export const api = {
     request<ReadingsResponse>(`/v1/readings/${encodeURIComponent(key)}`, {
       signal,
     }),
-  /** 生成保留排版的译文 PDF：服务端统一走 OCR → 翻译 → rpr 排版。 */
+  /** 校验并返回 RetainPDF 导入阶段生成的排版译文 PDF 信息。 */
   translatedPDF: (key: string, body: { pageCount: number }, signal?: AbortSignal) =>
     request<TranslatedPDFResponse>(`/v1/documents/${encodeURIComponent(key)}/translated-pdf`, {
       method: 'POST',

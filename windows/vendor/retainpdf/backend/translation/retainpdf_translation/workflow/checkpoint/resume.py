@@ -12,11 +12,14 @@ def discard_copied_resume_candidate(
     *,
     source_attempt_id: str,
     store: CheckpointStore | None = None,
+    allow_current_attempt: bool = False,
 ) -> None:
-    """Discard only copy-on-write files after an explicit fingerprint rejection.
+    """Discard translation artifacts after an explicit fingerprint rejection.
 
-    The source attempt remains untouched. A checkpoint that already belongs to
-    the current attempt is never eligible for this operation.
+    For a copied resume candidate, the source attempt remains untouched. When
+    the current attempt's fingerprint changes, its translation artifacts are
+    also eligible because they were produced under a different translation
+    identity and must not be reused.
     """
 
     output_dir = Path(output_dir)
@@ -36,7 +39,7 @@ def discard_copied_resume_candidate(
         if (
             not checkpoint_attempt
             or checkpoint_attempt != source_attempt_id
-            or checkpoint_attempt == current_attempt_id
+            or (checkpoint_attempt == current_attempt_id and not allow_current_attempt)
         ):
             raise RuntimeError(
                 "Refusing to discard translation checkpoint owned by the current attempt"

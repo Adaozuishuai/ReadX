@@ -461,6 +461,12 @@ def main() -> None:
             message="开始准备翻译和渲染阶段",
             provider=provider,
         )
+        translation_invocation = build_stage_invocation_metadata(
+            stage="provider",
+            stage_spec_schema_version=stage_spec_schema_version,
+        )
+        if spec.translation.provider:
+            translation_invocation["translation_provider"] = spec.translation.provider
         result = run_book_pipeline(
             source_json_path=translation_source_json_path,
             source_pdf_path=source_pdf_path,
@@ -495,10 +501,7 @@ def main() -> None:
             pdf_compress_dpi=args.pdf_compress_dpi,
             source_cleanup_strategy=args.source_cleanup_strategy,
             render_engine=getattr(args, "render_engine", DEFAULT_RENDER_ENGINE),
-            invocation=build_stage_invocation_metadata(
-                stage="provider",
-                stage_spec_schema_version=stage_spec_schema_version,
-            ),
+            invocation=translation_invocation,
             render_visual_prewarm_handle=render_visual_prewarm_handle,
         )
         summary_path = job_dirs.artifacts_dir / PIPELINE_SUMMARY_FILE_NAME
@@ -516,10 +519,7 @@ def main() -> None:
             base_url=args.base_url,
             render_mode=args.render_mode,
             pdf_compress_dpi=args.pdf_compress_dpi,
-            invocation=build_stage_invocation_metadata(
-                stage="provider",
-                stage_spec_schema_version=stage_spec_schema_version,
-            ),
+            invocation=translation_invocation,
         )
         emit_artifact_published(
             artifact_key="pipeline_events_jsonl",

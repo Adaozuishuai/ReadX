@@ -14,6 +14,7 @@ from retainpdf_translation.services.terms import summarize_glossary_usage
 from retainpdf_translation.workflow.translation_workflow import default_page_translation_name
 from retainpdf_translation.workflow.checkpoint import TranslationCheckpointSession
 from retainpdf_translation.workflow.checkpoint import ResumeCandidateFingerprintMismatch
+from retainpdf_translation.workflow.checkpoint import CurrentAttemptFingerprintMismatch
 from retainpdf_translation.workflow.checkpoint import discard_copied_resume_candidate
 from retainpdf_translation.workflow.checkpoint.store import CheckpointStore
 
@@ -49,6 +50,18 @@ def run_translation_execution_plan(
         )
         print(
             "book: copied translation checkpoint fingerprint mismatch; starting a fresh attempt",
+            flush=True,
+        )
+        checkpoint_session = TranslationCheckpointSession.acquire(request, plan, store=checkpoint_store)
+    except CurrentAttemptFingerprintMismatch as mismatch:
+        discard_copied_resume_candidate(
+            request.output_dir,
+            source_attempt_id=mismatch.attempt_id,
+            store=checkpoint_store,
+            allow_current_attempt=True,
+        )
+        print(
+            "book: translation checkpoint fingerprint changed; starting a fresh attempt",
             flush=True,
         )
         checkpoint_session = TranslationCheckpointSession.acquire(request, plan, store=checkpoint_store)

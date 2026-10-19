@@ -204,7 +204,6 @@ export default function App() {
           annotations={annotations}
           onFocusAnnotation={focusAnnotation}
           focusedAnnotationId={focusedAnnotationId}
-          onOpenAISettings={() => setSettingsOpen(true)}
         />
       ) : screen === 'graph' ? (
         <KnowledgeGraphSection

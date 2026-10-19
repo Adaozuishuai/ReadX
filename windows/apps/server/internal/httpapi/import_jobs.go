@@ -12,8 +12,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
+	"path/filepath"
 
+	"cbctv2/server/internal/legacy"
 	"cbctv2/server/internal/render"
 )
 
@@ -144,32 +145,6 @@ func (s *Server) jobStage(key, stage, status, message string, completed, total i
 	})
 }
 
-func (s *Server) jobRetainProgress(key, stage, message string, completed, total, pages int, unit string) {
-	s.updateImportJob(key, func(job *DocumentJob) {
-		job.setStage(stage, "running", message, completed, total)
-		if current := job.stage(stage); current != nil {
-			switch strings.ToLower(strings.TrimSpace(unit)) {
-			case "page":
-				current.Unit = "页"
-			case "block":
-				current.Unit = "段"
-			case "batch":
-				current.Unit = "批"
-			case "step":
-				current.Unit = "步"
-			case "percent":
-				current.Unit = "%"
-			}
-		}
-		if pages > 0 {
-			job.Pages = pages
-			if len(job.Runs) > 0 {
-				job.Runs[len(job.Runs)-1].Pages = pages
-			}
-		}
-	})
-}
-
 // finishImportJob 结束当前运行并同步最后一次执行摘要。
 func (s *Server) finishImportJob(key, status, message string) {
 	s.updateImportJob(key, func(job *DocumentJob) {
@@ -274,13 +249,18 @@ func (s *Server) setJobCancel(key string, cancel context.CancelFunc) {
 	s.jobsMu.Unlock()
 }
 
-// startDocumentRender 在导入提交后按页生成排版译文：每页完成后写入渲染缓存，
-// 阅读器打开即用；任务面板能看到「渲染 X / N 页」，取消按钮同样生效。
+// startDocumentRender 在导入提交后生成完整译文 PDF；任务面板可跟踪并取消渲染。
 func (s *Server) startDocumentRender(key, sourcePath string, pages []layoutPage) {
+	retainOutput := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), key+"-translated.pdf")
+	if existingFile(retainOutput) {
+		s.jobStage(key, "render", "done", "已复用 Retain 排版译文 PDF", len(pages), len(pages))
+		s.finishImportJob(key, "done", "")
+		return
+	}
 	renderer := render.New(s.cfg.DataRoot)
 	if err := renderer.Available(); err != nil {
-		s.jobStage(key, "render", "skipped", "渲染不可用："+err.Error(), -1, -1)
-		s.finishImportJob(key, "done", "")
+		s.jobStage(key, "render", "failed", "渲染不可用："+err.Error(), 0, len(pages))
+		s.finishImportJob(key, "failed", err.Error())
 		return
 	}
 	source, err := os.ReadFile(sourcePath)
@@ -290,46 +270,26 @@ func (s *Server) startDocumentRender(key, sourcePath string, pages []layoutPage)
 		return
 	}
 	ocrPages := layoutOCRPages(layoutDoc{Pages: pages})
-	s.jobStage(key, "render", "running", "正在按页生成排版译文", 0, len(ocrPages))
+	s.jobStage(key, "render", "running", "正在生成整本排版译文 PDF", 0, len(ocrPages))
 	ctx, cancel := context.WithCancel(context.Background())
 	s.setJobCancel(key, cancel)
 	go func() {
 		defer cancel()
-		rendered, extracted, failed := 0, 0, 0
-		for index := range ocrPages {
+		outputPath := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), key+"-translated.pdf")
+		report, renderErr := s.renderTranslatedDocument(ctx, key, source, ocrPages, renderer, outputPath)
+		if renderErr != nil {
+			status := "failed"
+			message := renderErr.Error()
 			if ctx.Err() != nil {
-				s.jobStage(key, "render", "failed", "已取消", index, len(ocrPages))
-				s.finishImportJob(key, "cancelled", "已取消")
-				return
+				status = "cancelled"
+				message = "已取消"
 			}
-			stats, _, err := s.renderTranslatedPage(ctx, key, source, index+1, ocrPages[index],
-				neighbor(ocrPages, index-1), neighbor(ocrPages, index+1), false, renderer)
-			if err != nil {
-				failed++
-				s.jobStage(key, "render", "running",
-					fmt.Sprintf("第 %d 页失败，已保留原页：%v", index+1, err), index+1, len(ocrPages))
-				continue
-			}
-			if stats.Extracted {
-				extracted++
-			} else {
-				rendered++
-			}
-			s.jobStage(key, "render", "running",
-				fmt.Sprintf("已处理 %d / %d 页", index+1, len(ocrPages)), index+1, len(ocrPages))
-		}
-		message := fmt.Sprintf("已渲染 %d 页", rendered)
-		if extracted > 0 {
-			message += fmt.Sprintf("，%d 页保留原页", extracted)
-		}
-		if failed > 0 {
-			message += fmt.Sprintf("，%d 页失败", failed)
-		}
-		s.jobStage(key, "render", "done", message, len(ocrPages), len(ocrPages))
-		if failed == len(ocrPages) && rendered == 0 && extracted == 0 {
-			s.finishImportJob(key, "failed", "所有页面渲染失败")
+			s.jobStage(key, "render", status, message, 0, len(ocrPages))
+			s.finishImportJob(key, status, message)
 			return
 		}
+		message := fmt.Sprintf("已生成译文 PDF（%d 页，%d 个段落）", len(ocrPages), report.Blocks)
+		s.jobStage(key, "render", "done", message, len(ocrPages), len(ocrPages))
 		s.finishImportJob(key, "done", "")
 	}()
 }

@@ -4,6 +4,7 @@ from .contract import TRANSLATION_CHECKPOINT_SCHEMA_VERSION
 from .contract import translation_checkpoint_path
 from .session import TranslationCheckpointSession
 from .session import ResumeCandidateFingerprintMismatch
+from .session import CurrentAttemptFingerprintMismatch
 from .resume import discard_copied_resume_candidate
 
 __all__ = [
@@ -11,6 +12,7 @@ __all__ = [
     "TRANSLATION_CHECKPOINT_SCHEMA",
     "TRANSLATION_CHECKPOINT_SCHEMA_VERSION",
     "ResumeCandidateFingerprintMismatch",
+    "CurrentAttemptFingerprintMismatch",
     "TranslationCheckpointSession",
     "discard_copied_resume_candidate",
     "translation_checkpoint_path",

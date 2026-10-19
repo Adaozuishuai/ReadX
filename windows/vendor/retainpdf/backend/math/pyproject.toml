@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "retainpdf-math"
 version = "4.2.6"
 description = "RetainPDF formula handling: LaTeX command registry, static checks, and render checks against the layout engine"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11,<3.13"
 dependencies = []
 
 [project.optional-dependencies]

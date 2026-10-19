@@ -2,6 +2,8 @@
 
 对应分支事项：把 [RetainPDF](https://github.com/wxyhgk/retain-pdf) 的翻译能力内置到 ReadX。
 
+Windows 版由 ReadX 提供上传入口和文库，实际 PDF 处理通过随仓库内置的 RetainPDF Python `provider-case` 全流程执行：PaddleOCR、`document.v1` 归一化、Retain 翻译/修复、Retain RPR 排版。无需启动 RetainPDF 桌面端或其 API/任务服务；OCR 与模型凭据由 ReadX 后端从本机设置注入子进程环境，Codex CLI 通过仅监听回环地址的临时 OpenAI 兼容桥接供 Retain 调用。Retain 输出的标准化版面、逐段译文和译文 PDF 再保存到 ReadX 文库。
+
 ## 内置了什么、重写了什么
 
 RetainPDF 由几块组成：Rust API + Python 翻译流水线（约 4 万行，依赖它自己的
@@ -10,18 +12,19 @@ RetainPDF 由几块组成：Rust API + Python 翻译流水线（约 4 万行，�
 
 - **排版渲染**原样内置：引擎是 Node，ReadX 的 Electron 自带 Node，直接把
   `resources/rendering-engine` 作为子进程运行。
-- **OCR** 接入 RetainPDF 默认使用的 PaddleOCR 文档解析服务（它本身也是远程服务，
-  不是随包模型）。块类型、翻译策略、阅读顺序按上游
-  `provider_adapters/paddle/{label_catalog,roles,translation_policy}.py` 归一
-  （`internal/ocr/paddle.go` 的 `KindForLabel` / `translatable`）。
-- **翻译链**与 Rust/Python 文档模型耦合，按它的翻译规则在 Go 里重写，保留 ReadX
-  的进程模型和既有版式回填。
+- **OCR、归一化、翻译、修复和导入排版**由随 ReadX vendor 的 RetainPDF `provider-case`
+  pipeline 实际执行；ReadX 只把 `document.v1` 与逐页 translation payload 投影到自己的
+  文库数据结构。模型 API 配置直接传给 Retain；Codex CLI 通过随机令牌保护的回环桥接调用。
+- **阅读器显示**直接加载 Retain 生成的整本译文 PDF（`/translated-pdf`），不再按页重排；
+  原文的「段落识别」使用 Retain `document.v1` 的块与阅读顺序，不再用 PDF.js 重新切段。
+- **题录识别**仍由 ReadX 负责：Retain 不返回题名/作者/期刊，导入完成后用 OCR 首页文本
+  调用一次模型识别题录（失败只记日志，不阻断已完成的翻译）。
 
 ## 翻译与排版的边界
 
-RetainPDF 的**渲染引擎本身就是 Node.js**（retain-pdf-rendering，MIT），所以这一层
-是原样内置的；它的 OCR 阶段也不是本地模型，而是 PaddleOCR/MinerU 远程服务，这里
-接入同一套 PaddleOCR 调用。只有翻译链因为与 Rust/Python 文档模型耦合，按规则重写。
+Windows PDF 导入执行 RetainPDF 的 Python provider pipeline。PaddleOCR 仍是用户设置的
+远程 OCR 服务；排版通过 Retain 的 RPR/Retain PDF 引擎完成。ReadX 桌面应用不启动 Retain
+桌面端、Rust API 或独立任务服务。
 
 | 能力 | ReadX 文件 | 对应 RetainPDF |
 | --- | --- | --- |
@@ -33,12 +36,13 @@ RetainPDF 的**渲染引擎本身就是 Node.js**（retain-pdf-rendering，MIT�
 | 默认数学直通 | `apps/server/internal/translate/protect.go`、`prompt.go`、`review.go`、`../render/math_check.go` | `math_mode=direct_typst`、`translation_direct_typst_guidance.txt`、`direct_typst.py`、`render_check.py` |
 | 原文快速保留策略 | `apps/server/internal/httpapi/translated_pdf.go` | `services/fast_path/keep_origin.py`、`services/policy/verdict.py`、`special_blocks.py` |
 | macOS 翻译入口 | `../macos/apps/server/internal/ai/translate.go` + `../macos/apps/server/internal/translate/`（同源引擎副本） | 同一套单段请求、质检、Agent 修复与最终恢复 |
-| 导入前全文翻译接入 | `apps/server/internal/httpapi/import_translation.go`、`../macos/apps/server/internal/httpapi/import_translation.go` | OCR 段落筛选、翻译、缓存与续接处理 |
+| Windows 导入全文处理 | `apps/server/internal/httpapi/retain_import.go`、`publications.go` | `provider-case`：Paddle OCR、document.v1、translation、repair、RPR render |
+| macOS 导入翻译入口 | `../macos/apps/server/internal/httpapi/import_translation.go` | OCR 段落筛选、翻译、缓存与续接处理 |
 | macOS 阅读器 OCR 译文 | `../macos/apps/server/internal/httpapi/ocr_layout.go`、`../macos/apps/web/src/components/ReaderScreen.tsx` | 按页读取已存 OCR 坐标与块级译文，在原 PDF 上叠加 |
 | macOS 译文 PDF 导出 | `../macos/apps/server/internal/render/render.go`、`../macos/apps/server/internal/httpapi/translated_pdf.go`、`../macos/apps/web/src/components/ExportPDFDialog.tsx` | 复用 RPR 输入协议；用导入时 OCR 版面及段落译文，不把段落数当页数 |
 | 译文 PDF 排版引擎 | `resources/rendering-engine`（上游固定提交） + `scripts/render-translated-pdf.cjs` | `backend/rendering-engine`、`render/output/rpr` |
 | 译文 PDF 接口 | `apps/server/internal/render/render.go`、`httpapi/translated_pdf.go` | `render.stage.v1` 与 rpr 合并 |
-| 阅读器按页排版译文 | `apps/server/internal/httpapi/translated_page.go`、`apps/web/src/components/PrintedTranslation.tsx` | `translate` + `render` 的按页执行 |
+| 阅读器段落识别 | `apps/server/internal/httpapi/translated_page.go`（`handleDocumentParagraphs`）、`apps/web/src/components/ReaderScreen.tsx` | `document.v1` 归一化后的块与阅读顺序，不再用 PDF.js 重新切段 |
 | 扫描件 OCR | `apps/server/internal/ocr/paddle.go`、`httpapi/ocr_settings.go`、`../macos/apps/server/internal/ocr/paddle.go` | `ocr_provider/paddle_api.py` 与 Paddle 适配 |
 | 导出界面 | `apps/web/src/components/ExportPDFDialog.tsx` | 桌面端导出译文 PDF |
 
@@ -58,12 +62,12 @@ RetainPDF 的**渲染引擎本身就是 Node.js**（retain-pdf-rendering，MIT�
 **必须同时配置 PaddleOCR 与 AI 助教**；缺任何一个，PDF 导入直接失败，不再有文本层
 分段或旧翻译接口作为回退。
 
-1. 上传后先对整份 PDF 做 PaddleOCR（原始结果按内容哈希缓存）；
-2. 按上游 document.v1 的块类型与翻译策略筛块；对续接判定合并后的跨块/跨页段落，先修复断词并合成一个翻译单元；
-3. 合并段落单次翻译后按 RetainPDF 的 token 权重、句末/标题边界切回 OCR 块，独立写入块级缓存与原坐标；低风险正文按 RetainPDF 的批量策略最多 8 段合并为 tagged 请求，其余条目单段翻译；批次中缺项或质检失败时只对失败条目拆分并回退单段请求；
-4. 数学公式默认走 RetainPDF `direct_typst` 路径：公式原文直接进入请求，要求输出 LaTeX；质检要求输出定界符闭合、花括号可配对并能由同一 MathJax 引擎排版，错误时走独立的 LaTeX 修复提示。生产路径只对硬术语使用 token 保护，代码、链接和邮箱按原文进入模型；
-5. 每页块坐标、续接分组与整组内容指纹写入 `app_state['ocr-layout:<key>']`，供阅读器按原版式读取同一块级缓存并渲染；
-6. 扫描件没有文本层时，首页文本也由 OCR 提供，题录识别因此仍可用。
+1. ReadX 上传/链接导入入口把 PDF 写入 Retain job workspace，并生成 `provider.stage.v1` spec；
+2. Retain Paddle provider 产出原始 OCR 与 `document.v1`；
+3. Retain 翻译链按其原生策略执行筛选、续接、批翻译、缓存、质检与修复；
+4. Retain RPR 引擎生成整本译文 PDF；
+5. ReadX 将 Retain 标准化段落与对应译文写入自己的页面/翻译表及版面状态，然后把 Retain PDF 保存为文库译文文件；
+6. Codex CLI 模式下，Retain 调用随机端口、仅监听 `127.0.0.1` 的短生命周期兼容桥；API 凭据只通过子进程环境传递，不写入 stage spec。
 
 ## 阅读器里的「OCR 排版译文」
 

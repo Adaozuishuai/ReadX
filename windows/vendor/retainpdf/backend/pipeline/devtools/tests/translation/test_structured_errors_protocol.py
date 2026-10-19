@@ -79,3 +79,15 @@ def test_rate_limit_errors_are_classified_as_retryable_rate_limit():
     assert payload["failure_category"] == "rate_limit"
     assert payload["retryable"] is True
     assert "限流" in payload["summary"]
+
+
+def test_paddle_queue_failure_keeps_code_and_ocr_stage():
+    try:
+        raise RuntimeError("Paddle OCR provider queue full (code 10010) after waiting 600s")
+    except RuntimeError as exc:
+        failure = classify_exception(exc, default_stage="normalization", provider="ocr")
+    assert failure.failed_stage == "ocr_processing"
+    assert failure.failure_code == "upstream_rate_limited"
+    assert failure.failure_category == "rate_limit"
+    assert failure.provider_code == "10010"
+    assert failure.retryable is True

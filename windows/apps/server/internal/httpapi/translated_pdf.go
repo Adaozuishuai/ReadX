@@ -1,8 +1,7 @@
-// translated_pdf.go：获取 RetainPDF 生成的整本译文 PDF。ReadX 不再对单页 OCR、翻译或排版。
+// translated_pdf.go：用已保存的 OCR 版式和段落译文生成整本译文 PDF。
 package httpapi
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -12,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"cbctv2/server/internal/legacy"
 	"cbctv2/server/internal/render"
@@ -76,55 +74,44 @@ func (s *Server) handleTranslatedPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	paths := legacy.NewPaths(s.cfg.DataRoot)
-	sourcePath, found := paths.PDFFile(key)
-	if !found {
-		writeError(w, http.StatusNotFound, "没有原 PDF 文件")
-		return
-	}
-	source, err := os.ReadFile(sourcePath)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "读取原 PDF 失败: "+err.Error())
-		return
-	}
 	outputPath := filepath.Join(paths.LibraryDir(), key+"-translated.pdf")
-	started := time.Now()
-	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Hour)
-	defer cancel()
-	client, err := newRetainPDFClient()
+	layout, hasLayout, err := s.loadLayout(r.Context(), key)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeError(w, http.StatusInternalServerError, "读取 OCR 版式失败: "+err.Error())
 		return
 	}
-	translated, err := client.runBook(ctx, key+".pdf", source, s.cfg.DataRoot, nil)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			writeError(w, http.StatusGatewayTimeout, "RetainPDF 处理超时")
-			return
-		}
-		writeError(w, http.StatusBadGateway, err.Error())
+	if !hasLayout || len(layout.Pages) == 0 {
+		writeError(w, http.StatusConflict, "这篇论文尚无 RetainPDF 处理记录，请重新导入后再导出译文 PDF")
 		return
 	}
-	if err := saveRetainPDFOutput(paths.LibraryDir(), key, translated); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if body.PageCount > 0 && body.PageCount != len(layout.Pages) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("请求页数 %d 与 RetainPDF 处理页数 %d 不一致", body.PageCount, len(layout.Pages)))
 		return
 	}
 	info, err := os.Stat(outputPath)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "译文 PDF 没有落盘: "+err.Error())
+		if errors.Is(err, os.ErrNotExist) {
+			writeError(w, http.StatusConflict, "RetainPDF 尚未生成译文 PDF，请重新导入论文")
+		} else {
+			writeError(w, http.StatusInternalServerError, "读取 RetainPDF 译文 PDF 失败: "+err.Error())
+		}
 		return
 	}
-	report := render.Report{Pages: body.PageCount, Timings: map[string]any{"totalSeconds": time.Since(started).Seconds()}}
+	blockCount := 0
+	for _, page := range layoutOCRPages(layout) {
+		for _, block := range page.Blocks {
+			if block.Translatable {
+				blockCount++
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, translatedPDFResponse{
-		Key:        key,
-		Pages:      report.Pages,
-		Blocks:     0,
-		Skipped:    0,
-		Overflow:   report.Overflow,
-		Collisions: report.Collisions,
-		FailedMath: report.FailedMath,
-		Bytes:      info.Size(),
-		Download:   "/v1/documents/" + key + "/translated-pdf",
-		Report:     report,
+		Key:      key,
+		Pages:    len(layout.Pages),
+		Blocks:   blockCount,
+		Skipped:  0,
+		Bytes:    info.Size(),
+		Download: "/v1/documents/" + key + "/translated-pdf",
 	})
 }
 
@@ -299,19 +286,10 @@ func looksLikeOCRSpecialLongList(text string) bool {
 
 // renderStatus 供前端在导出前判断运行环境。
 func (s *Server) handleRenderStatus(w http.ResponseWriter, r *http.Request) {
-	available := false
-	message := ""
-	client, err := newRetainPDFClient()
-	if err == nil {
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		err = client.jsonRequest(ctx, http.MethodGet, "/health", nil, nil)
-		cancel()
-	}
-	if err != nil {
-		message = err.Error()
-	} else {
-		available = true
-	}
+	renderer := render.New(s.cfg.DataRoot)
+	err := renderer.Available()
+	available := err == nil
+	message := errorString(err)
 	ocrConfig, ocrErr := s.loadOCRConfig()
 	if ocrErr == nil && strings.TrimSpace(ocrConfig.Token) == "" {
 		ocrErr = errors.New("OCR 令牌尚未配置")

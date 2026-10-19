@@ -51,6 +51,15 @@ func newImportServer(t *testing.T) (*httptestServerBundle, legacy.Paths) {
 	return bundle, paths
 }
 
+func testPDF(t testing.TB) []byte {
+	t.Helper()
+	data, err := os.ReadFile("testdata/translated-source.pdf")
+	if err != nil {
+		t.Fatalf("读取 PDF 测试夹具失败: %v", err)
+	}
+	return data
+}
+
 func get(t *testing.T, frontend *httptest.Server, path, token string) *http.Response {
 	t.Helper()
 	return do(t, frontend, http.MethodGet, path, token)

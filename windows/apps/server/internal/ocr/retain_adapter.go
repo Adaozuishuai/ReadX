@@ -62,6 +62,20 @@ type retainDocument struct {
 	Pages []retainPage `json:"pages"`
 }
 
+// ProjectNormalizedDocument converts RetainPDF's canonical document.v1 output
+// into the OCR page model used by the ReadX reader. OCR and structural
+// normalization stay owned by Retain; this projection is only the app boundary.
+func ProjectNormalizedDocument(data []byte) ([]Page, error) {
+	var document retainDocument
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("解析 RetainPDF document.v1 失败: %w", err)
+	}
+	if len(document.Pages) == 0 {
+		return nil, errors.New("RetainPDF document.v1 没有页面")
+	}
+	return projectRetainDocument(document)
+}
+
 type retainPage struct {
 	PageIndex int            `json:"page_index"`
 	Width     float64        `json:"width"`

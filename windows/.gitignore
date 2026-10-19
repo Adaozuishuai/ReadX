@@ -1,6 +1,9 @@
 node_modules/
 dist/
 bin/
+.retain-runtime/
+.retain-pip-cache/
+.retain-tmp/
 .tmp-smoke/
 apps/server/dev-info.json
 apps/server/dev-info.json.tmp

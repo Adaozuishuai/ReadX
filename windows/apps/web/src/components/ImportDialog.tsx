@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   api,
   type ImportCandidate,
+  type ImportMetadataHint,
   type ImportedDocument,
 } from '../api/client';
 import { useImportProgress } from './ImportProgressPanel';
@@ -72,12 +73,12 @@ export function ImportDialog({
       const fileIndex = 1;
       const files = 1;
       activity.update({ stage: 'upload', message: '正在准备上传，由 RetainPDF 处理论文', name: file.name, file: fileIndex, files, completed: 0, total: 0 });
-      const hint = { title: '', author: '', doi: '', arxiv: '', firstPage: '' };
+      const hint: ImportMetadataHint = { title: '', author: '', doi: '', arxiv: '', firstPage: '' };
       const source = sources.current.get(file);
       if (source) {
         hint.source = source;
       }
-      // PDF 的 OCR、段落整理、翻译和排版全部由 RetainPDF 完成；EPUB 保留章节导入流程。
+      // PDF processing is delegated to RetainPDF; EPUB keeps its chapter import flow.
       setJobFile(file);
       const result = await api.upload([file], request.signal, [hint], activity.receive);
       const imported = result.results[0];
@@ -213,7 +214,7 @@ export function ImportDialog({
           按标题 / DOI 查找
         </button>
       </div>
-      <details className="import-data-note"><summary>题录识别、翻译与数据说明</summary><p>PDF 导入后由 RetainPDF 完成 OCR、段落整理、翻译和 PDF 排版。ReadX 保存并展示 RetainPDF 返回的成品；OCR 与翻译模型配置在 AI 助手设置中管理。</p></details>
+      <details className="import-data-note"><summary>题录识别、翻译与数据说明</summary><p>PDF 导入后由 ReadX 执行 OCR、段落整理、翻译和 PDF 排版。OCR 与翻译模型配置在 AI 助手设置中管理。</p></details>
       {error && (
         <p role="alert" className="text-bad">
           {error}

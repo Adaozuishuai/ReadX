@@ -225,6 +225,7 @@ class TranslateStageParams:
     memory_mode: str
     model: str
     base_url: str
+    provider: str
     credential_ref: str
     # 译前准备档位与审校模型配置位。旧 spec 没有这些 key，一律按默认值（off / 空串）读。
     preparation: str
@@ -689,6 +690,7 @@ class ProviderStageTranslationParams:
     memory_mode: str
     model: str
     base_url: str
+    provider: str
     credential_ref: str
     # 译前准备档位与审校模型配置位。旧 spec 没有这些 key，一律按默认值（off / 空串）读。
     preparation: str
@@ -844,6 +846,7 @@ class ProviderStageSpec:
             .lower(),
             model=str(translation_payload.get("model", "") or ""),
             base_url=str(translation_payload.get("base_url", "") or ""),
+            provider=str(translation_payload.get("provider", "") or "").strip().lower(),
             credential_ref=str(translation_payload.get("credential_ref", "") or ""),
             **_preparation_and_reviewer_fields(translation_payload),
         )

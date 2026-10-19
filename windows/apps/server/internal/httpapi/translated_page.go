@@ -54,6 +54,7 @@ type layoutBlock struct {
 	SemanticRole              string         `json:"semanticRole,omitempty"`
 	StructureRole             string         `json:"structureRole,omitempty"`
 	PolicyReason              string         `json:"policyReason,omitempty"`
+	NotTranslatable           bool           `json:"notTranslatable,omitempty"`
 	Segments                  []ocr.Segment  `json:"segments,omitempty"`
 	Lines                     []ocr.Line     `json:"lines,omitempty"`
 	LineTexts                 []string       `json:"lineTexts,omitempty"`
@@ -446,7 +447,7 @@ func (s *Server) prepareOCRLayoutTranslations(ctx context.Context, pdf []byte, s
 			entry.Blocks = append(entry.Blocks, layoutBlock{
 				Kind: block.Kind, SourceOrder: block.SourceOrder, HasSourceOrder: block.HasSourceOrder, ProviderBlockID: block.ProviderBlockID, RawGroupID: block.RawGroupID, RawGlobalGroupID: block.RawGlobalGroupID, RawBlockOrder: block.RawBlockOrder, HasRawBlockOrder: block.HasRawBlockOrder, Text: block.Text, Box: block.Box,
 				LayoutRole: block.LayoutRole, SemanticRole: block.SemanticRole,
-				StructureRole: block.StructureRole, PolicyReason: block.PolicyReason,
+				StructureRole: block.StructureRole, PolicyReason: block.PolicyReason, NotTranslatable: !block.Translatable,
 				Segments: block.Segments, Lines: block.Lines, LineTexts: block.LineTexts,
 				ColumnLayoutMode: block.ColumnLayoutMode, ColumnIndexGuess: block.ColumnIndexGuess,
 				CrossColumnMergeSuspected: block.CrossColumnMergeSuspected, ReadingOrderUnreliable: block.ReadingOrderUnreliable,
@@ -522,16 +523,41 @@ func layoutOCRPages(layout layoutDoc) []ocr.Page {
 		page := ocr.Page{Index: entry.Page - 1, Width: entry.Width, Height: entry.Height}
 		for blockIndex, block := range entry.Blocks {
 			page.Blocks = append(page.Blocks, ocr.Block{
-				ID:             fmt.Sprintf("layout-p%d-b%d", entry.Page, blockIndex+1),
-				SourceOrder:    block.SourceOrder,
-				HasSourceOrder: block.HasSourceOrder,
-				Kind:           block.Kind,
-				Text:           block.Text,
-				Box:            block.Box,
-				Translatable:   true,
-				LayoutMode:     block.LayoutMode, LayoutZone: block.LayoutZone, BoundaryRole: block.BoundaryRole,
-				ContinuationGroup: block.ContinuationGroup, ContinuationSignature: block.ContinuationSignature, ContinuationDecision: block.ContinuationDecision,
+				ID:               fmt.Sprintf("layout-p%d-b%d", entry.Page, blockIndex+1),
+				SourceOrder:      block.SourceOrder,
+				HasSourceOrder:   block.HasSourceOrder,
+				ProviderBlockID:  block.ProviderBlockID,
+				RawGroupID:       block.RawGroupID,
+				RawGlobalGroupID: block.RawGlobalGroupID,
+				RawBlockOrder:    block.RawBlockOrder,
+				HasRawBlockOrder: block.HasRawBlockOrder,
+				Kind:             block.Kind,
+				Text:             block.Text,
+				Box:              block.Box,
+				Translatable:     !block.NotTranslatable,
+				LayoutRole:       block.LayoutRole,
+				SemanticRole:     block.SemanticRole,
+				StructureRole:    block.StructureRole,
+				PolicyReason:     block.PolicyReason,
+				Segments:         block.Segments,
+				Lines:            block.Lines,
+				LineTexts:        block.LineTexts,
+				LayoutMode:       block.LayoutMode, LayoutSplitX: block.LayoutSplitX,
+				LayoutZone: block.LayoutZone, LayoutZoneRank: block.LayoutZoneRank, LayoutZoneSize: block.LayoutZoneSize,
+				BoundaryRole:     block.BoundaryRole,
+				ColumnLayoutMode: block.ColumnLayoutMode, ColumnIndexGuess: block.ColumnIndexGuess,
+				CrossColumnMergeSuspected: block.CrossColumnMergeSuspected,
+				ReadingOrderUnreliable:    block.ReadingOrderUnreliable,
+				StructureUnreliable:       block.StructureUnreliable,
+				TextMissingButBBoxPresent: block.TextMissingButBBoxPresent,
+				PeerBlockAbsorbedText:     block.PeerBlockAbsorbedText,
+				SuspectedPeerBlockID:      block.SuspectedPeerBlockID,
+				ContinuationGroup:         block.ContinuationGroup, ContinuationSignature: block.ContinuationSignature, ContinuationDecision: block.ContinuationDecision,
 				ContinuationPrevious: block.ContinuationPrevious, ContinuationNext: block.ContinuationNext,
+				ProviderContinuationRole: block.ProviderContinuationRole, ProviderContinuationScope: block.ProviderContinuationScope,
+				ProviderContinuationOrder: block.ProviderContinuationOrder, ProviderContinuationScore: block.ProviderContinuationScore,
+				ProviderContinuationSkip: block.ProviderContinuationSkip,
+				RetainMetadata:           block.RetainMetadata,
 			})
 		}
 		pages[index] = page
@@ -585,6 +611,73 @@ func (s *Server) handleLayoutStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type paragraphBlock struct {
+	Index        int        `json:"index"`
+	Text         string     `json:"text"`
+	Box          [4]float64 `json:"box"`
+	Kind         string     `json:"kind"`
+	Role         string     `json:"role,omitempty"`
+	SourceOrder  int        `json:"sourceOrder,omitempty"`
+	Translatable bool       `json:"translatable"`
+}
+
+// handleDocumentParagraphs 返回 Retain document.v1 归一化后的页面段落：
+// 阅读器的「段落识别」直接使用这套块与坐标，不再用 PDF.js 重新切段。
+func (s *Server) handleDocumentParagraphs(w http.ResponseWriter, r *http.Request) {
+	key, ok := pathKey(w, r)
+	if !ok {
+		return
+	}
+	pageNumber, err := strconv.Atoi(strings.TrimSpace(r.PathValue("page")))
+	if err != nil || pageNumber < 1 {
+		writeError(w, http.StatusBadRequest, "页码必须是从 1 开始的整数")
+		return
+	}
+	if _, err := s.loadDocument(r.Context(), key); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "没有这篇文档")
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	layout, available, err := s.loadLayout(r.Context(), key)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !available || pageNumber > len(layout.Pages) {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false, "page": pageNumber, "blocks": []paragraphBlock{}})
+		return
+	}
+	entry := layout.Pages[pageNumber-1]
+	blocks := make([]paragraphBlock, 0, len(entry.Blocks))
+	for index, block := range entry.Blocks {
+		text := strings.TrimSpace(block.Text)
+		if text == "" || nonParagraphKind(block.Kind) {
+			continue
+		}
+		blocks = append(blocks, paragraphBlock{
+			Index: index, Text: text, Box: block.Box, Kind: block.Kind,
+			Role: roleForKind(block.Kind), SourceOrder: block.SourceOrder,
+			Translatable: !block.NotTranslatable,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"available": true, "page": pageNumber,
+		"width": entry.Width, "height": entry.Height, "blocks": blocks,
+	})
+}
+
+// nonParagraphKind 排除公式、表格与图片块：它们没有可提问的正文段落。
+func nonParagraphKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "formula", "display_formula", "inline_formula", "table", "table_body", "image", "figure", "chart":
+		return true
+	}
+	return false
+}
+
 type translatedPageRequest struct {
 	// Width/Height 是原 PDF 该页的尺寸（pt），由前端从 PDF.js 读出；
 	// OCR 结果的像素坐标要按它换算，叠加层也才能和原页严格对齐。
@@ -606,9 +699,6 @@ type translatedPageStats struct {
 
 // handleTranslatedPage 返回单页译文 PDF（原页 + 译文叠加层），供阅读器直接渲染。
 func (s *Server) handleTranslatedPage(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusGone, "单页 ReadX 排版已停用；请通过 RetainPDF 完整文档任务生成译文 PDF")
-	return
-
 	key, ok := pathKey(w, r)
 	if !ok {
 		return
@@ -813,6 +903,39 @@ func (s *Server) renderTranslatedPage(ctx context.Context, key string, source []
 		return stats, nil, fmt.Errorf("读取排版结果失败: %w", err)
 	}
 	return stats, data, nil
+}
+
+// renderTranslatedDocument builds a complete translated PDF from the persisted
+// Retain-normalized layout and ReadX translation cache. OCR and paragraph
+// normalization are only rerun when the document has no saved layout.
+func (s *Server) renderTranslatedDocument(ctx context.Context, key string, source []byte, pages []ocr.Page, renderer *render.Renderer, outputPath string) (render.Report, error) {
+	if len(pages) == 0 {
+		return render.Report{}, errors.New("没有可用于排版的 OCR 页面")
+	}
+	renderPages := make([]render.Page, len(pages))
+	for pageIndex, page := range pages {
+		if page.Index != pageIndex {
+			return render.Report{}, fmt.Errorf("OCR 页码不连续：第 %d 个位置对应页 %d", pageIndex+1, page.Index+1)
+		}
+		items, owners, _ := pageTranslationItems(page, neighbor(pages, pageIndex-1), neighbor(pages, pageIndex+1))
+		targets, err := s.translatePageItems(ctx, key, items, false)
+		if err != nil {
+			return render.Report{}, fmt.Errorf("第 %d 页译文准备失败: %w", pageIndex+1, err)
+		}
+		outputPage := render.Page{Index: pageIndex, Width: page.Width, Height: page.Height}
+		for itemIndex, blockIndex := range owners {
+			if itemIndex >= len(targets) || strings.TrimSpace(targets[itemIndex]) == "" {
+				continue
+			}
+			block := page.Blocks[blockIndex]
+			outputPage.Blocks = append(outputPage.Blocks, render.Block{
+				Text: targets[itemIndex], Box: block.Box,
+				FontSize: estimateFontSize(block.Box, block.Kind), Role: roleForKind(block.Kind),
+			})
+		}
+		renderPages[pageIndex] = outputPage
+	}
+	return renderer.Render(ctx, source, renderPages, outputPath)
 }
 
 // extractOriginalPage 原样返回这一页：公式/表格/图片页或译文为空时使用，

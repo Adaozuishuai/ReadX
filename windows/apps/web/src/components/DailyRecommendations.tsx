@@ -73,7 +73,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
     return papers.filter((paper) => !titles.has(normalizedTitle(paper.title)) && (!paper.doi || !dois.has(paper.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//, '')))).slice(0, 5);
   }, [documents, papers]);
 
-  /** 推荐卡片的 PDF 下载后交给 RetainPDF 完整处理。 */
+  /** 推荐论文下载后走 ReadX 的本地 OCR、翻译与排版流程。 */
   const importPaper = async (paper: DailyRecommendation) => {
     if (!paper.pdfUrl) return;
     // 同一个按钮兼任取消：一次导入要跑完识别＋全文翻译，必须能中途停下。

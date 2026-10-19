@@ -78,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /v1/documents/{key}/pages/{page}", withAuth(s.handlePagePut))
 	mux.Handle("POST /v1/documents/{key}/pages/{page}/translated-page", withAuth(s.handleTranslatedPage))
 	mux.Handle("GET /v1/documents/{key}/layout", withAuth(s.handleLayoutStatus))
+	mux.Handle("GET /v1/documents/{key}/pages/{page}/paragraphs", withAuth(s.handleDocumentParagraphs))
 	mux.Handle("GET /v1/documents/{key}/translation-qa", withAuth(s.handleTranslationQA))
 	mux.Handle("GET /v1/documents/{key}/job", withAuth(s.handleDocumentJob))
 	mux.Handle("POST /v1/documents/{key}/job/cancel", withAuth(s.handleCancelDocumentJob))

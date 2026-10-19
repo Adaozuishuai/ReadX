@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -126,6 +125,10 @@ func (c *Client) streamCLIWithImages(ctx context.Context, messages []Message, im
 	if len(images) > 0 && c.cfg.ProviderName() != "codex" {
 		return "", fmt.Errorf("%s", ErrImageUnsupportedByCLI)
 	}
+	provider := c.cfg.ProviderName()
+	if provider == "codex" {
+		return c.streamCodexAppServer(ctx, messages, images, onDelta, schemas...)
+	}
 	if c.cfg.tempRoot != "" {
 		if err := os.MkdirAll(c.cfg.tempRoot, 0700); err != nil {
 			return "", fmt.Errorf("无法创建 AI 临时目录: %w", err)
@@ -141,45 +144,8 @@ func (c *Client) streamCLIWithImages(ctx context.Context, messages []Message, im
 	for _, m := range messages {
 		fmt.Fprintf(&prompt, "\n[%s]\n%s\n", m.Role, m.Content)
 	}
-	provider := c.cfg.ProviderName()
-	outputFile := ""
 	var args []string
 	switch provider {
-	case "codex":
-		args = []string{"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--skip-git-repo-check", "-c", "features.shell_tool=false", "-c", "web_search=\"disabled\""}
-		if len(schemas) > 0 && len(schemas[0]) > 0 {
-			schemaFile := filepath.Join(dir, "reading.schema.json")
-			if !json.Valid(schemas[0]) {
-				return "", fmt.Errorf("精读输出结构配置无效")
-			}
-			if err := os.WriteFile(schemaFile, schemas[0], 0600); err != nil {
-				return "", fmt.Errorf("无法准备精读输出结构: %w", err)
-			}
-			outputFile = filepath.Join(dir, "reading.final.json")
-			args = append(args, "--output-schema", schemaFile, "--output-last-message", outputFile)
-		}
-		// Runtime state belongs to this request; credentials remain in Codex's
-		// own auth store, which only needs to be read by the application.
-		for _, setting := range []string{"sqlite_home", "log_dir"} {
-			value, _ := json.Marshal(dir)
-			args = append(args, "-c", setting+"="+string(value))
-		}
-		args = append(args, "-c", "history.persistence=\"none\"", "-c", "features.shell_snapshot=false")
-		if c.cfg.Model != "" {
-			args = append(args, "-m", c.cfg.Model)
-		}
-		if c.cfg.ReasoningEffort != "" {
-			value, _ := json.Marshal(c.cfg.ReasoningEffort)
-			args = append(args, "-c", "model_reasoning_effort="+string(value))
-		}
-		for i, data := range images {
-			path := filepath.Join(dir, fmt.Sprintf("visual-%03d.png", i+1))
-			if err := os.WriteFile(path, data, 0600); err != nil {
-				return "", fmt.Errorf("无法准备图表附件: %w", err)
-			}
-			args = append(args, "-i", path)
-		}
-		args = append(args, "-")
 	case "claude":
 		args = []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`, "--setting-sources", "", "--settings", `{"disableAllHooks":true}`, "--disable-slash-commands", "--no-session-persistence"}
 		if c.cfg.Model != "" {
@@ -329,20 +295,6 @@ func (c *Client) streamCLIWithImages(ctx context.Context, messages []Message, im
 			return full.String(), fmt.Errorf("%s 启动失败：%s", provider, detail)
 		}
 		return full.String(), fmt.Errorf("%s CLI 未完成回答，请检查安装版本、终端登录和额度；未保存", provider)
-	}
-	if outputFile != "" {
-		// Codex writes the final structured response here, separately from JSONL
-		// events and intermediate messages. Never parse the event stream as notes.
-		file, err := os.Open(outputFile)
-		if err != nil {
-			return "", fmt.Errorf("Codex 未写出完整的精读结构化结果，未保存")
-		}
-		defer file.Close()
-		data, err := io.ReadAll(io.LimitReader(file, (8<<20)+1))
-		if err != nil || len(data) > 8<<20 || strings.TrimSpace(string(data)) == "" {
-			return "", fmt.Errorf("Codex 精读结构化结果为空、读取失败或超出容量，未保存")
-		}
-		return string(data), nil
 	}
 	if full.Len() == 0 {
 		return "", fmt.Errorf("%s CLI 没有返回内容，未保存", provider)

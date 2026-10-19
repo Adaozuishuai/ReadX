@@ -40,6 +40,7 @@ ENGINE_DIR_ENV_VAR = "RETAIN_RPR_ENGINE_DIR"
 NODE_ENV_VAR = "RETAINPDF_NODE_BIN"
 ENGINE_TIMEOUT_ENV_VAR = "RETAIN_RPR_ENGINE_TIMEOUT_SECONDS"
 ENGINE_OUTPUT_ENV_VAR = "RETAIN_RPR_ENGINE_OUTPUT"
+ENGINE_NODE_MODULES_ENV_VAR = "RETAIN_RPR_NODE_MODULES_DIR"
 ENGINE_OUTPUTS = ("pdf", "typst")
 MIN_NODE_VERSION = (22, 8, 0)
 DEFAULT_TIMEOUT_SECONDS = 1800
@@ -82,6 +83,10 @@ class RprEngineRuntime:
         env = dict(os.environ)
         if self.electron_as_node:
             env.setdefault("ELECTRON_RUN_AS_NODE", "1")
+        modules = env.get(ENGINE_NODE_MODULES_ENV_VAR, "").strip()
+        if modules:
+            prior = env.get("NODE_PATH", "").strip()
+            env["NODE_PATH"] = modules if not prior else modules + os.pathsep + prior
         return env
 
 
@@ -169,11 +174,12 @@ def resolve_engine_runtime(entry_script: str = "rpr-retain.js") -> RprEngineRunt
             "engine_not_installed",
             f"找不到 rpr 引擎入口 {entry}（{ENGINE_DIR_ENV_VAR} 未设置时用仓库里的 backend/rendering-engine）",
         )
-    missing = [name for name in RUNTIME_PACKAGES if not (engine_dir / "node_modules" / name / "package.json").is_file()]
+    node_modules = Path(os.environ.get(ENGINE_NODE_MODULES_ENV_VAR, "").strip() or (engine_dir / "node_modules"))
+    missing = [name for name in RUNTIME_PACKAGES if not (node_modules / name / "package.json").is_file()]
     if missing:
         raise RprEngineUnavailable(
             "engine_dependencies_missing",
-            f"rpr 引擎缺运行时依赖 {', '.join(missing)}：在 {engine_dir} 下运行 npm ci --omit=dev",
+            f"rpr 引擎缺运行时依赖 {', '.join(missing)}：请检查 {node_modules} 下的运行时包",
         )
     node, electron_as_node = _resolve_node()
     version_text = _node_version(node, electron_as_node=electron_as_node)

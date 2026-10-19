@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  api,
-  type OCRSettings,
-  type TranslatedPDFResponse,
-} from '../api/client';
+import { api, type TranslatedPDFResponse } from '../api/client';
 
 /**
  * 生成保留排版的译文 PDF。
  *
- * 整本 OCR、段落整理、翻译与排版都由 RetainPDF 完成；ReadX 只保存并展示返回的 PDF。
+ * RetainPDF creates the translated PDF during import. ReadX only reuses and downloads it.
  */
 type Phase = 'idle' | 'working' | 'done' | 'error';
 
@@ -16,29 +12,19 @@ interface Props {
   documentKey: string;
   pageCount: number;
   onClose: () => void;
-  onOpenAISettings: () => void;
 }
 
-export function ExportPDFDialog({ documentKey, pageCount, onClose, onOpenAISettings }: Props) {
+export function ExportPDFDialog({ documentKey, pageCount, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [result, setResult] = useState<TranslatedPDFResponse | null>(null);
-  const [ocr, setOCR] = useState<OCRSettings | null>(null);
   const cancelled = useRef(false);
 
   useEffect(() => {
     dialog.current?.showModal();
     cancelled.current = false;
-    void api.ocrSettings()
-      .then((settings) => {
-        if (cancelled.current) return;
-        setOCR(settings);
-      })
-      .catch((cause) => {
-        if (!cancelled.current) setError(cause instanceof Error ? cause.message : String(cause));
-      });
     return () => {
       cancelled.current = true;
     };
@@ -63,10 +49,7 @@ export function ExportPDFDialog({ documentKey, pageCount, onClose, onOpenAISetti
     setResult(null);
     setProgress('');
     try {
-      if (!ocr?.configured) {
-        throw new Error('请先在 AI 助手设置中配置 RetainPDF 使用的 OCR 令牌。');
-      }
-      setProgress(`RetainPDF 正在处理整篇论文（共 ${pageCount} 页）…`);
+      setProgress(`正在读取 RetainPDF 已生成的译文（共 ${pageCount} 页）…`);
       const response = await api.translatedPDF(documentKey, { pageCount });
       setResult(response);
       setPhase('done');
@@ -92,21 +75,12 @@ export function ExportPDFDialog({ documentKey, pageCount, onClose, onOpenAISetti
       <header>
         <div>
           <h2>导出译文 PDF</h2>
-          <small>RetainPDF 负责 OCR、段落整理、翻译和译文 PDF 排版。</small>
+          <small>译文由 RetainPDF 在导入时生成；ReadX 直接提供成品下载。</small>
         </div>
         <button type="button" disabled={phase === 'working'} onClick={onClose}>关闭</button>
       </header>
 
       <div className="export-pdf-body">
-        <div className={`export-pdf-ocr${ocr?.configured ? ' ok' : ''}`}>
-          <div>
-            <strong>{ocr?.provider === 'mineru' ? 'MinerU' : 'PaddleOCR'}</strong>
-            <span>{ocr?.configured ? '已配置' : '尚未配置'}</span>
-          </div>
-          <p>OCR 服务令牌在 AI 助手设置中管理，RetainPDF 会执行实际识别。</p>
-          {!ocr?.configured ? <button type="button" onClick={onOpenAISettings}>打开 AI 助手设置</button> : null}
-        </div>
-
         {progress ? <p className="export-pdf-progress">{progress}</p> : null}
         {error ? <p className="text-bad">{error}</p> : null}
         {result ? (
@@ -125,7 +99,7 @@ export function ExportPDFDialog({ documentKey, pageCount, onClose, onOpenAISetti
       <footer>
         <button type="button" onClick={onClose} disabled={phase === 'working'}>取消</button>
         <button type="button" className="primary" disabled={phase === 'working'} onClick={() => void run()}>
-          {phase === 'working' ? '生成中…' : '生成译文 PDF'}
+          {phase === 'working' ? '准备下载…' : '下载译文 PDF'}
         </button>
       </footer>
     </dialog>

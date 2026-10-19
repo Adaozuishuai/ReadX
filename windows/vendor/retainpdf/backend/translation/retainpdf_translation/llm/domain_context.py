@@ -52,6 +52,12 @@ def _domain_context_deadline(timeout_secs: int):
     if timeout_secs <= 0 or threading.current_thread() is not threading.main_thread():
         yield
         return
+    # Windows Python does not expose SIGALRM/setitimer. The request itself
+    # receives a timeout capped by this same total deadline, so leave deadline
+    # enforcement to the HTTP client on platforms without POSIX interval timers.
+    if not hasattr(signal, "SIGALRM") or not hasattr(signal, "setitimer"):
+        yield
+        return
     previous_handler = signal.getsignal(signal.SIGALRM)
     previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
 

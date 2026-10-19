@@ -209,6 +209,8 @@ export function DocumentJobDialog({
   const ocrStage = stageOf(job, 'ocr');
   const translateStage = stageOf(job, 'translate');
   const renderStage = stageOf(job, 'render');
+  const translationUnit = stageUnit(translateStage);
+  const renderingUnit = stageUnit(renderStage);
   const processedSegments = Math.max(0, translateStage?.completed ?? 0);
   const totalSegments = Math.max(0, translateStage?.total ?? 0);
   const processedPages = Math.max(0, renderStage?.completed ?? 0);
@@ -218,12 +220,15 @@ export function DocumentJobDialog({
     renderStage?.total || (renderStage?.status === 'pending' && ocrStage?.status === 'done' ? ocrTotalPages : 0),
   );
   const statusText = status ? STATUS_LABEL[status] ?? status : pending ? '处理中' : '还没有任务记录';
+  const activeMessage = running ? job?.stages.find((stage) => stage.status === 'running' && stage.message)?.message : '';
   const statusDetail = job
     ? document.format === 'epub'
       ? '按 EPUB 章节结构保存；无需 OCR 和 PDF 版面渲染'
+      : activeMessage
+      ? activeMessage
       : totalSegments > 0
-      ? `已处理 ${processedSegments} / ${totalSegments} 段 · 页面排版 ${processedPages} / ${renderTotal || '—'} 页`
-      : `页面排版 ${processedPages} / ${renderTotal || '—'} 页`
+      ? `已处理 ${processedSegments} / ${totalSegments} ${translationUnit} · 排版 ${processedPages} / ${renderTotal || '—'} ${renderingUnit}`
+      : `排版 ${processedPages} / ${renderTotal || '—'} ${renderingUnit}`
     : pending
       ? document.format === 'epub' ? '正在上传文件，任务创建后显示章节导入状态' : '正在上传文件，任务创建后显示 OCR 进度'
       : document.format === 'epub' ? '导入后这里会显示 EPUB 章节导入状态。' : '导入后这里会显示 RetainPDF 的 OCR、翻译与渲染进度。';
@@ -332,7 +337,7 @@ export function DocumentJobDialog({
                 <span aria-hidden="true">◉</span>
                 <div>
                   <strong>{document.format === 'epub' ? '在阅读器中打开 →' : '查看译文 PDF →'}</strong>
-                  <small>{importing ? 'RetainPDF 处理完成后可打开' : document.format === 'epub' ? '保留 EPUB 原章节结构' : '直接阅读 RetainPDF 生成的完整译文 PDF'}</small>
+                  <small>{importing ? '处理完成后可打开' : document.format === 'epub' ? '保留 EPUB 原章节结构' : '查看 ReadX 生成的译文 PDF'}</small>
                 </div>
               </button>
 
@@ -375,17 +380,17 @@ export function DocumentJobDialog({
                 </section>
               ) : <section className="job-progress-metrics" aria-label="翻译和排版进度">
                 <article className="job-card job-metric-card">
-                  <div className="job-metric-heading"><span className="job-metric-icon">文</span><span>OCR 段落翻译</span></div>
-                  <strong>{processedSegments}<small> / {totalSegments || '—'} 段</small></strong>
-                  <div className="job-meter" role="progressbar" aria-label="翻译段落进度" aria-valuemin={0} aria-valuemax={totalSegments || 1} aria-valuenow={processedSegments}>
+                  <div className="job-metric-heading"><span className="job-metric-icon">文</span><span>翻译进度</span></div>
+                  <strong>{processedSegments}<small> / {totalSegments || '—'} {translationUnit}</small></strong>
+                  <div className="job-meter" role="progressbar" aria-label="翻译进度" aria-valuemin={0} aria-valuemax={totalSegments || 1} aria-valuenow={processedSegments}>
                     <span style={{ width: `${totalSegments ? Math.min(100, (processedSegments / totalSegments) * 100) : 0}%` }} />
                   </div>
                   <small className="job-metric-foot">OCR 已识别 {ocrPages} / {ocrTotalPages || '—'} 页</small>
                 </article>
                 <article className="job-card job-metric-card">
                   <div className="job-metric-heading"><span className="job-metric-icon">页</span><span>译文页面排版</span></div>
-                  <strong>{processedPages}<small> / {renderTotal || '—'} 页</small></strong>
-                  <div className="job-meter" role="progressbar" aria-label="页面排版进度" aria-valuemin={0} aria-valuemax={renderTotal || 1} aria-valuenow={processedPages}>
+                  <strong>{processedPages}<small> / {renderTotal || '—'} {renderingUnit}</small></strong>
+                  <div className="job-meter" role="progressbar" aria-label="排版进度" aria-valuemin={0} aria-valuemax={renderTotal || 1} aria-valuenow={processedPages}>
                     <span style={{ width: `${renderTotal ? Math.min(100, (processedPages / renderTotal) * 100) : 0}%` }} />
                   </div>
                   <small className="job-metric-foot">{renderStage?.message || '等待翻译段落处理完成'}</small>
@@ -437,11 +442,11 @@ export function DocumentJobDialog({
                 </button>
                 {document.format !== 'epub' ? <button type="button" onClick={downloadTranslated} disabled={openDisabled}>
                   <span aria-hidden="true">Aa</span>
-                  <div><strong>译文 PDF</strong><small>RetainPDF 处理完成后提供</small></div>
+                  <div><strong>译文 PDF</strong><small>ReadX 排版完成后提供</small></div>
                   <span aria-hidden="true">⇩</span>
                 </button> : null}
               </section>
-              {document.format !== 'epub' ? <p className="job-action-note">PDF 的 OCR、翻译与排版由 RetainPDF 完成，ReadX 保存并展示成品。</p> : <p className="job-action-note">EPUB 保留原章节结构，在阅读器中打开。</p>}
+              {document.format !== 'epub' ? <p className="job-action-note">PDF 的 OCR、段落整理、翻译与排版由 ReadX 本地处理。</p> : <p className="job-action-note">EPUB 保留原章节结构，在阅读器中打开。</p>}
             </div>
           ) : null}
 
