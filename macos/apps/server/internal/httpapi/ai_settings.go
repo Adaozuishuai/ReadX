@@ -115,6 +115,7 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := ai.LoadConfig(path)
 	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}})
 }
+
 // handleAIModels 读取当前地址可用的模型列表：OpenAI 兼容与 Anthropic 都提供 GET /models。
 //
 // Key 优先用请求里刚输入的（还没保存也能先看看有哪些模型），否则回落到该「渠道|地址」已保存的 Key。
