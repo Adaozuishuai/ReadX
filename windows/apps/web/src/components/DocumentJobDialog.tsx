@@ -211,8 +211,8 @@ export function DocumentJobDialog({
   const renderStage = stageOf(job, 'render');
   const translationUnit = stageUnit(translateStage);
   const renderingUnit = stageUnit(renderStage);
-  const processedSegments = Math.max(0, translateStage?.completed ?? 0);
-  const totalSegments = Math.max(0, translateStage?.total ?? 0);
+  const translationCompleted = Math.max(0, translateStage?.completed ?? 0);
+  const translationTotal = Math.max(0, translateStage?.total ?? 0);
   const processedPages = Math.max(0, renderStage?.completed ?? 0);
   const ocrPages = Math.max(0, ocrStage?.completed ?? 0);
   const ocrTotalPages = Math.max(0, ocrStage?.total || pages);
@@ -226,8 +226,8 @@ export function DocumentJobDialog({
       ? '按 EPUB 章节结构保存；无需 OCR 和 PDF 版面渲染'
       : activeMessage
       ? activeMessage
-      : totalSegments > 0
-      ? `已处理 ${processedSegments} / ${totalSegments} ${translationUnit} · 排版 ${processedPages} / ${renderTotal || '—'} ${renderingUnit}`
+      : translationTotal > 0
+      ? `已处理 ${translationCompleted} / ${translationTotal} ${translationUnit} · 排版 ${processedPages} / ${renderTotal || '—'} ${renderingUnit}`
       : `排版 ${processedPages} / ${renderTotal || '—'} ${renderingUnit}`
     : pending
       ? document.format === 'epub' ? '正在上传文件，任务创建后显示章节导入状态' : '正在上传文件，任务创建后显示 OCR 进度'
@@ -381,11 +381,15 @@ export function DocumentJobDialog({
               ) : <section className="job-progress-metrics" aria-label="翻译和排版进度">
                 <article className="job-card job-metric-card">
                   <div className="job-metric-heading"><span className="job-metric-icon">文</span><span>翻译进度</span></div>
-                  <strong>{processedSegments}<small> / {totalSegments || '—'} {translationUnit}</small></strong>
-                  <div className="job-meter" role="progressbar" aria-label="翻译进度" aria-valuemin={0} aria-valuemax={totalSegments || 1} aria-valuenow={processedSegments}>
-                    <span style={{ width: `${totalSegments ? Math.min(100, (processedSegments / totalSegments) * 100) : 0}%` }} />
+                  <strong>{translationCompleted}<small> / {translationTotal || '—'} {translationUnit}</small></strong>
+                  <div className="job-meter" role="progressbar" aria-label="翻译进度" aria-valuemin={0} aria-valuemax={translationTotal || 1} aria-valuenow={translationCompleted}>
+                    <span style={{ width: `${translationTotal ? Math.min(100, (translationCompleted / translationTotal) * 100) : 0}%` }} />
                   </div>
-                  <small className="job-metric-foot">OCR 已识别 {ocrPages} / {ocrTotalPages || '—'} 页</small>
+                  <small className="job-metric-foot">
+                    {translateStage?.resultCount
+                      ? `已生成 ${translateStage.resultCount} ${translateStage.resultUnit || '段'}译文 · OCR 已识别 ${ocrPages} / ${ocrTotalPages || '—'} 页`
+                      : `OCR 已识别 ${ocrPages} / ${ocrTotalPages || '—'} 页`}
+                  </small>
                 </article>
                 <article className="job-card job-metric-card">
                   <div className="job-metric-heading"><span className="job-metric-icon">页</span><span>译文页面排版</span></div>

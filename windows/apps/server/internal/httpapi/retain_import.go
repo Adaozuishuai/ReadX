@@ -272,8 +272,15 @@ func (s *Server) runRetainPDFImport(ctx context.Context, key, name string, pdf [
 	}
 	s.jobStage(key, "ocr", "done", "Retain 已完成 OCR 与 document.v1 整理", len(pages), len(pages))
 	s.updateImportJob(key, func(job *DocumentJob) {
-		job.setStage("translate", "done", "Retain 已完成全文翻译", len(translations), len(translations))
-		job.stage("translate").Unit = "段"
+		stage := job.stage("translate")
+		if stage == nil {
+			return
+		}
+		if stage.Total == 0 {
+			stage.Completed, stage.Total, stage.Unit = len(translations), len(translations), "段"
+		}
+		stage.ResultCount, stage.ResultUnit = len(translations), "段"
+		job.setStage("translate", "done", fmt.Sprintf("Retain 已完成全文翻译，生成 %d 段译文", len(translations)), -1, -1)
 	})
 	if err := retainOutputToReadXMetadata(pages, translations, aiConfig, metadata); err != nil {
 		return "", err

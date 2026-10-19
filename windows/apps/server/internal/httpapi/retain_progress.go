@@ -10,6 +10,7 @@ import (
 type retainStageObservation struct {
 	Schema    string `json:"schema"`
 	UserStage string `json:"user_stage"`
+	Substage  string `json:"substage"`
 	Message   string `json:"message"`
 	Detail    string `json:"stage_detail"`
 	Unit      string `json:"progress_unit"`
@@ -123,9 +124,14 @@ func (s *Server) retainImportObservation(key string, event retainStageObservatio
 				message = event.Message
 			}
 			job.setStage(key, "running", message, -1, -1)
-			unit := map[string]string{"page": "页", "batch": "批", "step": "步", "segment": "段"}[event.Unit]
+			unit := retainProgressUnit(event.Unit, event.Substage)
+			newSubstage := event.Substage != "" && stage.Substage != event.Substage
+			if newSubstage {
+				stage.Completed, stage.Total = 0, 0
+				stage.Substage = event.Substage
+			}
 			if unit != "" && (key != "ocr" || unit == "页") && (event.Current != nil || event.Total != nil) {
-				if stage.Unit != unit {
+				if stage.Unit != unit && !newSubstage {
 					stage.Completed, stage.Total = 0, 0
 				}
 				stage.Unit = unit
@@ -142,4 +148,33 @@ func (s *Server) retainImportObservation(key string, event retainStageObservatio
 			return
 		}
 	})
+}
+
+// Retain reports counters in units that can change within one user-facing
+// stage. Keep those units distinct so page counts or translation blocks are
+// never presented as completed paragraphs.
+func retainProgressUnit(unit, substage string) string {
+	if mapped := map[string]string{
+		"page":    "页",
+		"batch":   "批",
+		"step":    "步",
+		"segment": "段",
+		"block":   "块",
+	}[strings.TrimSpace(unit)]; mapped != "" {
+		return mapped
+	}
+	switch strings.TrimSpace(substage) {
+	case "page_policies", "continuation_review", "garbled_repair", "render_pages":
+		return "页"
+	case "translation_batches":
+		return "块"
+	case "translation_tail_retry":
+		return "批"
+	case "translation_prepare", "domain_inference", "render_prepare", "render_prewarm", "render_compile":
+		return "步"
+	case "agent_repair", "final_untranslated_recovery":
+		return "项"
+	default:
+		return ""
+	}
 }

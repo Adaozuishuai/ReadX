@@ -1,6 +1,6 @@
 {
   "name": "cbct-reading-v2",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "ReadX — Go 后端 + React 前端 + Electron 壳（npm workspaces）",
   "workspaces": [

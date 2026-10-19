@@ -22,13 +22,16 @@ const jobStatePrefix = "import-job:"
 
 // JobStage 是任务里的一个阶段（ocr / translate / render）。
 type JobStage struct {
-	Key       string `json:"key"`
-	Label     string `json:"label"`
-	Status    string `json:"status"` // pending / running / done / failed / skipped
-	Message   string `json:"message"`
-	Completed int    `json:"completed"`
-	Total     int    `json:"total"`
-	Unit      string `json:"unit,omitempty"`
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Status      string `json:"status"` // pending / running / done / failed / skipped
+	Message     string `json:"message"`
+	Substage    string `json:"substage,omitempty"`
+	Completed   int    `json:"completed"`
+	Total       int    `json:"total"`
+	Unit        string `json:"unit,omitempty"`
+	ResultCount int    `json:"resultCount,omitempty"`
+	ResultUnit  string `json:"resultUnit,omitempty"`
 }
 
 // JobRun 是一次历史执行的摘要。

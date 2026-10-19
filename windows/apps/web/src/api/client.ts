@@ -328,9 +328,12 @@ export interface JobStage {
   label: string;
   status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | string;
   message: string;
+  substage?: string;
   completed: number;
   total: number;
   unit?: string;
+  resultCount?: number;
+  resultUnit?: string;
 }
 
 export interface JobRun {
