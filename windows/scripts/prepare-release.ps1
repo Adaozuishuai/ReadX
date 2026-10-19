@@ -53,6 +53,36 @@ Copy-Item -Path (Join-Path $windowsRoot 'resources/rendering-engine') -Destinati
 Copy-Item -Path (Join-Path $windowsRoot 'resources/fonts') -Destination (Join-Path $resourceRoot 'fonts') -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $resourceRoot 'licenses') -Force | Out-Null
 Copy-Item -Path (Join-Path $windowsRoot 'vendor/retainpdf/LICENSE') -Destination (Join-Path $resourceRoot 'licenses/retainpdf-LICENSE') -Force
+
+$typstVersion = '0.15.1'
+$typstArchiveName = "typst-x86_64-pc-windows-msvc.zip"
+$typstArchive = Join-Path $env:TEMP $typstArchiveName
+$typstUrl = "https://github.com/typst/typst/releases/download/v$typstVersion/$typstArchiveName"
+$typstSha256 = '19ce3551153c2fe7ee9fa2f95208310c8f4d3209fedb699e0333faf8913f6736'
+Invoke-WebRequest -Uri $typstUrl -OutFile $typstArchive
+$actualTypstSha256 = (Get-FileHash -LiteralPath $typstArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actualTypstSha256 -ne $typstSha256) {
+  throw "Typst $typstVersion archive checksum mismatch: $actualTypstSha256"
+}
+$typstExtract = Join-Path $env:TEMP "typst-$typstVersion"
+if (Test-Path -LiteralPath $typstExtract) {
+  Remove-Item -LiteralPath $typstExtract -Recurse -Force
+}
+Expand-Archive -LiteralPath $typstArchive -DestinationPath $typstExtract -Force
+$typstExecutable = Get-ChildItem -LiteralPath $typstExtract -Filter typst.exe -File -Recurse | Select-Object -First 1
+if (-not $typstExecutable) { throw "Typst $typstVersion archive did not contain typst.exe." }
+$typstResource = Join-Path $resourceRoot 'typst'
+New-Item -ItemType Directory -Path $typstResource -Force | Out-Null
+Copy-Item -LiteralPath $typstExecutable.FullName -Destination (Join-Path $typstResource 'typst.exe') -Force
+$typstLicense = Get-ChildItem -LiteralPath $typstExtract -Filter LICENSE -File -Recurse | Select-Object -First 1
+if ($typstLicense) {
+  Copy-Item -LiteralPath $typstLicense.FullName -Destination (Join-Path $resourceRoot 'licenses/typst-LICENSE') -Force
+}
+$typstNotice = Get-ChildItem -LiteralPath $typstExtract -Filter NOTICE -File -Recurse | Select-Object -First 1
+if ($typstNotice) {
+  Copy-Item -LiteralPath $typstNotice.FullName -Destination (Join-Path $resourceRoot 'licenses/typst-NOTICE') -Force
+}
+
 New-Item -ItemType Directory -Path (Join-Path $resourceRoot 'scripts') -Force | Out-Null
 Copy-Item -Path (Join-Path $PSScriptRoot 'render-translated-pdf.cjs') -Destination (Join-Path $resourceRoot 'scripts/render-translated-pdf.cjs') -Force
 

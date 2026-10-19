@@ -152,6 +152,8 @@ function renderEnvironment(): NodeJS.ProcessEnv {
     env.READX_RESOURCES_DIR = process.resourcesPath;
     const portablePython = path.join(process.resourcesPath, 'python', 'python.exe');
     if (fs.existsSync(portablePython)) env.READX_PYTHON = portablePython;
+    const bundledTypst = path.join(process.resourcesPath, 'typst', 'typst.exe');
+    if (fs.existsSync(bundledTypst)) env.TYPST_BIN = bundledTypst;
   }
   const windowsRoot = path.resolve(app.getAppPath(), '..', '..');
   const candidates = [
