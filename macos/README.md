@@ -22,6 +22,8 @@ npm start
 
 同步书库、PDF / EPUB 阅读、目录、选区批注、阅读位置恢复、AI 助教多会话、模型与推理强度选择、精读五重奏、图表校正、重新翻译、任务进度、译文 PDF 阅读和导出。
 
+以上阅读、批注、AI 助教、精读、导入与翻译功能和 Windows 版共用核心实现。Windows 功能指南中的交互与功能说明同样适用于 macOS；只有明确标注的 Windows 快捷方式、目录和系统集成例外。
+
 PDF 导入统一运行：Go 接收文件 → RetainPDF Python provider-case → PaddleOCR → document.v1 → 翻译 / 质检 / 修复 → RPR 排版 → 回填文库。必须配置 PaddleOCR 和可用的 AI 渠道；仅配置 OCR 不能完成全文翻译。文件、任务限制与 Windows 相同。EPUB 使用相同的安全章节导入路径。
 
 AI 渠道包括 OpenAI 兼容 API、Anthropic、Codex Desktop / CLI、Claude CLI、Kimi CLI。macOS 查找 `/Applications/Codex.app` 和 `~/Applications/Codex.app` 中的 Codex，也可用 `CBCT_CODEX_PATH` 指定。不读取登录令牌文件。
@@ -41,7 +43,7 @@ AI 渠道包括 OpenAI 兼容 API、Anthropic、Codex Desktop / CLI、Claude CLI
 
 ## 保持双端一致
 
-核心实现以 `windows/` 为编辑入口，macOS 对应文件由同步脚本生成，不单独修改受管副本。
+核心实现以 `windows/` 为编辑入口，macOS 对应源码由同步脚本生成。新功能或修复应先合入 Windows 对应源码，再运行同步脚本更新 macOS；不要只修改 macOS 的受管源码。macOS 独有的启动器、运行时安装、图标、签名和打包配置仍在 `macos/` 单独维护。
 
 ```sh
 # 在仓库根目录
