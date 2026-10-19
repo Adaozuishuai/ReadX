@@ -41,6 +41,26 @@ jobs:
             Pillow==10.4.0 PyMuPDF==1.26.5 pikepdf==10.13.0.post1 \
             requests==2.32.5 urllib3==2.5.0
 
+      - name: 安装 Typst 渲染运行时
+        shell: pwsh
+        run: |
+          $version = '0.15.1'
+          $archiveName = 'typst-x86_64-pc-windows-msvc.zip'
+          $archive = Join-Path $env:RUNNER_TEMP $archiveName
+          $url = "https://github.com/typst/typst/releases/download/v$version/$archiveName"
+          $expectedSha256 = '19ce3551153c2fe7ee9fa2f95208310c8f4d3209fedb699e0333faf8913f6736'
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actualSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "Typst $version archive checksum mismatch: $actualSha256"
+          }
+          $extractRoot = Join-Path $env:RUNNER_TEMP "readx-typst-$version"
+          New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot -Force
+          $typst = Get-ChildItem -LiteralPath $extractRoot -Filter typst.exe -File -Recurse | Select-Object -First 1
+          if (-not $typst) { throw "Typst $version archive did not contain typst.exe." }
+          "TYPST_BIN=$($typst.FullName)" >> $env:GITHUB_ENV
+
       - name: gofmt（源码统一 LF，见 .gitattributes）
         working-directory: windows/apps/server
         shell: bash
