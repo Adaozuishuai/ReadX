@@ -8,7 +8,8 @@
 <p align="center">
   <a href="https://github.com/Leechion/ReadX/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Leechion/ReadX?display_name=tag&style=flat-square&color=276653"></a>
   <a href="https://github.com/Leechion/ReadX/actions/workflows/release-windows.yml"><img alt="Windows release" src="https://img.shields.io/github/actions/workflow/status/Leechion/ReadX/release-windows.yml?branch=main&label=Windows%20release&style=flat-square"></a>
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-276653?style=flat-square&logo=windows&logoColor=white">
+  <a href="https://github.com/Leechion/ReadX/actions/workflows/build-macos.yml"><img alt="macOS release" src="https://img.shields.io/github/actions/workflow/status/Leechion/ReadX/build-macos.yml?branch=main&label=macOS%20release&style=flat-square"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-276653?style=flat-square">
   <img alt="Stack" src="https://img.shields.io/badge/React%20%2B%20Go%20%2B%20Electron-Research%20Workspace-496f61?style=flat-square">
 </p>
 
@@ -17,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Leechion/ReadX/releases/latest"><strong>下载 Windows 版</strong></a>
+  <a href="https://github.com/Leechion/ReadX/releases/latest"><strong>下载 Windows / macOS 版</strong></a>
 </p>
 
 ---
@@ -51,20 +52,21 @@ ReadX 是面向科研论文的本地阅读工作区。导入 PDF 后，ReadX 识
 
 ## 下载与开始
 
-**当前提供 Windows 桌面版。** 在 [最新 Release](https://github.com/Leechion/ReadX/releases/latest) 下载 `ReadX-Setup-*.exe`，运行安装程序后从桌面或开始菜单启动。
+在 [最新 Release](https://github.com/Leechion/ReadX/releases/latest) 下载对应系统的软件包：Windows 下载 `ReadX-Setup-*.exe`，macOS 下载名称中架构与设备相符的 `ReadX-*.dmg`。macOS 首次打开未签名版本时，按系统提示在“隐私与安全性”中确认打开。
 
 首次使用请在 **AI 设置**中配置翻译和问答所用的服务。若使用 Codex Desktop，先在 Codex 中登录，再在 ReadX 的 AI 设置中选择 Codex。不同服务的配置方式见[详细指南](windows/README.md#ai-接入)。
 
 > v0.1.3 首次加入应用内检查更新。已安装 v0.1.2 或更早版本的用户，请先从 Release 页面安装一次 v0.1.3；后续版本可以从应用内检查和安装。
 
-## 更新内容 · v0.1.3
+## 更新内容 · v0.1.5
 
-- 新增应用内检查更新，可查看版本说明并选择立即更新或暂不更新。
-- 精读五重奏支持五部分并行生成，复用导入阶段建立的论文上下文。
-- 书库支持重新翻译；阅读器支持连续滚动和双语对照跳转。
-- 改进 Windows 导入、OCR 与翻译进度对应关系，并修复精读表格布局问题。
+- Windows 与 macOS 同步发布；macOS DMG 随同版本上传到 Release。
+- 译文 PDF 保存入库后立即结束导入，论文记忆在后台整理；书库可从“处理”查看状态。
+- Codex 模型列表、推理强度与 Fast 模式按实际模型能力呈现；改进模型选择交互。
+- 修正 PDF 批注选区定位与高亮绘制，减少色块重叠、文字截断和下划线重叠。
+- 修复翻译缓存并发写入冲突，更新任务恢复和阶段进度展示。
 
-更多细节见 [v0.1.3 Release](https://github.com/Leechion/ReadX/releases/tag/v0.1.3)。
+更多细节见 [v0.1.5 Release](https://github.com/Leechion/ReadX/releases/tag/v0.1.5)。
 
 ## 数据与隐私
 
@@ -86,7 +88,7 @@ npm run dev
 npm run build
 ```
 
-macOS 已同步核心源码并提供本机开发及打包入口，见 [`macos/README.md`](macos/README.md)。源码一致性规则见 [`docs/architecture.md`](docs/architecture.md)。本仓库的现有公开下载说明仍以 Windows Release 为准。
+macOS 已同步核心源码并提供本机开发及打包入口，见 [`macos/README.md`](macos/README.md)。源码一致性规则见 [`docs/architecture.md`](docs/architecture.md)。
 
 完整的 Windows 功能、AI 接入、数据位置和构建说明见 [`windows/README.md`](windows/README.md)。
 
@@ -127,4 +129,4 @@ npm run dev
 
 ---
 
-<p align="center"><sub>ReadX · Research Workspace · Windows</sub></p>
+<p align="center"><sub>ReadX · Research Workspace · Windows and macOS</sub></p>

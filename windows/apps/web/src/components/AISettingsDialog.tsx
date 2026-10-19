@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type AISettings, type CodexModel, type OCRSettings } from '../api/client';
-import { effortLabel } from './AIModelControls';
+import { effortLabel, reasoningOptionsForSelection } from './AIModelControls';
 import { ProviderLogo } from './providerLogos';
 
 /**
@@ -177,6 +177,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
     return () => { alive = false; ++modelRequest.current; };
   }, [provider, baseURL]);
   const selectedCodexModel = catalog.find((item) => model ? item.model === model || item.id === model : item.isDefault);
+  const selectedCodexEfforts = reasoningOptionsForSelection(catalog, model, selectedCodexModel);
 
   const pick = (preset: ProviderPreset) => {
     setReasoningEffort('');
@@ -526,7 +527,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
           </p>
         </section>
 
-        {provider === 'codex' && <section className="ai-card"><header>推理强度</header><label className="ai-model-controls"><select aria-label="Codex 推理强度" value={reasoningEffort} disabled={busy || loadingModels || !selectedCodexModel} onChange={(e) => setReasoningEffort(e.target.value)}><option value="">跟随模型默认{selectedCodexModel ? ` · ${effortLabel(selectedCodexModel.defaultReasoningEffort)}` : ''}</option>{reasoningEffort && !selectedCodexModel?.supportedReasoningEfforts.some((e) => e.reasoningEffort === reasoningEffort) && <option value={reasoningEffort}>{reasoningEffort} · 待校验</option>}{selectedCodexModel?.supportedReasoningEfforts.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{effortLabel(option.reasoningEffort)}</option>)}</select></label><p className="ai-hint">选项来自本机 Codex，不同模型支持的等级不同。保存后供后续提问与精读生成使用；更高等级通常需要更长时间。</p></section>}
+        {provider === 'codex' && <section className="ai-card"><header>推理强度</header><label className="ai-model-controls"><select aria-label="Codex 推理强度" value={reasoningEffort} disabled={busy || loadingModels || !selectedCodexModel} onChange={(e) => setReasoningEffort(e.target.value)}><option value="">跟随模型默认{selectedCodexModel ? ` · ${effortLabel(selectedCodexModel.defaultReasoningEffort)}` : ''}</option>{reasoningEffort && !selectedCodexEfforts.some((e) => e.reasoningEffort === reasoningEffort) && <option value={reasoningEffort}>{reasoningEffort} · 待校验</option>}{selectedCodexEfforts.map((option) => <option key={option.reasoningEffort} value={option.reasoningEffort}>{effortLabel(option.reasoningEffort)}</option>)}</select></label><p className="ai-hint">留空模型时，推理等级合并本机 Codex 目录中各模型的可用档位；选定模型后仅显示该模型支持的档位。保存后供后续提问与精读生成使用。</p></section>}
 
         <section className="ai-card"><header>译前准备</header><label className="ai-model-controls"><select aria-label="译前准备模式" value={translationPreparation} disabled={busy} onChange={(event) => setTranslationPreparation(event.target.value === 'editorial' ? 'editorial' : event.target.value === 'terms+style' ? 'terms+style' : event.target.value === 'terms' ? 'terms' : event.target.value === 'artifacts_only' ? 'artifacts_only' : 'off')}><option value="off">关闭（LeePDF 默认）</option><option value="artifacts_only">仅生成术语库与风格指南，不注入</option><option value="terms">术语预扫（terms）</option><option value="terms+style">术语预扫与风格指南（terms+style）</option><option value="editorial">术语预扫、审定与风格指南（editorial）</option></select></label><p className="ai-hint">术语建议仅作为翻译提示，不写入用户术语表。Editorial 会按 LeePDF 规则审定术语并处理人名、出版物与普通词；风格指南失败时保留通用规则继续翻译。</p></section>
 

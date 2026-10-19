@@ -17,14 +17,20 @@ type ReasoningOption struct {
 	Effort      string `json:"reasoningEffort"`
 	Description string `json:"description"`
 }
+type ModelServiceTier struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
 type CodexModel struct {
-	ID               string            `json:"id"`
-	Model            string            `json:"model"`
-	DisplayName      string            `json:"displayName"`
-	Description      string            `json:"description"`
-	DefaultEffort    string            `json:"defaultReasoningEffort"`
-	SupportedEfforts []ReasoningOption `json:"supportedReasoningEfforts"`
-	IsDefault        bool              `json:"isDefault"`
+	ID               string             `json:"id"`
+	Model            string             `json:"model"`
+	DisplayName      string             `json:"displayName"`
+	Description      string             `json:"description"`
+	DefaultEffort    string             `json:"defaultReasoningEffort"`
+	SupportedEfforts []ReasoningOption  `json:"supportedReasoningEfforts"`
+	ServiceTiers     []ModelServiceTier `json:"serviceTiers"`
+	IsDefault        bool               `json:"isDefault"`
 }
 
 var codexCatalog struct {
@@ -121,7 +127,7 @@ func (c Config) CodexModels(ctx context.Context, refresh bool) ([]CodexModel, er
 		}
 		for _, model := range message.Result.Data {
 			if model.Model != "" {
-				models = append(models, model)
+				models = append(models, normalizeCodexModelEfforts(model))
 			}
 		}
 		if message.Result.NextCursor == nil || *message.Result.NextCursor == "" || len(models) >= 500 {
@@ -139,29 +145,119 @@ func (c Config) CodexModels(ctx context.Context, refresh bool) ([]CodexModel, er
 	return nil, fmt.Errorf("Codex 模型目录未响应，请确认桌面版已登录后重试")
 }
 
+// Ultra is a Codex mode layered on top of maximum reasoning, not a
+// per-model reasoning.effort value. ReadX starts a single model turn and does
+// not implement Ultra's additional-agent behavior, so do not expose it as if
+// it were another effort slider stop.
+func normalizeCodexModelEfforts(model CodexModel) CodexModel {
+	if len(model.SupportedEfforts) == 0 {
+		return model
+	}
+	// Codex Desktop exposes four reasoning levels for GPT-6 Luna (Low through
+	// Extra high). The app-server catalog also advertises API-level Max, which
+	// is not selectable for this model in the desktop UI.
+	luna := strings.EqualFold(model.Model, "gpt-6-luna") || strings.EqualFold(model.ID, "gpt-6-luna")
+	efforts := model.SupportedEfforts[:0]
+	for _, option := range model.SupportedEfforts {
+		if option.Effort == "ultra" || (luna && option.Effort == "max") {
+			continue
+		}
+		efforts = append(efforts, option)
+	}
+	model.SupportedEfforts = efforts
+	return model
+}
+
 func (c Config) ValidateCodexSelection(ctx context.Context) error {
-	if c.ProviderName() != "codex" || (c.Model == "" && c.ReasoningEffort == "") {
+	if c.ProviderName() != "codex" || (c.Model == "" && c.ReasoningEffort == "" && !c.CodexFastMode) {
 		return nil
 	}
 	models, err := c.CodexModels(ctx, false)
 	if err != nil {
 		return err
 	}
+	if c.Model == "" {
+		if c.ReasoningEffort != "" && !codexEffortSupported(models, "", c.ReasoningEffort) {
+			return fmt.Errorf("当前 Codex 模型目录均不支持推理等级 %s，请刷新后重选", c.ReasoningEffort)
+		}
+		if c.CodexFastMode && !codexFastSupported(models, "") {
+			return fmt.Errorf("当前 Codex 默认模型不支持 Fast 模式")
+		}
+		return nil
+	}
+	modelFound := false
+	effortSupported := false
 	for _, model := range models {
-		if model.Model != c.Model && !(c.Model == "" && model.IsDefault) {
+		if model.Model != c.Model && model.ID != c.Model {
 			continue
 		}
+		modelFound = true
 		if c.ReasoningEffort == "" {
-			return nil
-		}
-		for _, effort := range model.SupportedEfforts {
-			if effort.Effort == c.ReasoningEffort {
-				return nil
+			effortSupported = true
+		} else {
+			for _, effort := range model.SupportedEfforts {
+				if effort.Effort == c.ReasoningEffort {
+					effortSupported = true
+					break
+				}
 			}
 		}
+		break
+	}
+	if !modelFound {
+		return fmt.Errorf("所选模型未出现在当前 Codex 目录中，请刷新后重选")
+	}
+	if !effortSupported {
 		return fmt.Errorf("该模型不支持推理等级 %s，请重新选择", c.ReasoningEffort)
 	}
-	return fmt.Errorf("所选模型未出现在当前 Codex 目录中，请刷新后重选")
+	if c.CodexFastMode && !codexFastSupported(models, c.Model) {
+		return fmt.Errorf("该模型不支持 Fast 模式")
+	}
+	return nil
+}
+
+func codexFastSupported(models []CodexModel, selectedModel string) bool {
+	_, ok := codexFastServiceTier(models, selectedModel)
+	return ok
+}
+
+func codexFastServiceTier(models []CodexModel, selectedModel string) (string, bool) {
+	for _, model := range models {
+		if selectedModel != "" && model.Model != selectedModel && model.ID != selectedModel {
+			continue
+		}
+		for _, tier := range model.ServiceTiers {
+			if tier.ID == "priority" {
+				return tier.ID, true
+			}
+		}
+		for _, tier := range model.ServiceTiers {
+			if tier.ID == "fast" {
+				return tier.ID, true
+			}
+		}
+		if selectedModel != "" {
+			return "", false
+		}
+		if model.IsDefault {
+			return "", false
+		}
+	}
+	return "", false
+}
+
+func codexEffortSupported(models []CodexModel, selectedModel, effort string) bool {
+	for _, model := range models {
+		if selectedModel != "" && model.Model != selectedModel && model.ID != selectedModel {
+			continue
+		}
+		for _, option := range model.SupportedEfforts {
+			if option.Effort == effort {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func cliEnvironment(provider, dir string) []string {

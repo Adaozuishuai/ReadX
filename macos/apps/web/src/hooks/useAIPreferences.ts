@@ -52,7 +52,7 @@ export function useAIPreferences() {
     window.addEventListener('cbct-ai-settings', changed);
     return () => { alive.current = false; ++version.current; window.removeEventListener('cbct-ai-settings', changed); };
   }, [reload]);
-  const select = async (model: string, reasoningEffort: string) => {
+  const select = async (model: string, reasoningEffort: string, codexFastMode?: boolean) => {
     if (lock.current || !settingsRef.current || !alive.current) return false;
     lock.current = true;
     setSaving(true);
@@ -61,7 +61,7 @@ export function useAIPreferences() {
       // Re-read shared preferences so a dialog opened elsewhere cannot be overwritten with a stale provider.
       const current = await api.settings();
       if (current.provider !== 'codex') throw new Error('服务商已变更，请刷新后选择模型。');
-      const value = await api.saveSettings({ provider: current.provider, baseURL: current.baseURL, model, reasoningEffort });
+      const value = await api.saveSettings({ provider: current.provider, baseURL: current.baseURL, model, reasoningEffort, ...(codexFastMode === undefined ? {} : { codexFastMode }) });
       if (alive.current) { settingsRef.current = value; setSettings(value); }
       window.dispatchEvent(new CustomEvent('cbct-ai-settings', { detail: { settings: value, source: source.current } }));
       return true;

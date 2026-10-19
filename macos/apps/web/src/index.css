@@ -229,10 +229,14 @@
 .composer-model-option:hover:not(:disabled),.composer-model-option:focus-visible { background:var(--color-canvas); outline:0; }
 .composer-model-option[aria-checked=true] { color:var(--composer-accent); }
 .composer-model-option:disabled { opacity:.5; cursor:default; }
-.composer-reasoning-heading { display:grid; grid-template-columns:22px minmax(0,1fr) 22px; gap:8px; min-height:48px; align-items:start; }
+.composer-reasoning-heading { display:grid; grid-template-columns:24px minmax(0,1fr) 24px; gap:8px; min-height:48px; align-items:start; }
 .composer-reasoning-heading>div { display:flex; flex-direction:column; align-items:center; gap:1px; padding-top:1px; min-width:0; }
 .composer-reasoning-heading strong { color:var(--composer-accent); font-size:18px; line-height:24px; font-weight:500; }
-.composer-reasoning-symbol { display:flex; align-items:center; justify-content:center; height:25px; color:var(--color-ink-faint); }
+.composer-reasoning-symbol { display:flex; align-items:center; justify-content:center; width:24px; height:25px; padding:0; border:0; border-radius:7px; background:transparent; color:var(--color-ink-faint); cursor:pointer; }
+.composer-reasoning-symbol:hover:not(:disabled) { background:var(--color-canvas); color:var(--composer-accent); }
+.composer-reasoning-symbol.active { color:var(--composer-accent); background:color-mix(in srgb,var(--composer-accent) 10%,transparent); }
+.composer-reasoning-symbol.active svg { fill:currentColor; stroke-width:1.1; filter:drop-shadow(0 0 5px color-mix(in srgb,var(--composer-accent) 38%,transparent)); }
+.composer-reasoning-symbol:disabled { opacity:.35; cursor:default; }
 .composer-current-model { display:flex; align-items:center; gap:2px; max-width:100%; color:var(--color-ink-faint); font-size:13px; line-height:20px; cursor:pointer; }
 .composer-current-model>span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .composer-current-model>svg { flex-shrink:0; }
@@ -243,7 +247,12 @@
 .composer-reset-effort:disabled { opacity:.35; cursor:default; }
 .composer-effort-slider { position:relative; height:34px; margin-top:8px; }
 .composer-effort-track { position:absolute; inset:2px 0; border-radius:20px; background:color-mix(in srgb,var(--color-ink) 11%,var(--color-surface)); box-shadow:inset 0 0 0 1px rgb(0 0 0 / .025); overflow:hidden; }
-.composer-effort-fill { position:absolute; inset:0 auto 0 0; width:var(--effort-fill); background:var(--composer-accent); border-radius:20px; }
+.composer-effort-fill { position:absolute; inset:0 auto 0 0; width:var(--effort-fill); background:var(--composer-accent); border-radius:20px; overflow:hidden; transition:width 180ms ease,background-color 180ms ease; }
+.composer-effort-fill::after { content:''; position:absolute; inset:0; opacity:0; background-image:radial-gradient(circle,color-mix(in srgb,var(--color-on-accent) 94%,transparent) 1.25px,transparent 1.8px),radial-gradient(circle,color-mix(in srgb,var(--color-on-accent) 58%,transparent) .8px,transparent 1.4px); background-size:22px 100%,31px 100%; background-position:0 50%,7px 50%; pointer-events:none; }
+.composer-effort-slider.fast-active .composer-effort-fill { background:#2f9b68; box-shadow:0 0 12px color-mix(in srgb,#2f9b68 45%,transparent); }
+.composer-effort-slider.fast-active .composer-effort-fill::after { opacity:.95; animation:composer-particle-flow 1.15s linear infinite; }
+.composer-effort-slider.fast-active .composer-effort-dot.filled { background:#d9ffe9; opacity:.8; }
+@keyframes composer-particle-flow { from { background-position:0 50%,7px 50%; } to { background-position:22px 50%,-24px 50%; } }
 .composer-effort-dot { position:absolute; top:50%; width:5px; height:5px; border-radius:50%; transform:translate(-50%,-50%); background:var(--color-ink-faint); opacity:.4; }
 .composer-effort-dot.filled { background:var(--color-on-accent); opacity:.38; }
 .composer-effort-slider>input { position:relative; z-index:1; display:block; appearance:none; -webkit-appearance:none; width:100%; height:34px; margin:0; padding:0; outline:none; border:0; background:transparent; cursor:pointer; touch-action:pan-y; }
@@ -255,6 +264,7 @@
 .composer-effort-slider>input:focus-visible::-moz-range-thumb { outline:2px solid var(--composer-accent); outline-offset:3px; }
 .composer-effort-slider:has(input:disabled) { opacity:.5; }
 .composer-effort-slider>input:disabled { cursor:default; }
+@media (prefers-reduced-motion:reduce) { .composer-effort-fill { transition:none; } .composer-effort-slider.fast-active .composer-effort-fill::after { animation:none; } }
 .composer-reload-models { display:block; margin:7px 8px 4px; color:var(--composer-accent); font-size:12px; cursor:pointer; }
 .composer-reload-models:disabled { opacity:.5; cursor:default; }
 .composer-model-menu>small { display:block; margin:8px 8px 0; color:var(--color-ink-faint); font-size:10px; }
@@ -467,19 +477,24 @@
    高亮用半透明底色，下划线走下边框，问题批注额外加虚线边框——
    三种批注在同一段里也要一眼分得清，不能只靠颜色。 */
 .ann-highlight-amber {
-  background: color-mix(in oklab, #d99a2b 32%, transparent);
+  fill: #d99a2b;
+  fill-opacity: .32;
 }
 .ann-highlight-rose {
-  background: color-mix(in oklab, #e0756b 30%, transparent);
+  fill: #e0756b;
+  fill-opacity: .3;
 }
 .ann-highlight-sky {
-  background: color-mix(in oklab, #5b9fe8 28%, transparent);
+  fill: #5b9fe8;
+  fill-opacity: .28;
 }
 .ann-highlight-green {
-  background: color-mix(in oklab, #5aa877 30%, transparent);
+  fill: #5aa877;
+  fill-opacity: .3;
 }
 .ann-highlight-violet {
-  background: color-mix(in oklab, #9b7fd4 28%, transparent);
+  fill: #9b7fd4;
+  fill-opacity: .28;
 }
 
 .ann-underline-amber {
@@ -526,22 +541,8 @@
   background: color-mix(in oklab, #9b7fd4 16%, transparent);
 }
 
-/* 从批注列表点进来：正文里对应标记短暂加描边，配合滚动让落点可被看见。 */
-.ann-focused {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
-  border-radius: 3px;
-  animation: ann-pulse 1.4s ease-out 1;
-}
-
-@keyframes ann-pulse {
-  0% {
-    outline-color: var(--color-accent);
-  }
-  100% {
-    outline-color: color-mix(in oklab, var(--color-accent) 15%, transparent);
-  }
-}
+/* 聚焦批注只滚动到位置，不再给每行文字矩形画描边，避免框住并遮挡文字。 */
+.ann-focused { outline: none; border-radius: 0; }
 
 /* 批注面板里的颜色控件。 */
 .ann-color-dot {
@@ -1260,8 +1261,9 @@
 .pdf-paper canvas { display:block; }
 .pdf-paper .textLayer { position:absolute;inset:0;z-index:2;overflow:hidden;opacity:1; }
 .pdf-paper .textLayer ::selection { background:#539afc66; }
-.pdf-marks { position:absolute;inset:0;z-index:3;pointer-events:none; }
-.pdf-mark { position:absolute;opacity:.55;mix-blend-mode:multiply; }
+.pdf-marks { position:absolute;inset:0;z-index:1;pointer-events:none; }
+.pdf-mark { position:absolute;opacity:1;mix-blend-mode:normal; }
+.pdf-mark-highlight { inset:0;width:100%;height:100%;overflow:visible; }
 .reader-page-nav { display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:8px;font-size:11px; }
 .reader-page-nav input { width:45px;border:1px solid var(--color-line);background:var(--color-surface);border-radius:5px;padding:3px;text-align:center; }
 .epub-scroll { flex:1;min-height:0;overflow:auto;padding:36px clamp(20px,4vw,64px);background:var(--color-surface); }
@@ -1802,7 +1804,9 @@ button:disabled { opacity:.5;cursor:default; }
 .book-status-badge::before { content:''; width:5px; height:5px; border-radius:50%; background:var(--color-line-strong); }
 .book-status-badge[data-status=reading]::before { background:var(--color-accent); }
 .book-status-badge[data-status=done]::before { background:var(--color-good); }
-.book-card-footer { display:flex; justify-content:flex-end; margin-top:auto; padding-top:10px; }
+.book-card-footer { display:flex; justify-content:flex-end; gap:6px; margin-top:auto; padding-top:10px; }
+.book-process-button { display:inline-flex; align-items:center; gap:5px; min-height:28px; padding:4px 9px; border:1px solid color-mix(in srgb,var(--color-accent) 30%,var(--color-line)); border-radius:8px; background:var(--color-accent-soft); color:var(--color-accent); font-size:11px; transition:border-color .15s,background .15s; }
+.book-process-button:hover { border-color:var(--color-accent); background:color-mix(in srgb,var(--color-accent) 14%,var(--color-surface)); }
 .book-retranslate-button { display:inline-flex; align-items:center; gap:5px; min-height:28px; padding:4px 9px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-surface); color:var(--color-ink-soft); font-size:11px; transition:border-color .15s,color .15s,background .15s; }
 .book-retranslate-button:hover { border-color:var(--color-accent); background:var(--color-accent-soft); color:var(--color-accent); }
 .book-retranslate-button:focus-visible { outline:2px solid var(--color-accent); outline-offset:2px; }

@@ -328,6 +328,7 @@ class TranslateStageSpec:
             .lower(),
             model=str(params_payload.get("model", "") or ""),
             base_url=str(params_payload.get("base_url", "") or ""),
+            provider=str(params_payload.get("provider", "openai") or "openai"),
             credential_ref=str(params_payload.get("credential_ref", "") or ""),
             **_preparation_and_reviewer_fields(params_payload),
         )

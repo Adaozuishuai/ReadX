@@ -34,6 +34,7 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 			APIKey                 string  `json:"apiKey"`
 			ClearKey               bool    `json:"clearKey"`
 			ReasoningEffort        *string `json:"reasoningEffort"`
+			CodexFastMode          *bool   `json:"codexFastMode"`
 			TranslationPreparation string  `json:"translationPreparation"`
 		}
 		if decodeJSON(w, r, &body) != nil {
@@ -97,6 +98,9 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.Provider != "codex" {
 			raw["reasoningEffort"] = ""
+			raw["codexFastMode"] = false
+		} else if body.CodexFastMode != nil {
+			raw["codexFastMode"] = *body.CodexFastMode
 		}
 		raw["apiKey"] = savedKey
 		encoded, _ := json.MarshalIndent(raw, "", "  ")
@@ -148,7 +152,7 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg, _ := ai.LoadConfig(path)
-	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "reasoningEffort": cfg.ReasoningEffort, "translationPreparation": cfg.TranslationPreparation, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}, "codex": ai.CodexStatus(r.Context())})
+	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "reasoningEffort": cfg.ReasoningEffort, "codexFastMode": cfg.CodexFastMode, "translationPreparation": cfg.TranslationPreparation, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}, "codex": ai.CodexStatus(r.Context())})
 }
 
 // handleAIModels 读取当前地址可用的模型列表：OpenAI 兼容与 Anthropic 都提供 GET /models。

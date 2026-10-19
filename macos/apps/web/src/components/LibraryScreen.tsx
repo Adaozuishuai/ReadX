@@ -76,6 +76,7 @@ interface Props {
   setFilters: (next: Partial<Filters>) => void;
   selectedId: string | null;
   onOpenDocument: (id: string) => void;
+  onOpenProcessing: (doc: DocumentSummary) => void;
   onRetranslate: (doc: DocumentSummary) => void;
   onOpenImport: () => void;
   onOpenSettings: () => void;
@@ -99,6 +100,7 @@ export function LibraryScreen({
   setFilters,
   selectedId,
   onOpenDocument,
+  onOpenProcessing,
   onRetranslate,
   onOpenImport,
   onOpenSettings,
@@ -469,6 +471,7 @@ export function LibraryScreen({
               meta={meta.items}
               selectedId={selectedId}
               onSelect={onOpenDocument}
+              onOpenProcessing={onOpenProcessing}
               onRetranslate={onRetranslate}
               onOpenReproduction={onOpenReproduction}
               onToggleTrash={toggleTrash}
@@ -486,6 +489,7 @@ export function LibraryScreen({
                   categories={meta.categories}
                   selected={doc.id === selectedId}
                   onSelect={() => onOpenDocument(doc.id)}
+                  onOpenProcessing={() => onOpenProcessing(doc)}
                   onRetranslate={() => onRetranslate(doc)}
                   onOpenReproduction={onOpenReproduction}
                   onToggleTrash={() => toggleTrash(doc.key)}
@@ -505,6 +509,7 @@ export function LibraryScreen({
                   categories={meta.categories}
                   selected={doc.id === selectedId}
                   onSelect={() => onOpenDocument(doc.id)}
+                  onOpenProcessing={() => onOpenProcessing(doc)}
                   onRetranslate={() => onRetranslate(doc)}
                   onOpenReproduction={onOpenReproduction}
                   onToggleFavorite={() => void meta.patch(doc.key, { favorite: !meta.items[doc.key]?.favorite }).catch(() => undefined)}
@@ -522,6 +527,7 @@ export function LibraryScreen({
               sort={sort}
               onSort={toggleSort}
               onSelect={onOpenDocument}
+              onOpenProcessing={onOpenProcessing}
               onRetranslate={onRetranslate}
               onOpenReproduction={onOpenReproduction}
               onToggleTrash={toggleTrash}
@@ -671,13 +677,14 @@ function UpdateControl() {
 }
 
 function ShelfOverview({
-  documents, categories, meta, selectedId, onSelect, onRetranslate, onOpenReproduction, onToggleTrash, onSetShelves,
+  documents, categories, meta, selectedId, onSelect, onOpenProcessing, onRetranslate, onOpenReproduction, onToggleTrash, onSetShelves,
 }: {
   documents: DocumentSummary[];
   categories: Category[];
   meta: Record<string, DocumentMeta>;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onOpenProcessing: (doc: DocumentSummary) => void;
   onRetranslate: (doc: DocumentSummary) => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: (key: string) => Promise<unknown>;
@@ -713,6 +720,7 @@ function ShelfOverview({
               categories={categories}
               selected={doc.id === selectedId}
               onSelect={() => onSelect(doc.id)}
+              onOpenProcessing={() => onOpenProcessing(doc)}
               onRetranslate={() => onRetranslate(doc)}
               onOpenReproduction={onOpenReproduction}
               onToggleTrash={() => onToggleTrash(doc.key)}
@@ -731,6 +739,7 @@ function ListRow({
   categories,
   selected,
   onSelect,
+  onOpenProcessing,
   onRetranslate,
   onOpenReproduction,
   onToggleFavorite,
@@ -741,6 +750,7 @@ function ListRow({
   categories: Category[];
   selected: boolean;
   onSelect: () => void;
+  onOpenProcessing: () => void;
   onRetranslate: (doc: DocumentSummary) => void;
   onOpenReproduction: (key: string) => void;
   onToggleFavorite: () => void;
@@ -776,6 +786,7 @@ function ListRow({
         <button type="button" onClick={onToggleFavorite} className={meta?.favorite ? 'text-accent' : 'text-ink-faint hover:text-ink'}>
           {meta?.favorite ? '★' : '☆'}
         </button>
+        {doc.format !== 'epub' && doc.hasPdf && doc.paperMemoryStatus && doc.paperMemoryStatus !== 'done' ? <button type="button" onClick={onOpenProcessing} className="text-accent hover:underline" title={doc.paperMemoryMessage || '查看论文记忆处理进度'}>处理</button> : null}
         {doc.format !== 'epub' && doc.hasPdf ? <button type="button" onClick={() => onRetranslate(doc)} className="text-ink-faint hover:text-accent">重新翻译</button> : null}
         <button type="button" onClick={() => onOpenReproduction(doc.key)} className="text-ink-faint hover:text-accent">
           复现
@@ -793,6 +804,7 @@ function DocumentTable({
   sort,
   onSort,
   onSelect,
+  onOpenProcessing,
   onRetranslate,
   onOpenReproduction,
   onToggleTrash,
@@ -803,6 +815,7 @@ function DocumentTable({
   sort: { key: SortKey; reverse: boolean };
   onSort: (key: SortKey) => void;
   onSelect: (id: string) => void;
+  onOpenProcessing: (doc: DocumentSummary) => void;
   onRetranslate: (doc: DocumentSummary) => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: (key: string) => Promise<unknown>;
@@ -855,6 +868,7 @@ function DocumentTable({
               </td>
               <td className="px-2 py-2">
                 <div className="flex items-center gap-2">
+                {doc.format !== 'epub' && doc.hasPdf && doc.paperMemoryStatus && doc.paperMemoryStatus !== 'done' ? <button type="button" onClick={() => onOpenProcessing(doc)} title={doc.paperMemoryMessage || '查看论文记忆处理进度'} className="rounded-md border border-accent/30 bg-accent-soft/40 px-2 py-0.5 text-[10px] text-accent transition hover:border-accent">处理</button> : null}
                 {doc.format !== 'epub' && doc.hasPdf ? <button type="button" onClick={() => onRetranslate(doc)} className="rounded-md border border-line bg-surface px-2 py-0.5 text-[10px] text-ink-soft transition hover:border-accent hover:text-accent">重新翻译</button> : null}
                 <button
                   type="button"

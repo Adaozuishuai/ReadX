@@ -126,7 +126,6 @@ def _cache_path(cache_key: str) -> Path:
     return paths.TRANSLATION_UNIT_CACHE_DIR / cache_key[:2] / f"{cache_key}.json"
 
 
-_ENSURED_SHARD_DIRS: set[str] = set()
 _PRUNE_DONE = False
 _PRUNE_LOCK = threading.Lock()
 UNIT_CACHE_TTL_DAYS_ENV = "RETAIN_TRANSLATION_UNIT_CACHE_TTL_DAYS"
@@ -134,11 +133,10 @@ DEFAULT_UNIT_CACHE_TTL_DAYS = 90
 
 
 def _ensure_shard_dir(path: Path) -> None:
-    shard = str(path.parent)
-    if shard in _ENSURED_SHARD_DIRS:
-        return
+    # The cache tree can be removed while this process is alive (for example,
+    # by cleanup/recovery code). Do not memoize directory existence: mkstemp
+    # must always see a currently existing parent directory.
     path.parent.mkdir(parents=True, exist_ok=True)
-    _ENSURED_SHARD_DIRS.add(shard)
 
 
 def _atomic_write_cache_payload(path: Path, payload: dict[str, str]) -> None:

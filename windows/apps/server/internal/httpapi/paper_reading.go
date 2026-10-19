@@ -64,35 +64,35 @@ func (table *keyedLockTable) lock(ctx context.Context, key string) (func(), bool
 	}
 }
 
-func (s *Server) preparePaperMemoryDuringImport(ctx context.Context, key string, report func(string, string, int, int)) error {
+func (s *Server) preparePaperMemoryDuringImport(ctx context.Context, documentKey, jobKey string, report func(string, string, int, int)) error {
 	update := func(message string) {
-		s.jobStage(key, "memory", "running", message, 0, 1)
+		s.jobStage(jobKey, "memory", "running", message, 0, 1)
 		if report != nil {
 			report("memory", message, 0, 1)
 		}
 	}
 	cfg, err := s.aiConfig()
 	if err != nil || !cfg.Ready() {
-		s.jobStage(key, "memory", "skipped", "AI 模型未就绪，精读时可再准备论文记忆", -1, -1)
+		s.jobStage(jobKey, "memory", "skipped", "AI 模型未就绪，精读时可再准备论文记忆", -1, -1)
 		return err
 	}
-	source, err := s.sourceText(ctx, key)
+	source, err := s.sourceText(ctx, documentKey)
 	if err != nil {
-		s.jobStage(key, "memory", "skipped", "OCR 正文不可用，精读时可再准备论文记忆", -1, -1)
+		s.jobStage(jobKey, "memory", "skipped", "OCR 正文不可用，精读时可再准备论文记忆", -1, -1)
 		return err
 	}
 	if strings.TrimSpace(source) == "" {
-		s.jobStage(key, "memory", "skipped", "没有可用 OCR 正文，精读时可再准备论文记忆", -1, -1)
+		s.jobStage(jobKey, "memory", "skipped", "没有可用 OCR 正文，精读时可再准备论文记忆", -1, -1)
 		return nil
 	}
 	update("正在整理可复用的论文记忆")
 	client := ai.NewClient(cfg)
-	_, err = s.ensurePaperMemory(ctx, key, source, cfg, client, func(_ int, message string) { update(message) })
+	_, err = s.ensurePaperMemory(ctx, documentKey, source, cfg, client, func(_ int, message string) { update(message) })
 	if err != nil {
-		s.jobStage(key, "memory", "skipped", "论文记忆暂未准备，精读时可重试", -1, -1)
+		s.jobStage(jobKey, "memory", "skipped", "论文记忆暂未准备，精读时可重试", -1, -1)
 		return err
 	}
-	s.jobStage(key, "memory", "done", "论文记忆已保存，五节精读可直接复用", 1, 1)
+	s.jobStage(jobKey, "memory", "done", "论文记忆已保存，五节精读可直接复用", 1, 1)
 	if report != nil {
 		report("memory", "论文记忆已保存，五节精读可直接复用", 1, 1)
 	}

@@ -519,6 +519,7 @@ export interface AISettings {
   baseURL: string;
   model: string;
   reasoningEffort?: string;
+  codexFastMode?: boolean;
   translationPreparation?: 'off' | 'artifacts_only' | 'terms' | 'terms+style' | 'editorial';
   keyConfigured: boolean;
   status: AIStatus;
@@ -532,6 +533,7 @@ export interface CodexModel {
   description: string;
   defaultReasoningEffort: string;
   supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
+  serviceTiers?: { id: string; name: string; description: string }[];
   isDefault: boolean;
 }
 export interface ImportedDocument {
@@ -753,6 +755,7 @@ export const api = {
     baseURL: string;
     model: string;
     reasoningEffort?: string;
+    codexFastMode?: boolean;
     translationPreparation?: 'off' | 'artifacts_only' | 'terms' | 'terms+style' | 'editorial';
     apiKey?: string;
     clearKey?: boolean;

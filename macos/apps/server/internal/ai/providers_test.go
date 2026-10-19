@@ -160,3 +160,35 @@ func TestCodexAppServerUsesSelectedModelAndEffort(t *testing.T) {
 		t.Fatalf("answer=%q delta=%q err=%v", answer, delta, err)
 	}
 }
+
+func TestCodexEffortSupportUsesCatalogUnionOnlyForDefaultModel(t *testing.T) {
+	models := []CodexModel{
+		{ID: "default", Model: "gpt-6.1-sol", IsDefault: true, SupportedEfforts: []ReasoningOption{{Effort: "low"}, {Effort: "high"}}},
+		{ID: "other", Model: "gpt-6-luna", SupportedEfforts: []ReasoningOption{{Effort: "low"}, {Effort: "medium"}, {Effort: "xhigh"}}},
+	}
+	if !codexEffortSupported(models, "", "xhigh") {
+		t.Fatal("default model selection should accept an effort available in the Codex catalog")
+	}
+	if codexEffortSupported(models, "gpt-6.1-sol", "xhigh") {
+		t.Fatal("explicit model selection must reject an effort absent from that model")
+	}
+	if !codexEffortSupported(models, "other", "xhigh") {
+		t.Fatal("model id should resolve to its catalog entry")
+	}
+}
+
+func TestCodexModelCatalogDoesNotExposeUltraAsPerModelEffort(t *testing.T) {
+	model := normalizeCodexModelEfforts(CodexModel{
+		Model: "gpt-6.1-sol",
+		SupportedEfforts: []ReasoningOption{{Effort: "low"}, {Effort: "high"}, {Effort: "max"}, {Effort: "ultra"}},
+	})
+	want := []string{"low", "high", "max"}
+	if len(model.SupportedEfforts) != len(want) {
+		t.Fatalf("got efforts %v, want %v", model.SupportedEfforts, want)
+	}
+	for i, effort := range want {
+		if model.SupportedEfforts[i].Effort != effort {
+			t.Fatalf("got efforts %v, want %v", model.SupportedEfforts, want)
+		}
+	}
+}

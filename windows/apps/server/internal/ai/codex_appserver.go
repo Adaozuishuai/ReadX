@@ -16,6 +16,18 @@ import (
 // 5) before a model request is sent. The standalone protocol is also used by
 // CodexModels, so inference follows the same supported connection path.
 func (c *Client) streamCodexAppServer(ctx context.Context, messages []Message, images [][]byte, onDelta func(string), schemas ...json.RawMessage) (string, error) {
+	fastTier := ""
+	if c.cfg.CodexFastMode {
+		models, err := c.cfg.CodexModels(ctx, false)
+		if err != nil {
+			return "", fmt.Errorf("读取 Codex Fast 模式目录失败: %w", err)
+		}
+		var ok bool
+		fastTier, ok = codexFastServiceTier(models, c.cfg.Model)
+		if !ok {
+			return "", fmt.Errorf("当前 Codex 模型目录不支持 Fast 模式")
+		}
+	}
 	if c.cfg.tempRoot != "" {
 		if err := os.MkdirAll(c.cfg.tempRoot, 0700); err != nil {
 			return "", fmt.Errorf("无法创建 AI 临时目录: %w", err)
@@ -37,6 +49,9 @@ func (c *Client) streamCodexAppServer(ctx context.Context, messages []Message, i
 	}
 
 	args := []string{"app-server", "--listen", "stdio://"}
+	if c.cfg.CodexFastMode {
+		args = append(args, "-c", "features.fast_mode=true")
+	}
 	for _, setting := range []string{"sqlite_home", "log_dir"} {
 		value, _ := json.Marshal(dir)
 		args = append(args, "-c", setting+"="+string(value))
@@ -140,6 +155,9 @@ func (c *Client) streamCodexAppServer(ctx context.Context, messages []Message, i
 			"mcp_servers":             map[string]any{},
 		},
 	}
+	if c.cfg.CodexFastMode {
+		threadParams["serviceTier"] = fastTier
+	}
 	if c.cfg.Model != "" {
 		threadParams["model"] = c.cfg.Model
 	}
@@ -168,6 +186,9 @@ func (c *Client) streamCodexAppServer(ctx context.Context, messages []Message, i
 		"threadId": started.Thread.ID,
 		"input":    input,
 		"cwd":      dir,
+	}
+	if c.cfg.CodexFastMode {
+		turnParams["serviceTier"] = fastTier
 	}
 	if c.cfg.Model != "" {
 		turnParams["model"] = c.cfg.Model

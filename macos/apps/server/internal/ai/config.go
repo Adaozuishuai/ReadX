@@ -19,6 +19,7 @@ type Config struct {
 	Model                  string `json:"model"`
 	APIKey                 string `json:"apiKey"`
 	ReasoningEffort        string `json:"reasoningEffort,omitempty"`
+	CodexFastMode          bool   `json:"codexFastMode,omitempty"`
 	TranslationPreparation string `json:"translationPreparation,omitempty"`
 	tempRoot               string
 }

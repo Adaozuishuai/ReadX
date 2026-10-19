@@ -1,6 +1,6 @@
 {
   "name": "cbct-reading-v2",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "ReadX — Go 后端 + React 前端 + Electron 壳（npm workspaces）",
   "workspaces": [
@@ -21,7 +21,7 @@
     "build:release": "npm run build && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-release.ps1 && npm run package:windows -w @cbct/desktop",
     "build:release:publish": "npm run build && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-release.ps1 && npm exec --workspace=@cbct/desktop -- electron-builder --win nsis --x64 --publish always",
     "typecheck": "npm run typecheck -w @cbct/shared && npm run typecheck -w @cbct/web && npm run typecheck -w @cbct/desktop",
-    "test:go": "node scripts/go.mjs test ./...",
+    "test:go": "node scripts/go.mjs test -p 1 ./...",
     "test:import": "node scripts/import-smoke.cjs",
     "build:go": "node scripts/build-server.mjs",
     "test": "npm run test:go && npm run test -w @cbct/shared && npm run typecheck",

@@ -13,6 +13,7 @@ import { useWorkspace } from './hooks/useWorkspace';
 import { WorkspaceIcon } from './components/WorkspaceIcon';
 const ImportDialog = lazy(() => import('./components/ImportDialog').then((module) => ({ default: module.ImportDialog })));
 const RetranslateDialog = lazy(() => import('./components/RetranslateDialog').then((module) => ({ default: module.RetranslateDialog })));
+const DocumentJobDialog = lazy(() => import('./components/DocumentJobDialog').then((module) => ({ default: module.DocumentJobDialog })));
 const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then((module) => ({ default: module.AISettingsDialog })));
 
 /**
@@ -40,6 +41,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
   const [retranslateDocument, setRetranslateDocument] = useState<DocumentSummary | null>(null);
+  const [processingDocument, setProcessingDocument] = useState<DocumentSummary | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [libraryView, setLibraryView] = useState<'all' | 'favorite' | 'trash' | 'shelves'>(
     'all',
@@ -176,6 +178,7 @@ export default function App() {
           selectedId={selectedId}
           onOpenDocument={openDocument}
           onRetranslate={setRetranslateDocument}
+          onOpenProcessing={setProcessingDocument}
           onOpenImport={() => setImportFiles([])}
           onOpenSettings={() => setSettingsOpen(true)}
           meta={libraryMeta}
@@ -254,6 +257,25 @@ export default function App() {
             onOpenReader={() => {
               const id = retranslateDocument.id;
               setRetranslateDocument(null);
+              openDocument(id);
+            }}
+          />
+        </Suspense>
+      ) : null}
+      {processingDocument ? (
+        <Suspense fallback={null}>
+          <DocumentJobDialog
+            document={processingDocument}
+            jobKey={processingDocument.key}
+            importing={false}
+            pending={false}
+            onClose={() => {
+              setProcessingDocument(null);
+              reload();
+            }}
+            onOpenReader={() => {
+              const id = processingDocument.id;
+              setProcessingDocument(null);
               openDocument(id);
             }}
           />

@@ -32,6 +32,7 @@ const STAGE_LABEL: Record<string, string> = {
   done: '已完成',
   failed: '失败',
   skipped: '跳过',
+  interrupted: '已中断',
 };
 
 type Tab = 'overview' | 'progress' | 'files';
@@ -106,7 +107,9 @@ export function DocumentJobDialog({
         if (cancelled) return;
         setJob(response.available ? response.job ?? null : null);
         setLoaded(true);
-        if (response.job?.status === 'running') timer = window.setTimeout(load, 1200);
+        if (response.job?.status === 'running' || response.job?.stages.some((stage) => stage.status === 'running')) {
+          timer = window.setTimeout(load, 1200);
+        }
       } catch {
         if (!cancelled) setLoaded(true);
       }
@@ -207,11 +210,14 @@ export function DocumentJobDialog({
   };
 
   const status = job?.status ?? '';
-  const running = status === 'running' || pending;
+  const jobRunning = status === 'running' || pending;
   const pages = job?.pages || 0;
   const ocrStage = stageOf(job, 'ocr');
   const translateStage = stageOf(job, 'translate');
   const renderStage = stageOf(job, 'render');
+  const memoryStage = stageOf(job, 'memory');
+  const memoryRunning = memoryStage?.status === 'running';
+  const tracking = jobRunning || memoryRunning;
   const translationUnit = stageUnit(translateStage);
   const renderingUnit = stageUnit(renderStage);
   const translationCompleted = Math.max(0, translateStage?.completed ?? 0);
@@ -222,8 +228,10 @@ export function DocumentJobDialog({
   const renderTotal = Math.max(0,
     renderStage?.total || (renderStage?.status === 'pending' && ocrStage?.status === 'done' ? ocrTotalPages : 0),
   );
-  const statusText = status ? STATUS_LABEL[status] ?? status : pending ? '处理中' : '还没有任务记录';
-  const activeMessage = running ? job?.stages.find((stage) => stage.status === 'running' && stage.message)?.message : '';
+  const statusText = memoryRunning && status === 'done'
+    ? '入库完成，论文记忆处理中'
+    : status ? STATUS_LABEL[status] ?? status : pending ? '处理中' : '还没有任务记录';
+  const activeMessage = tracking ? job?.stages.find((stage) => stage.status === 'running' && stage.message)?.message : '';
   const statusDetail = job
     ? document.format === 'epub'
       ? '按 EPUB 章节结构保存；无需 OCR 和 PDF 版面渲染'
@@ -253,7 +261,7 @@ export function DocumentJobDialog({
           <h2>{document.title || '未命名文档'}</h2>
         </div>
         <div className="job-header-tools">
-          {job?.status === 'running' ? <span className="job-header-state"><i /> 正在处理</span> : null}
+          {tracking ? <span className="job-header-state"><i /> {memoryRunning && !jobRunning ? '论文记忆处理中' : '正在处理'}</span> : null}
           <button type="button" onClick={onClose} aria-label="关闭任务面板">×</button>
         </div>
       </header>
@@ -326,7 +334,7 @@ export function DocumentJobDialog({
 
               <section className="job-card job-pipeline-card">
                 <div className="job-status">
-                  <span className={`job-spinner${running ? ' running' : ''}`} aria-hidden="true">{running ? '↻' : status === 'done' ? '✓' : '!'}</span>
+                  <span className={`job-spinner${tracking ? ' running' : ''}`} aria-hidden="true">{tracking ? '↻' : status === 'done' ? '✓' : '!'}</span>
                   <div>
                     <strong>处理流程</strong>
                     <p>{activeMessage || (document.format === 'epub' ? '保留原章节结构并准备阅读' : '识别原文、翻译段落并生成可读译文')}</p>
@@ -366,10 +374,10 @@ export function DocumentJobDialog({
               </button>
 
               <div className="job-actions">
-                {running ? (
+                {jobRunning ? (
                   <button type="button" className="job-cancel" onClick={cancel}>取消任务</button>
                 ) : (
-                  <span className="job-action-note">{job ? `任务${STATUS_LABEL[status] ?? status}` : '尚无运行中的任务'}</span>
+                  <span className="job-action-note">{memoryRunning ? '译文已入库，论文记忆后台整理中' : job ? `任务${STATUS_LABEL[status] ?? status}` : '尚无运行中的任务'}</span>
                 )}
                 <span className="job-meta">{document.format === 'epub' ? 'EPUB · 章节结构' : `OCR · ${job?.stages.find((stage) => stage.key === 'ocr')?.status === 'done' ? '已识别' : '未完成'}`}</span>
                 <button type="button" onClick={() => setDetailsOpen((value) => !value)}>

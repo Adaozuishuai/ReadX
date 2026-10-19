@@ -5,12 +5,26 @@ import { WorkspaceIcon } from './WorkspaceIcon';
 const EFFORT_LABELS: Record<string, string> = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', ultra: 'Ultra' };
 export function effortLabel(value: string) { return EFFORT_LABELS[value] ?? value; }
 
-const EFFORT_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+const EFFORT_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+export function reasoningOptionsForSelection(catalog: import('../api/client').CodexModel[], selectedModel: string, selected: import('../api/client').CodexModel | undefined) {
+  const models = selectedModel ? (selected ? [selected] : []) : catalog;
+  const options = new Map<string, { reasoningEffort: string; description: string }>();
+  for (const model of models) for (const option of model.supportedReasoningEfforts ?? []) {
+    if (!options.has(option.reasoningEffort)) options.set(option.reasoningEffort, option);
+  }
+  return [...options.values()].sort((a, b) => {
+    const aOrder = EFFORT_ORDER.indexOf(a.reasoningEffort);
+    const bOrder = EFFORT_ORDER.indexOf(b.reasoningEffort);
+    return (aOrder < 0 ? EFFORT_ORDER.length : aOrder) - (bOrder < 0 ? EFFORT_ORDER.length : bOrder);
+  });
+}
 
 function ComposerModelPicker({ preferences: p }: { preferences: AIPreferences }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<'effort' | 'models'>('effort');
   const [preview, setPreview] = useState<string | null>(null);
+  const [fastPreview, setFastPreview] = useState<boolean | null>(null);
   const pending = useRef<string | null>(null);
   const effortSaving = useRef(false);
   const queuedEffort = useRef<{ model: string; value: string } | null>(null);
@@ -23,12 +37,14 @@ function ComposerModelPicker({ preferences: p }: { preferences: AIPreferences })
   const blocked = p.loading || p.saving || !s;
   const rangeBlocked = p.loading || !s || (p.saving && !effortSaving.current);
   const isCodex = s?.provider === 'codex';
+  const fastSupported = !!p.model?.serviceTiers?.some((tier) => ['fast', 'priority'].includes(tier.id));
+  const fastMode = fastPreview ?? !!s?.codexFastMode;
   const effort = s?.reasoningEffort || p.model?.defaultReasoningEffort || '';
-  const levels = [...new Set(p.model?.supportedReasoningEfforts?.map((item) => item.reasoningEffort) ?? [])].sort((a, b) => EFFORT_ORDER.indexOf(a) - EFFORT_ORDER.indexOf(b));
+  const levels = reasoningOptionsForSelection(p.catalog, s?.model ?? '', p.model).map((item) => item.reasoningEffort);
   const visibleEffort = preview === null ? effort : preview || p.model?.defaultReasoningEffort || '';
   const levelIndex = levels.indexOf(visibleEffort);
   const fraction = levels.length > 1 ? Math.max(0, levelIndex) / (levels.length - 1) : 0.5;
-  const modelName = p.model?.displayName || s?.model || (isCodex ? 'Codex default' : s?.provider) || 'Choose model';
+  const modelName = isCodex && !s?.model ? 'Codex default' : p.model?.displayName || s?.model || s?.provider || 'Choose model';
   const close = () => { setOpen(false); pending.current = null; setPreview(savingPreview.current); };
   const commitEffort = () => {
     const value = pending.current;
@@ -73,6 +89,13 @@ function ComposerModelPicker({ preferences: p }: { preferences: AIPreferences })
     pending.current = null; setPreview(null);
     if (await p.select(model, '')) setView('effort');
   };
+  const toggleFastMode = async () => {
+    if (rangeBlocked || !isCodex || !fastSupported) return;
+    const next = !fastMode;
+    setFastPreview(next);
+    await p.select(s?.model ?? '', s?.reasoningEffort ?? '', next);
+    setFastPreview(null);
+  };
   const moveModelFocus = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
     const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]:not(:disabled)'));
@@ -100,11 +123,11 @@ function ComposerModelPicker({ preferences: p }: { preferences: AIPreferences })
         {(!p.catalog.length || p.error) && <button type="button" className="composer-reload-models" disabled={blocked} onClick={() => void p.reload(true)}>{p.loading ? 'Loading…' : 'Refresh models'}</button>}
       </> : <>
         <div className="composer-reasoning-heading">
-          <span className="composer-reasoning-symbol"><WorkspaceIcon name="lightning" size={19} /></span>
+          <button type="button" className={'composer-reasoning-symbol' + (fastMode ? ' active' : '')} disabled={rangeBlocked || !isCodex || !fastSupported} aria-pressed={fastMode} aria-label={fastMode ? 'Turn off Fast mode' : 'Turn on Fast mode'} title={fastSupported ? 'Fast mode · up to 1.5× speed; uses 2.5× included allowance or 2× credits' : 'Fast mode is not available for this model'} onClick={() => void toggleFastMode()}><WorkspaceIcon name="lightning" size={19} /></button>
           <div><strong aria-live="polite">{EFFORT_LABELS[visibleEffort] || visibleEffort || 'Default'}</strong><button type="button" className="composer-current-model" onClick={() => setView('models')} disabled={!isCodex}><span>{modelName}</span><WorkspaceIcon name="chevronRight" size={13} /></button></div>
           <button type="button" className="composer-reset-effort" disabled={rangeBlocked || !isCodex || (!s?.reasoningEffort && preview === null && !effortSaving.current)} aria-label="Reset to model default" title="Reset to default" onClick={() => { pending.current = ''; setPreview(''); commitEffort(); }}><WorkspaceIcon name="reset" size={18} /></button>
         </div>
-        {!!levels.length && <div className="composer-effort-slider" style={{ '--effort-fill': 'calc(' + fraction * 100 + '% + ' + (16 - 32 * fraction) + 'px)' } as CSSProperties}>
+        {!!levels.length && <div className={'composer-effort-slider' + (fastMode ? ' fast-active' : '')} style={{ '--effort-fill': 'calc(' + fraction * 100 + '% + ' + (16 - 32 * fraction) + 'px)' } as CSSProperties}>
           <div className="composer-effort-track"><div className="composer-effort-fill" />{levels.map((level, i) => { const f = levels.length > 1 ? i / (levels.length - 1) : 0.5; return <span key={level} className={'composer-effort-dot' + (i <= levelIndex ? ' filled' : '')} style={{ left: 'calc(' + f * 100 + '% + ' + (16 - 32 * f) + 'px)' }} />; })}</div>
           <input type="range" aria-label="Reasoning effort" aria-valuetext={EFFORT_LABELS[visibleEffort] || visibleEffort} min={0} max={Math.max(0, levels.length - 1)} step={1} value={Math.max(0, levelIndex)} disabled={rangeBlocked || levels.length < 2} onChange={(event) => { const level = levels[Number(event.target.value)]; if (level) { pending.current = level; setPreview(level); } }} onPointerUp={commitEffort} onTouchEnd={commitEffort} onKeyUp={(event) => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) commitEffort(); }} onBlur={commitEffort} onPointerCancel={() => { pending.current = null; setPreview(savingPreview.current); }} />
         </div>}
@@ -122,6 +145,7 @@ export function AIModelControls({ preferences: p, compact = false, variant = 'st
   const s = p.settings;
   if (s && s.provider !== 'codex') return <div className="ai-model-controls"><span>{s.model || s.provider}</span></div>;
   const blocked = p.loading || p.saving || !s;
+  const effortOptions = reasoningOptionsForSelection(p.catalog, s?.model ?? '', p.model);
   return <div className={`ai-model-controls${compact ? ' compact' : ''}`} aria-busy={blocked}>
     <label><span>Model</span><select aria-label="Model" value={s?.model ?? ''} disabled={blocked || !p.catalog.length}
       onChange={(event) => void p.select(event.target.value, '')}>
@@ -132,8 +156,8 @@ export function AIModelControls({ preferences: p, compact = false, variant = 'st
     <label><span>Reasoning effort</span><select aria-label="Reasoning effort" value={s?.reasoningEffort ?? ''} disabled={blocked || !p.model}
       onChange={(event) => void p.select(s?.model ?? '', event.target.value)}>
       <option value="">Default{p.model ? ` · ${effortLabel(p.model.defaultReasoningEffort)}` : ''}</option>
-      {s?.reasoningEffort && !p.model?.supportedReasoningEfforts?.some((e) => e.reasoningEffort === s.reasoningEffort) && <option value={s.reasoningEffort}>{s.reasoningEffort} · Unavailable in catalog</option>}
-      {p.model?.supportedReasoningEfforts?.map((e) => <option key={e.reasoningEffort} value={e.reasoningEffort}>{effortLabel(e.reasoningEffort)}</option>)}
+      {s?.reasoningEffort && !effortOptions.some((e) => e.reasoningEffort === s.reasoningEffort) && <option value={s.reasoningEffort}>{s.reasoningEffort} · Unavailable in catalog</option>}
+      {effortOptions.map((e) => <option key={e.reasoningEffort} value={e.reasoningEffort}>{effortLabel(e.reasoningEffort)}</option>)}
     </select></label>
     {!compact && <small>{p.saving ? 'Saving…' : p.loading ? 'Loading models…' : ''} <button type="button" disabled={blocked} onClick={() => void p.reload(true)}>Refresh</button></small>}
     {p.error && <small role="alert" className="text-bad">{p.error} <button disabled={blocked} onClick={() => void p.reload(true)}>Retry</button></small>}

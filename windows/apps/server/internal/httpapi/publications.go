@@ -360,10 +360,16 @@ func (s *Server) runLocalPDFImport(
 		if err := s.adoptLeeTranslatedPDF(result.Document.Key, translatedPath, len(metadata.LayoutPages)); err != nil {
 			return result, err
 		}
-		// OCR and translation have now persisted their source pages. Build the
-		// shared analysis memory before import returns so all five workbook steps
-		// can reuse it without rereading every page on first analysis.
-		_ = s.preparePaperMemoryDuringImport(ctx, result.Document.Key, progress)
+		// The translated PDF is already in the library. Start the optional shared
+		// reading memory in the background so it cannot delay the import response.
+		jobKey := "doc-" + hex.EncodeToString(contentHash[:16])
+		s.linkImportJobDocument(jobKey, result.Document.Key)
+		s.jobStage(jobKey, "memory", "running", "译文已入库，正在后台准备论文记忆", 0, 1)
+		memoryCtx, cancelMemory := context.WithTimeout(context.Background(), 6*time.Hour)
+		go func() {
+			defer cancelMemory()
+			_ = s.preparePaperMemoryDuringImport(memoryCtx, result.Document.Key, jobKey, nil)
+		}()
 	}
 	if progress != nil {
 		progress("saving", "Lee 处理结果已保存", 1, 1)
@@ -767,9 +773,12 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.jobStage(key, "render", "done", "Lee 已生成译文 PDF", len(metadata.LayoutPages), len(metadata.LayoutPages))
-	_ = s.preparePaperMemoryDuringImport(jobCtx, key, func(stage, message string, completed, total int) {
-		emit(map[string]any{"progress": map[string]any{"stage": stage, "message": message, "completed": completed, "total": total}})
-	})
+	s.jobStage(key, "memory", "running", "译文已入库，正在后台准备论文记忆", 0, 1)
+	memoryCtx, cancelMemory := context.WithTimeout(context.Background(), 6*time.Hour)
+	go func() {
+		defer cancelMemory()
+		_ = s.preparePaperMemoryDuringImport(memoryCtx, key, key, nil)
+	}()
 	s.finishImportJob(key, "done", "")
 	updated, err := s.loadDocument(r.Context(), key)
 	if err != nil {

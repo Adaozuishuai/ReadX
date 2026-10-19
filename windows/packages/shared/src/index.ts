@@ -32,6 +32,8 @@ export interface DocumentSummary {
   doi: string;
   url: string;
   status: WireStatus;
+  paperMemoryStatus?: string;
+  paperMemoryMessage?: string;
   pdfPath: string;
   addedAt: string;
   updatedAt: string;

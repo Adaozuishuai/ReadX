@@ -247,21 +247,23 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 
 // DocumentSummary 与 packages/shared 的 DocumentSummary 一一对应。
 type DocumentSummary struct {
-	Format          string   `json:"format"`
-	HasPDF          bool     `json:"hasPdf"`
-	ID              string   `json:"id"`
-	Key             string   `json:"key"`
-	Title           string   `json:"title"`
-	TranslatedTitle string   `json:"translatedTitle"`
-	Authors         []string `json:"authors"`
-	Year            *int     `json:"year"`
-	Venue           string   `json:"venue"`
-	DOI             string   `json:"doi"`
-	URL             string   `json:"url"`
-	Status          string   `json:"status"`
-	PDFPath         string   `json:"pdfPath"`
-	AddedAt         string   `json:"addedAt"`
-	UpdatedAt       string   `json:"updatedAt"`
+	Format             string   `json:"format"`
+	HasPDF             bool     `json:"hasPdf"`
+	ID                 string   `json:"id"`
+	Key                string   `json:"key"`
+	Title              string   `json:"title"`
+	TranslatedTitle    string   `json:"translatedTitle"`
+	Authors            []string `json:"authors"`
+	Year               *int     `json:"year"`
+	Venue              string   `json:"venue"`
+	DOI                string   `json:"doi"`
+	URL                string   `json:"url"`
+	Status             string   `json:"status"`
+	PaperMemoryStatus  string   `json:"paperMemoryStatus,omitempty"`
+	PaperMemoryMessage string   `json:"paperMemoryMessage,omitempty"`
+	PDFPath            string   `json:"pdfPath"`
+	AddedAt            string   `json:"addedAt"`
+	UpdatedAt          string   `json:"updatedAt"`
 }
 
 func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
@@ -329,6 +331,20 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "遍历文档失败: "+err.Error())
 		return
+	}
+	if err := rows.Close(); err != nil {
+		writeError(w, http.StatusInternalServerError, "关闭文档列表失败: "+err.Error())
+		return
+	}
+	for index := range documents {
+		job, found := s.loadImportJobForDocument(r.Context(), documents[index].Key)
+		if !found {
+			continue
+		}
+		if stage := job.stage("memory"); stage != nil {
+			documents[index].PaperMemoryStatus = stage.Status
+			documents[index].PaperMemoryMessage = stage.Message
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"documents": documents, "total": len(documents)})
 }

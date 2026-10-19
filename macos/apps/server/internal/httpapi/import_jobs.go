@@ -13,12 +13,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"cbctv2/server/internal/legacy"
 	"cbctv2/server/internal/render"
 )
 
 const jobStatePrefix = "import-job:"
+const jobDocumentPrefix = "import-job-document:"
 
 // JobStage 是任务里的一个阶段（ocr / translate / render）。
 type JobStage struct {
@@ -212,7 +214,43 @@ func (s *Server) loadImportJob(ctx context.Context, key string) (*DocumentJob, b
 	if job.Status == "running" {
 		job.Status = "interrupted"
 	}
+	interruptedStage := false
+	for index := range job.Stages {
+		if job.Stages[index].Status == "running" {
+			job.Stages[index].Status = "interrupted"
+			job.Stages[index].Message = "应用重启时处理被中断，可重新打开任务查看"
+			interruptedStage = true
+		}
+	}
+	if interruptedStage {
+		s.persistImportJob(&job)
+	}
 	return &job, true
+}
+
+// linkImportJobDocument lets the library address an upload job by the durable
+// document key, even when the upload itself was initially keyed by its content hash.
+func (s *Server) linkImportJobDocument(jobKey, documentKey string) {
+	if strings.TrimSpace(jobKey) == "" || strings.TrimSpace(documentKey) == "" {
+		return
+	}
+	_, _ = s.handle.Exec(
+		`INSERT INTO app_state(key, value_json, updated_at) VALUES(?,?,?)
+		 ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`,
+		jobDocumentPrefix+documentKey, fmt.Sprintf("%q", jobKey), nowStamp())
+}
+
+func (s *Server) loadImportJobForDocument(ctx context.Context, documentKey string) (*DocumentJob, bool) {
+	var encoded string
+	if err := s.handle.QueryRowContext(ctx, `SELECT value_json FROM app_state WHERE key=?`, jobDocumentPrefix+documentKey).Scan(&encoded); err == nil {
+		var jobKey string
+		if json.Unmarshal([]byte(encoded), &jobKey) == nil && strings.TrimSpace(jobKey) != "" {
+			if job, found := s.loadImportJob(ctx, jobKey); found {
+				return job, true
+			}
+		}
+	}
+	return s.loadImportJob(ctx, documentKey)
 }
 
 func (s *Server) cancelImportJob(key string) bool {
@@ -304,7 +342,7 @@ func (s *Server) handleDocumentJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	job, found := s.loadImportJob(r.Context(), key)
+	job, found := s.loadImportJobForDocument(r.Context(), key)
 	if !found {
 		writeJSON(w, http.StatusOK, map[string]any{"available": false})
 		return

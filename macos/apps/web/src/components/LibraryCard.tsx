@@ -22,6 +22,7 @@ export function LibraryCard({
   categories,
   selected,
   onSelect,
+  onOpenProcessing,
   onRetranslate,
   onOpenReproduction,
   onToggleTrash,
@@ -32,6 +33,7 @@ export function LibraryCard({
   categories: Category[];
   selected: boolean;
   onSelect: () => void;
+  onOpenProcessing: () => void;
   onRetranslate: () => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: () => Promise<unknown>;
@@ -140,6 +142,11 @@ export function LibraryCard({
 
       {doc.format !== 'epub' && doc.hasPdf ? (
         <div className="book-card-footer">
+          {doc.paperMemoryStatus && doc.paperMemoryStatus !== 'done' ? (
+            <button type="button" className="book-process-button" onClick={onOpenProcessing} title={doc.paperMemoryMessage || '查看论文记忆处理进度'}>
+              <span aria-hidden="true">◷</span> 处理
+            </button>
+          ) : null}
           <button type="button" className="book-retranslate-button" onClick={onRetranslate}>
             <span aria-hidden="true">↻</span> 重新翻译
           </button>

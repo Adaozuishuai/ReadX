@@ -39,7 +39,6 @@ def prompt(item):
 @pytest.fixture(autouse=True)
 def isolated_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(cache.paths, "TRANSLATION_UNIT_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(cache, "_ENSURED_SHARD_DIRS", set())
     monkeypatch.setattr(cache, "_PRUNE_DONE", True)
 
 

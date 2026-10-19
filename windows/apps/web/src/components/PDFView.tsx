@@ -28,6 +28,63 @@ export function textFromPDF(content: TextContent): string {
     .trim();
 }
 
+type PDFMarkRect = { x: number; y: number; width: number; height: number };
+
+function mergePDFMarkRects(rects: PDFMarkRect[]): PDFMarkRect[] {
+  const rows: { top: number; bottom: number; rects: PDFMarkRect[] }[] = [];
+  for (const rect of [...rects]
+    .filter((item) => Number.isFinite(item.x + item.y + item.width + item.height) && item.width > 0 && item.height > 0)
+    .sort((a, b) => a.y - b.y || a.x - b.x)) {
+    const bottom = rect.y + rect.height;
+    const center = rect.y + rect.height / 2;
+    const row = rows.find((candidate) => {
+      const overlap = Math.max(0, Math.min(bottom, candidate.bottom) - Math.max(rect.y, candidate.top));
+      const minHeight = Math.min(rect.height, candidate.bottom - candidate.top);
+      const rowCenter = (candidate.top + candidate.bottom) / 2;
+      return overlap / minHeight >= 0.55 || Math.abs(center - rowCenter) <= minHeight * 0.32;
+    });
+    if (row) {
+      row.top = Math.min(row.top, rect.y);
+      row.bottom = Math.max(row.bottom, bottom);
+      row.rects.push(rect);
+    } else rows.push({ top: rect.y, bottom, rects: [rect] });
+  }
+
+  return rows.flatMap((row) => {
+    const merged: PDFMarkRect[] = [];
+    for (const rect of row.rects.sort((a, b) => a.x - b.x)) {
+      const previous = merged[merged.length - 1];
+      if (previous && rect.x <= previous.x + previous.width + 0.0025) {
+        const right = Math.max(previous.x + previous.width, rect.x + rect.width);
+        const top = Math.min(previous.y, rect.y);
+        const bottom = Math.max(previous.y + previous.height, rect.y + rect.height);
+        previous.x = Math.min(previous.x, rect.x);
+        previous.width = right - previous.x;
+        previous.y = top;
+        previous.height = bottom - top;
+      } else merged.push({ ...rect });
+    }
+    return merged;
+  });
+}
+
+function pdfSelectionRects(range: Range, bounds: DOMRect): PDFMarkRect[] {
+  const rects = Array.from(range.getClientRects()).flatMap((rect) => {
+    const left = Math.max(bounds.left, rect.left);
+    const top = Math.max(bounds.top, rect.top);
+    const right = Math.min(bounds.right, rect.right);
+    const bottom = Math.min(bounds.bottom, rect.bottom);
+    if (right - left <= 1 || bottom - top <= 1) return [];
+    return [{
+      x: (left - bounds.left) / bounds.width,
+      y: (top - bounds.top) / bounds.height,
+      width: (right - left) / bounds.width,
+      height: (bottom - top) / bounds.height,
+    }];
+  });
+  return mergePDFMarkRects(rects);
+}
+
 export function usePDF(key: string | null, translated = false) {
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [outline, setOutline] = useState<PDFOutline[]>([]);
@@ -453,14 +510,7 @@ export function PDFPage({
     const quote = selection.toString().trim();
     if (!quote) return;
     const bounds = paper.current.getBoundingClientRect();
-    const rects = Array.from(range.getClientRects())
-      .filter((r) => r.width > 1 && r.height > 1)
-      .map((r) => ({
-        x: Math.max(0, (r.left - bounds.left) / bounds.width),
-        y: Math.max(0, (r.top - bounds.top) / bounds.height),
-        width: Math.min(r.width, bounds.right - r.left) / bounds.width,
-        height: Math.min(r.height, bounds.bottom - r.top) / bounds.height,
-      }));
+    const rects = pdfSelectionRects(range, bounds);
     const anchor = range.getBoundingClientRect();
     onSelect({
       annotation: {
@@ -540,10 +590,33 @@ export function PDFPage({
             return block && <div className="pdf-paragraph-hover" aria-hidden="true" style={{ left: `${block.x / paragraphLayout.width * 100}%`, top: `${block.y / paragraphLayout.height * 100}%`, width: `${block.width / paragraphLayout.width * 100}%`, height: `${block.height / paragraphLayout.height * 100}%` }} />;
           })()}
           <div className="pdf-marks">
-            {annotations
-              .filter((a) => a.page === page)
-              .flatMap((a) =>
-                (a.locator?.rects ?? []).map((rect, index) => (
+            {(() => {
+              const pageAnnotations = annotations.filter((annotation) => annotation.page === page);
+              const highlights = new Map<string, string[]>();
+              for (const annotation of pageAnnotations.filter((item) => item.kind === 'highlight')) {
+                const paths = highlights.get(annotation.color) ?? [];
+                for (const rect of annotation.locator?.rects ?? []) {
+                  if (Number.isFinite(rect.x + rect.y + rect.width + rect.height) && rect.width > 0 && rect.height > 0) {
+                    paths.push(`M${rect.x} ${rect.y}h${rect.width}v${rect.height}h-${rect.width}Z`);
+                  }
+                }
+                highlights.set(annotation.color, paths);
+              }
+              return <>
+                {[...highlights].map(([color, paths]) => paths.length > 0 && (
+                  <svg
+                    key={`highlight-${color}`}
+                    aria-hidden="true"
+                    className={`pdf-mark pdf-mark-highlight ann-highlight-${color}`}
+                    viewBox="0 0 1 1"
+                    preserveAspectRatio="none"
+                  >
+                    <path d={paths.join('')} />
+                  </svg>
+                ))}
+                {pageAnnotations
+                  .filter((annotation) => annotation.kind !== 'highlight')
+                  .flatMap((a) => mergePDFMarkRects(a.locator?.rects ?? []).map((rect, index) => (
                   <span
                     key={`${a.id}-${index}`}
                     data-annotation-id={a.id}
@@ -556,8 +629,9 @@ export function PDFPage({
                       height: `${rect.height * 100}%`,
                     }}
                   />
-                )),
-              )}
+                  )))}
+              </>;
+            })()}
           </div>
         </div>
       </div>

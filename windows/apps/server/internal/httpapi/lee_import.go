@@ -140,7 +140,10 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 			"is_ocr": true, "poll_interval": 5, "poll_timeout": 1800,
 		},
 		"translation": map[string]any{
-			"start_page": 0, "end_page": -1, "batch_size": 8, "workers": 1,
+			// Translate several independent batches at once. Four workers is a
+			// conservative default that improves latency without flooding provider
+			// rate limits; Lee's adaptive scheduler can still reduce concurrency.
+			"start_page": 0, "end_page": -1, "batch_size": 8, "workers": 4,
 			"mode": "sci", "math_mode": "direct_typst", "skip_title_translation": false,
 			"classify_batch_size": 12, "rule_profile_name": "general_sci",
 			"context_mode": "needed", "glossary_mode": "matched", "memory_mode": "matched",
@@ -441,6 +444,13 @@ func leePipelinePython(dataRoot string) (string, []string, string, error) {
 			return "", nil, "", fmt.Errorf("READX_PYTHON 指定的 Python 不可用: %w", err)
 		}
 		sitePackages := ""
+		if runtime.GOOS == "windows" {
+			// The desktop/dev launcher may explicitly provide the bundled venv
+			// interpreter. Resolve it to its base Python too: launching the venv
+			// executable from a low-integrity workspace can lose permission to
+			// create the provider logs under the user's temp directory.
+			path, sitePackages = venvBasePython(path)
+		}
 		if resourcesRoot := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resourcesRoot != "" {
 			candidate := filepath.Join(resourcesRoot, "python", "Lib", "site-packages")
 			if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
@@ -629,7 +639,6 @@ func (s *Server) adoptLeeTranslatedPDF(key, source string, pages int) error {
 		return fmt.Errorf("保存 Lee 译文 PDF 失败: %w", err)
 	}
 	s.jobStage(key, "render", "done", fmt.Sprintf("Lee 已排版 %d 页译文", pages), pages, pages)
-	s.finishImportJob(key, "done", "")
 	return nil
 }
 
