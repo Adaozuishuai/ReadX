@@ -179,7 +179,7 @@ func TestCodexEffortSupportUsesCatalogUnionOnlyForDefaultModel(t *testing.T) {
 
 func TestCodexModelCatalogDoesNotExposeUltraAsPerModelEffort(t *testing.T) {
 	model := normalizeCodexModelEfforts(CodexModel{
-		Model: "gpt-6.1-sol",
+		Model:            "gpt-6.1-sol",
 		SupportedEfforts: []ReasoningOption{{Effort: "low"}, {Effort: "high"}, {Effort: "max"}, {Effort: "ultra"}},
 	})
 	want := []string{"low", "high", "max"}
