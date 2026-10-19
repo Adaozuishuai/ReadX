@@ -26,9 +26,17 @@ jobs:
           cache: npm
           cache-dependency-path: windows/package-lock.json
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: 安装依赖
         working-directory: windows
         run: npm ci
+
+      - name: 安装 Lee PDF 运行时依赖
+        shell: bash
+        run: python -m pip install --only-binary=:all: Pillow==10.4.0 PyMuPDF==1.26.5 pikepdf==10.13.0.post1 requests==2.32.5 urllib3==2.5.0
 
       - name: gofmt（源码统一 LF，见 .gitattributes）
         working-directory: windows/apps/server

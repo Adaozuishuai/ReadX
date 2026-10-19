@@ -41,7 +41,11 @@ func (c *Client) streamCodexAppServer(ctx context.Context, messages []Message, i
 		value, _ := json.Marshal(dir)
 		args = append(args, "-c", setting+"="+string(value))
 	}
-	cmd, err := cliCommand(ctx, "codex", args)
+	factory := c.command
+	if factory == nil {
+		factory = cliCommand
+	}
+	cmd, err := factory(ctx, "codex", args)
 	if err != nil {
 		return "", err
 	}
