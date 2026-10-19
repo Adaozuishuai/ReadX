@@ -18,6 +18,7 @@ import (
 
 	"cbctv2/server/internal/config"
 	"cbctv2/server/internal/db"
+	"cbctv2/server/internal/legacy"
 )
 
 const appVersion = "0.0.0-s0"
@@ -33,20 +34,24 @@ type Server struct {
 	downloadPublication func(context.Context, string, int64, func(int64, int64)) ([]byte, string, error)
 	settingsMu          sync.Mutex
 	appStateMu          sync.Mutex
-	// visionMu 只保护「版式校正缓存读 → 调模型 → 写缓存」这一小段：模型调用可能长达 120s，
-	// 绝不能借用 appStateMu，否则书库元数据、想法、复现、回收站会被一起卡住。
-	visionMu sync.Mutex
-	// graphMu 与 visionMu 同理：知识图谱抽取要先调 180s 的模型，模型调用期间不持任何锁；
-	// graphMu（以及 appStateMu）只在 load-modify-save 的短窗口内持有，否则一次抽取
-	// 会把图谱读写与其它 app_state 功能一起卡死。
-	graphMu   sync.Mutex
-	cfg       config.Config
-	handle    *sql.DB
-	startedAt time.Time
+	// graphMu 只保护「读缓存 → 调 180s 模型 → 写缓存」的短窗口：模型调用期间不持锁，
+	// 否则一次抽取会把图谱读写与其它 app_state 功能一起卡死。
+	graphMu sync.Mutex
+	// Paper memory and visual preparation are shared across five concurrent
+	// section requests. Keyed locks prevent duplicate preparation per document.
+	paperMemoryLocks keyedLockTable
+	paperVisualLocks keyedLockTable
+	// jobsMu 保护导入任务表：任务更新频繁（逐页翻译/渲染），但临界区只有内存改字段，
+	// 落盘在锁外做，不能把 SQLite 写入拖进热点。
+	jobsMu     sync.Mutex
+	importJobs map[string]*jobRuntime
+	cfg        config.Config
+	handle     *sql.DB
+	startedAt  time.Time
 }
 
 func New(cfg config.Config, handle *sql.DB) *Server {
-	return &Server{cfg: cfg, handle: handle, startedAt: time.Now().UTC()}
+	return &Server{cfg: cfg, handle: handle, startedAt: time.Now().UTC(), importJobs: map[string]*jobRuntime{}}
 }
 
 // Handler 组装完整路由，可直接交给 http.Server 或 httptest。
@@ -64,6 +69,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/discovery/daily", withAuth(s.handleDailyRecommendations))
 	mux.Handle("POST /v1/documents/{key}/arxiv-pdf", withAuth(s.handleDocumentArxivPDF))
 	mux.Handle("GET /v1/documents/{key}/file", withAuth(s.handlePublicationFile))
+	// 旧客户端（以及 pdf.js 的调试脚本）仍按 /pdf 取原文件；路径别名保留，行为与 /file 一致。
+	mux.Handle("GET /v1/documents/{key}/pdf", withAuth(s.handlePublicationFile))
 	mux.Handle("GET /v1/documents/{key}/sections/{page}", withAuth(s.handleSection))
 	mux.Handle("GET /v1/documents/{key}/resource", withAuth(s.handleEPUBResource))
 	mux.Handle("GET /v1/documents/{key}/location", withAuth(s.handleLocation))
@@ -73,7 +80,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/documents/{key}/pages", withAuth(s.handlePageList))
 	mux.Handle("GET /v1/documents/{key}/pages/{page}", withAuth(s.handlePageGet))
 	mux.Handle("PUT /v1/documents/{key}/pages/{page}", withAuth(s.handlePagePut))
-	mux.Handle("GET /v1/documents/{key}/pdf", withAuth(s.handlePDF))
+	mux.Handle("POST /v1/documents/{key}/pages/{page}/translated-page", withAuth(s.handleTranslatedPage))
+	mux.Handle("GET /v1/documents/{key}/layout", withAuth(s.handleLayoutStatus))
+	mux.Handle("GET /v1/documents/{key}/pages/{page}/paragraphs", withAuth(s.handleDocumentParagraphs))
+	mux.Handle("GET /v1/documents/{key}/translation-qa", withAuth(s.handleTranslationQA))
+	mux.Handle("GET /v1/documents/{key}/job", withAuth(s.handleDocumentJob))
+	mux.Handle("POST /v1/documents/{key}/job/cancel", withAuth(s.handleCancelDocumentJob))
 	mux.Handle("GET /v1/ai/status", withAuth(s.handleAIStatus))
 	mux.Handle("GET /v1/ai/settings", withAuth(s.handleAISettings))
 	mux.Handle("PUT /v1/ai/settings", withAuth(s.handleAISettings))
@@ -81,15 +93,20 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/ai/models", withAuth(s.handleAIModels))
 	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
 	mux.Handle("POST /v1/ai/generate", withAuth(s.handleAIGenerate))
-	mux.Handle("POST /v1/layout/vision", withAuth(s.handleVisionLayout))
+	mux.Handle("POST /v1/ai/paper-page", withAuth(s.handlePaperPage))
 	mux.Handle("GET /v1/readings/{key}", withAuth(s.handleReadingGet))
 	mux.Handle("PUT /v1/readings/{key}/{kind}", withAuth(s.handleReadingPut))
+	mux.Handle("GET /v1/calendar", withAuth(s.handleCalendar))
 	mux.Handle("GET /v1/annotations/{key}", withAuth(s.handleAnnotationList))
 	mux.Handle("POST /v1/annotations/{key}", withAuth(s.handleAnnotationCreate))
 	mux.Handle("GET /v1/annotations/{key}/export", withAuth(s.handleAnnotationExport))
 	mux.Handle("PATCH /v1/annotation/{id}", withAuth(s.handleAnnotationPatch))
 	mux.Handle("DELETE /v1/annotation/{id}", withAuth(s.handleAnnotationDelete))
-	mux.Handle("POST /v1/translations/{key}", withAuth(s.handleTranslate))
+	mux.Handle("POST /v1/documents/{key}/translated-pdf", withAuth(s.handleTranslatedPDF))
+	mux.Handle("GET /v1/documents/{key}/translated-pdf", withAuth(s.handleTranslatedPDF))
+	mux.Handle("GET /v1/render/status", withAuth(s.handleRenderStatus))
+	mux.Handle("GET /v1/ocr/settings", withAuth(s.handleOCRSettings))
+	mux.Handle("PUT /v1/ocr/settings", withAuth(s.handleOCRSettings))
 	mux.Handle("GET /v1/documents-meta", withAuth(s.handleDocumentMetaList))
 	mux.Handle("PATCH /v1/documents/{key}/meta", withAuth(s.handleDocumentMetaPatch))
 	mux.Handle("POST /v1/trash/empty", withAuth(s.handleTrashEmpty))
@@ -196,7 +213,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "只允许 GET")
 		return
 	}
-	version, err := db.Version(r.Context(), s.handle)
+	// 健康检查必须永远能快速回答：单连接被导入事务占用时，没有超时会一直挂着。
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	version, err := db.Version(ctx, s.handle)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "读取迁移版本失败: "+err.Error())
 		return
@@ -218,6 +238,10 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"schemaVersion":  version,
 		"startedAt":      s.startedAt.Format(time.RFC3339),
 		"documentsTotal": s.countDocuments(r.Context()),
+		// build/pid 供启动器识别「同一个数据根上跑的是不是旧二进制」：命中旧构建时
+		// 它会先停掉旧进程再起新的，而不是静默复用一份过期的后端。
+		"build": buildFingerprint(),
+		"pid":   os.Getpid(),
 	})
 }
 
@@ -271,6 +295,10 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 	query += ` ORDER BY CASE status WHEN 'reading' THEN 0 WHEN 'done' THEN 2 ELSE 1 END, added_at DESC, id`
 
+	// 先取一次 library/ 快照：rows 迭代期间不能再做文件系统调用。逐行 os.ReadDir 会
+	// 让列表接口变成 O(篇数 × 文件数)，并且单连接会被 rows 占住，其它 DB 请求一起排队。
+	pdfIndex := legacy.NewPaths(s.cfg.DataRoot).LibraryPDFIndex()
+
 	rows, err := s.handle.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "查询文档失败: "+err.Error())
@@ -295,7 +323,7 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 			parsed := int(year.Int64)
 			item.Year = &parsed
 		}
-		item.HasPDF = s.documentHasPDF(item.Key)
+		_, item.HasPDF = pdfIndex.Match(item.Key)
 		documents = append(documents, item)
 	}
 	if err := rows.Err(); err != nil {

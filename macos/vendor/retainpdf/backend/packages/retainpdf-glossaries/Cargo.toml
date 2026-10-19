@@ -1,0 +1,14 @@
+[package]
+name = "retainpdf-glossaries"
+version = "0.1.0"
+edition = "2021"
+description = "术语表：增删改查、CSV 导入导出、建任务时解析任务用的术语"
+
+[dependencies]
+retainpdf-api-base = { path = "../retainpdf-api-base" }
+retainpdf-core = { path = "../retainpdf-core" }
+retainpdf-data = { path = "../retainpdf-data" }
+csv = "1"
+
+[dev-dependencies]
+fastrand = "2"

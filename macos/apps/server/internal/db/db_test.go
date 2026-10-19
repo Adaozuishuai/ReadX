@@ -27,8 +27,8 @@ func TestOpenCreatesDirAndMigrates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 4 {
-		t.Fatalf("迁移版本应为 4，实际 %d", version)
+	if version != 6 {
+		t.Fatalf("迁移版本应为 6，实际 %d", version)
 	}
 	var count int
 	if err := handle.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'`).Scan(&count); err != nil {
@@ -62,7 +62,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err := second.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 4 {
+	if applied != 6 {
 		t.Fatalf("重复 Open 不应追加迁移记录，实际 %d 条", applied)
 	}
 	var title string

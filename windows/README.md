@@ -4,7 +4,7 @@ React + Go + Electron 的本地阅读与研究工作区。
 
 ## 运行
 
-需要 Node.js 20.19+、Go 1.27+；Go 工具链可由 `CBCT_V2_GO` 指定。
+需要 Node.js 22.8+、Go 1.27+；Go 工具链可由 `CBCT_V2_GO` 指定。
 
 ```powershell
 cd windows
@@ -80,7 +80,7 @@ Windows 下会自动扫描 `%LOCALAPPDATA%/OpenAI/Codex/bin/*/codex.exe`，更�
 
 文章卡片右上角的垃圾桶将条目移入回收站，可恢复；列表和表格也提供同样入口。回收站右上角可“清空回收站”，确认后永久移除条目及关联批注、译文、精读、阅读位置和复现记录。清空保留全部 PDF/EPUB 文件（包括导入副本和旧版原文件），不会释放论文文件占用的磁盘空间；回收站界面显示当前导入副本的实际目录。
 
-当前支持无 DRM 的可重排 EPUB 和可由 PDF.js 打开的 PDF。EPUB 采用安全重排，未保留出版方完整 CSS、固定版式或复杂 SVG 布局；MathML 仅保留文本内容。扫描 PDF 的 OCR、密码输入、浏览器采集扩展和 Zotero 迁移未包含在本次新增功能内。CBCT 实验配置与结果校验仍面向 PDF，EPUB 提供阅读、批注、翻译和基于章节的问答。
+当前支持无 DRM 的可重排 EPUB 和可由 PDF.js 打开的 PDF。EPUB 采用安全重排，未保留出版方完整 CSS、固定版式或复杂 SVG 布局；MathML 仅保留文本内容。扫描 PDF 通过已配置的 PaddleOCR 处理；密码输入、浏览器采集扩展和 Zotero 迁移尚未提供。CBCT 实验配置与结果校验仍面向 PDF，EPUB 提供阅读、批注、翻译和基于章节的问答。
 
 ## 验证
 
@@ -106,3 +106,7 @@ node_modules/electron/dist/electron.exe scripts/reader-smoke.cjs "C:/papers/exam
 `apps/server` 管理文件、SQLite、导入和 AI；`apps/web` 提供书库与阅读界面；`apps/desktop` 管理 Electron 窗口和服务进程；`packages/shared` 维护 API 类型；`scripts` 管理构建和开发编排。前端构建会从 PDF.js 依赖复制 CMap 与字体资源，生成目录不进入 Git。
 
 服务 stdout 的 `CBCT_V2_READY ` 前缀用于就绪协议，日志走 stderr。Electron 通过 preload 注入 token；浏览器开发模式由 Vite proxy 补鉴权头。服务使用 `--exit-on-stdin-eof` 随父进程停止；HTML 下发 CSP，Electron 保持 sandbox 与 contextIsolation。
+
+## macOS 与共享实现
+
+macOS 已使用同一套核心源码，平台安装、打包和验证说明见 [`../macos/README.md`](../macos/README.md)。核心代码以 Windows 工程为编辑入口；修改后运行 `node ../scripts/sync-platforms.mjs`，CI 会拒绝两端受管源码不一致。服务意外退出会在一分钟内最多重启三次，正常退出不再触发服务异常弹窗；重启不自动重放中断请求。

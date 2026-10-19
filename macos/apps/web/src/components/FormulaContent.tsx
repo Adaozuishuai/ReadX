@@ -20,7 +20,7 @@ export function LatexFormula({ latex }: { latex: string }) {
 }
 
 export function MathText({ text }: { text: string }) {
-  const source = text.replace(/公式\s*转写待核对\s*[：:]?/g, '').replace(/转写待核对/g, '');
+  const source = text;
   const pattern = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(?<!\\)\$[^$\n]+\$)/g;
   const parts: ReactNode[] = [];
   let last = 0;

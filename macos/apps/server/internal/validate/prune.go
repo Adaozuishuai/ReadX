@@ -20,11 +20,9 @@ const unknownValue = "论文未说明"
 // 返回 nil 表示「修剪也救不回来」，调用方走未核验保存通道（带可见标注）。
 func PruneGenerated(kind, text, source string) *PruneResult {
 	var obj map[string]any
-	raw := strings.TrimSpace(text)
-	if start := strings.Index(raw, "{"); start >= 0 {
-		if end := strings.LastIndex(raw, "}"); end > start {
-			raw = raw[start : end+1]
-		}
+	raw, formatErr := NormalizeJSONObject(text)
+	if formatErr != nil {
+		return nil
 	}
 	if err := json.Unmarshal([]byte(raw), &obj); err != nil || obj == nil {
 		return nil
@@ -40,6 +38,8 @@ func PruneGenerated(kind, text, source string) *PruneResult {
 	}
 
 	switch kind {
+	case "motivation", "method":
+		return pruneResearchNotes(kind, obj, source, fieldValid)
 	case "experiment":
 		groups := []string{"dataset", "acquisition", "training", "loss", "metrics", "baselines"}
 		for _, group := range append(append([]string{}, groups...), "results") {

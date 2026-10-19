@@ -8,11 +8,9 @@ import type {
   MetaResponse,
   PageListResponse,
   PageText,
-  PDFTranslationPlan,
   WireStatus,
 } from '@cbct/shared';
 import { isApiFailure } from '@cbct/shared';
-import type { PDFMetadataHint } from './pdfMetadata';
 
 /**
  * API 客户端。
@@ -101,6 +99,7 @@ export interface AIStatus {
   provider?: string;
   configured: boolean;
   model?: string;
+  reasoningEffort?: string;
   host?: string;
   error?: string;
 }
@@ -110,6 +109,37 @@ export interface ReadingEntry {
   demoted: string[];
   validationError: string | null;
   updatedAt: string;
+  provider?: string;
+  model?: string;
+  reasoningEffort?: string;
+  visuals?: ReadingVisualAnalysis[];
+  visualSourceHash?: string;
+  narrative?: string;
+  narrativeSections?: { title: string; body: string; status: 'ready' | 'partial' | 'reviewing' }[];
+  readerStatus?: 'ready' | 'partial' | 'reviewing';
+  readerIssues?: string[];
+}
+
+export interface ReadingGenerationInput {
+  visuals: ReadingVisualReference[];
+  workflow: 'paper-reader';
+  fingerprint?: string;
+  pageCount?: number;
+  unavailableVisuals?: string[];
+}
+
+export interface ReadingVisualAnalysis {
+  id: string;
+  revision: string;
+  kind: 'figure' | 'table';
+  page: number;
+  caption: string;
+  step: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
+  section: string;
+  observation: string;
+  analysis: string;
+  limitations: string;
+  evidence: { k: string; v: string; page: number; excerpt: string } | null;
 }
 
 export interface ReadingVisualReference {
@@ -118,6 +148,8 @@ export interface ReadingVisualReference {
   page: number;
   caption: string;
   suggestedStep: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
+  revision: string;
+  imagePNG: string;
 }
 
 export interface ReadingsResponse {
@@ -140,7 +172,7 @@ export interface GenerateProgress {
 }
 
 export interface ChatChunk {
-  meta?: { included: number; total: number; scope: string; unit?: string };
+  meta?: { included: number; total: number; scope: string; unit?: string; provider?: string; model?: string; reasoningEffort?: string };
   delta?: string;
   done?: boolean;
   text?: string;
@@ -245,36 +277,84 @@ export interface AnnotationListResponse {
   total: number;
 }
 
-export interface TranslationItem {
-  hash: string;
-  source: string;
-  target: string;
-}
-
-export interface TranslationResponse {
-  key: string;
-  items: TranslationItem[];
-  total: number;
-  cached: number;
-  newly: number;
-  distinct: number;
-}
-
-/** 页级版式校正的输入块：文本与坐标都来自 PDF 文本层的几何重建。 */
-export interface VisionLayoutBlock {
+export interface LeeParagraph {
   index: number;
   text: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  fontSize: number;
+  box: [number, number, number, number];
+  kind: string;
+  role?: string;
+  sourceOrder?: number;
+  translatable: boolean;
 }
 
-export interface VisionLayoutResponse {
-  plan: PDFTranslationPlan;
-  cached: boolean;
+export interface LeeParagraphs {
+  available: boolean;
+  page: number;
+  width: number;
+  height: number;
+  blocks: LeeParagraph[];
+}
+
+export interface TranslatedPDFResponse {
+  key: string;
+  pages: number;
+  blocks: number;
+  skipped: number;
+  overflow: number;
+  collisions: number;
+  failedMath: number;
+  bytes: number;
+  download: string;
+}
+
+export interface RenderStatus {
+  available: boolean;
+  error: string;
+  ocrConfigured: boolean;
+  ocrError: string;
+}
+
+export interface OCRSettings {
+  provider: string;
+  baseURL: string;
   model: string;
+  configured: boolean;
+  documentation?: string;
+}
+
+/** 导入任务的一个阶段（OCR / 翻译 / 渲染）。 */
+export interface JobStage {
+  key: 'ocr' | 'translate' | 'render' | string;
+  label: string;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | string;
+  message: string;
+  substage?: string;
+  completed: number;
+  total: number;
+  unit?: string;
+  resultCount?: number;
+  resultUnit?: string;
+}
+
+export interface JobRun {
+  id: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: string;
+  pages: number;
+  error?: string;
+}
+
+export interface DocumentJob {
+  key: string;
+  name: string;
+  status: 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted' | string;
+  startedAt: string;
+  updatedAt: string;
+  error?: string;
+  pages: number;
+  stages: JobStage[];
+  runs: JobRun[];
 }
 
 export interface DocumentMeta {
@@ -348,6 +428,30 @@ export interface TagListResponse {
   total: number;
 }
 
+/** 阅读日历：某天里的一篇论文（落在它最近一次被阅读的那天）。 */
+export interface CalendarPaper {
+  key: string;
+  title: string;
+  format: string;
+  page?: number;
+  updatedAt: string;
+  hasReading?: boolean;
+  hasAnnotation?: boolean;
+}
+
+export interface CalendarDay {
+  date: string;
+  count: number;
+  papers: CalendarPaper[];
+}
+
+export interface CalendarResponse {
+  days: CalendarDay[];
+  totalPapers: number;
+  /** 数据口径说明，直接展示给用户，避免误解为完整阅读历史。 */
+  basis: string;
+}
+
 /** 图谱节点的三类实体：概念 / 方法 / 结论。 */
 export type GraphNodeKind = 'concept' | 'method' | 'conclusion';
 
@@ -414,9 +518,21 @@ export interface AISettings {
   provider: string;
   baseURL: string;
   model: string;
+  reasoningEffort?: string;
+  translationPreparation?: 'off' | 'artifacts_only' | 'terms' | 'terms+style' | 'editorial';
   keyConfigured: boolean;
   status: AIStatus;
   cli: Record<string, boolean>;
+  codex?: { available: boolean; authenticated: boolean; source: string; message: string };
+}
+export interface CodexModel {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  defaultReasoningEffort: string;
+  supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
+  isDefault: boolean;
 }
 export interface ImportedDocument {
   document?: import('@cbct/shared').DocumentSummary;
@@ -427,6 +543,7 @@ export interface ImportedDocument {
 }
 export interface DailyRecommendation {
   id: string;
+  arxiv?: string;
   title: string;
   authors: string[];
   venue: string;
@@ -446,13 +563,24 @@ export interface ImportProgress {
   files?: number;
   completed: number;
   total: number;
+  /** 服务端为这次导入创建的任务键：前端据此轮询任务面板。 */
+  jobKey?: string;
 }
 export interface ImportStreamEvent {
   progress?: ImportProgress;
   heartbeat?: boolean;
 }
 
-function uploadPublications(files: File[], signal?: AbortSignal, metadata?: PDFMetadataHint[], onProgress?: (event: ImportStreamEvent) => void): Promise<{ results: ImportedDocument[] }> {
+export interface ImportMetadataHint {
+  title: string;
+  author: string;
+  doi: string;
+  arxiv: string;
+  firstPage: string;
+  source?: string;
+}
+
+function uploadPublications(files: File[], signal?: AbortSignal, metadata?: ImportMetadataHint[], onProgress?: (event: ImportStreamEvent) => void): Promise<{ results: ImportedDocument[] }> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
     const { apiBase, token } = bootstrap();
@@ -624,6 +752,8 @@ export const api = {
     provider: string;
     baseURL: string;
     model: string;
+    reasoningEffort?: string;
+    translationPreparation?: 'off' | 'artifacts_only' | 'terms' | 'terms+style' | 'editorial';
     apiKey?: string;
     clearKey?: boolean;
   }) => request<AISettings>('/v1/ai/settings', { method: 'PUT', body }),
@@ -633,8 +763,8 @@ export const api = {
       body: {},
     }),
   /** 读取当前地址可用的模型列表：Key 可传刚输入的（未保存也能先看），否则用该地址已保存的。 */
-  listModels: (body: { provider: string; baseURL: string; apiKey?: string }) =>
-    request<{ models: string[] }>('/v1/ai/models', { method: 'POST', body }),
+  listModels: (body: { provider: string; baseURL: string; apiKey?: string; refresh?: boolean }) =>
+    request<{ models: string[]; catalog?: CodexModel[]; source?: string; notice?: string }>('/v1/ai/models', { method: 'POST', body }),
   upload: uploadPublications,
   importURL: importRemotePublication,
   dailyRecommendations: (signal?: AbortSignal) => request<{ papers: DailyRecommendation[]; fetchedAt: string }>('/v1/discovery/daily', { signal }),
@@ -701,6 +831,18 @@ export const api = {
         { signal },
       )
     ).arrayBuffer(),
+  translatedFile: async (key: string, signal?: AbortSignal) =>
+    (
+      await authenticatedFetch(
+        `/v1/documents/${encodeURIComponent(key)}/translated-pdf`,
+        { signal },
+      )
+    ).arrayBuffer(),
+  paragraphs: (key: string, page: number, signal?: AbortSignal) =>
+    request<LeeParagraphs>(
+      `/v1/documents/${encodeURIComponent(key)}/pages/${page}/paragraphs`,
+      { signal },
+    ),
   section: (key: string, index: number, signal?: AbortSignal) =>
     request<EPUBSection>(
       `/v1/documents/${encodeURIComponent(key)}/sections/${index}`,
@@ -791,26 +933,60 @@ export const api = {
     request<ReadingsResponse>(`/v1/readings/${encodeURIComponent(key)}`, {
       signal,
     }),
-  translate: (key: string, segments: string[], signal?: AbortSignal, cachedOnly = false) =>
-    request<TranslationResponse & { complete?: boolean }>(
-      `/v1/translations/${encodeURIComponent(key)}`,
-      {
-        method: 'POST',
-        body: { segments, cachedOnly },
-        signal,
-      },
+  /** 校验并返回 LeePDF 导入阶段生成的排版译文 PDF 信息。 */
+  translatedPDF: (key: string, body: { pageCount: number }, signal?: AbortSignal) =>
+    request<TranslatedPDFResponse>(`/v1/documents/${encodeURIComponent(key)}/translated-pdf`, {
+      method: 'POST',
+      body,
+      signal,
+    }),
+  downloadTranslatedPDF: async (key: string, signal?: AbortSignal): Promise<Blob> => {
+    const { apiBase, token } = bootstrap();
+    const headers = new Headers();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(`${apiBase}/v1/documents/${encodeURIComponent(key)}/translated-pdf`, {
+      headers,
+      signal,
+      credentials: 'omit',
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let message = `HTTP ${response.status}`;
+      try {
+        const parsed = JSON.parse(text) as ApiFailure;
+        if (isApiFailure(parsed)) message = parsed.error;
+      } catch {
+        /* 非 JSON 错误体：保留兜底文案 */
+      }
+      throw new ApiError(message, response.status);
+    }
+    return response.blob();
+  },
+  /** 这篇文档最近一次导入任务（OCR → 翻译 → 渲染），供任务进度面板轮询。 */
+  documentJob: (key: string, signal?: AbortSignal) =>
+    request<{ available: boolean; job?: DocumentJob }>(
+      `/v1/documents/${encodeURIComponent(key)}/job`,
+      { signal },
     ),
-  /**
-   * 页级版式校正：把整页图像交给视觉模型，换回结构计划（分组合并、角色、丢弃）。
-   * 文本仍来自几何块，模型不产出正文；服务端按图像与块指纹缓存，重复调用不再计费。
-   */
-  visionLayout: (body: { page: number; imageBase64: string; blocks: VisionLayoutBlock[] }, signal?: AbortSignal) =>
-    request<VisionLayoutResponse>('/v1/layout/vision', { method: 'POST', body, signal }),
+  cancelDocumentJob: (key: string, signal?: AbortSignal) =>
+    request<{ cancelled: boolean }>(
+      `/v1/documents/${encodeURIComponent(key)}/job/cancel`,
+      { method: 'POST', signal },
+    ),
+  renderStatus: (signal?: AbortSignal) => request<RenderStatus>('/v1/render/status', { signal }),
+  ocrSettings: (signal?: AbortSignal) => request<OCRSettings>('/v1/ocr/settings', { signal }),
+  saveOCRSettings: (body: { token?: string; clearToken?: boolean; baseURL?: string; model?: string }, signal?: AbortSignal) =>
+    request<OCRSettings>('/v1/ocr/settings', { method: 'PUT', body, signal }),
+  readPaperPage: (body: { key: string; page: number; fingerprint: string; cachedOnly?: boolean; images?: string[] }, signal?: AbortSignal) =>
+    request<{ cached: boolean; ready: boolean; page: number; issues?: string[] }>('/v1/ai/paper-page', { method: 'POST', body, signal }),
   generate: async (
     key: string,
-    kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction',
+    kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction' | 'visuals',
     visuals: ReadingVisualReference[] = [],
     onProgress?: (progress: GenerateProgress) => void,
+    signal?: AbortSignal,
+    onEntry?: (kind: string, entry: ReadingEntry) => void,
+    paper?: Omit<ReadingGenerationInput, 'visuals'>,
   ): Promise<GenerateResponse> => {
     const { apiBase, token } = bootstrap();
     const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
@@ -818,9 +994,10 @@ export const api = {
     let response: Response;
     try {
       response = await fetch(`${apiBase}/v1/ai/generate`, {
-        method: 'POST', headers, body: JSON.stringify({ key, kind, visuals }), credentials: 'omit',
+        method: 'POST', headers, body: JSON.stringify({ key, kind, visuals, ...paper }), credentials: 'omit', signal,
       });
     } catch (error) {
+      if (signal?.aborted) throw error;
       throw new ApiError(error instanceof Error ? error.message : '本地服务未响应', 0);
     }
     if (!response.ok) {
@@ -840,8 +1017,9 @@ export const api = {
       const line = raw.trim();
       if (!line.startsWith('data:')) return;
       try {
-        const event = JSON.parse(line.slice(5).trim()) as { progress?: GenerateProgress; result?: GenerateResponse; error?: string };
+        const event = JSON.parse(line.slice(5).trim()) as { progress?: GenerateProgress; result?: GenerateResponse; error?: string; entry?: ReadingEntry; kind?: string };
         if (event.progress) onProgress?.(event.progress);
+        if (event.entry && event.kind) onEntry?.(event.kind, event.entry);
         if (event.result) result = event.result;
         if (event.error) streamError = event.error;
       } catch { /* Ignore incomplete or malformed progress events. */ }
@@ -971,6 +1149,9 @@ export const api = {
     }>('/v1/duplicates', { signal }),
   graph: (signal?: AbortSignal) =>
     request<KnowledgeGraphResponse>('/v1/graph', { signal }),
+  /** 阅读日历：按"每篇最近一次阅读"聚合，覆盖面见 basis。 */
+  calendar: (signal?: AbortSignal) =>
+    request<CalendarResponse>('/v1/calendar', { signal }),
   /** 对一篇论文跑图谱抽取；已有结果时 force=true 才会重新调模型。 */
   graphExtract: (key: string, force = false) =>
     request<{ skipped: boolean; paper: GraphPaper }>(

@@ -7,6 +7,8 @@
 !/docs/
 !/windows/
 !/macos/
+!/scripts/
+.tools/
 .DS_Store
 **/__pycache__/
 *.py[cod]

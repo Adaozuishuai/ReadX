@@ -1,5 +1,7 @@
 # 翻译引擎（RetainPDF 风格）实现说明
 
+> 当前双端入口：Windows 与 macOS 的受管核心源码已统一运行下述 provider-case 主链。旧段落中关于 macOS 独立 Go 翻译入口、未接入 OCR 或尚未提供渲染目录的描述属于历史记录，不能作为当前架构依据。当前目录和平台边界见 `../../docs/architecture.md` 与 `../../macos/README.md`。
+
 对应分支事项：把 [RetainPDF](https://github.com/wxyhgk/retain-pdf) 的翻译能力内置到 ReadX。
 
 Windows 版由 ReadX 提供上传入口和文库，实际 PDF 处理通过随仓库内置的 RetainPDF Python `provider-case` 全流程执行：PaddleOCR、`document.v1` 归一化、Retain 翻译/修复、Retain RPR 排版。无需启动 RetainPDF 桌面端或其 API/任务服务；OCR 与模型凭据由 ReadX 后端从本机设置注入子进程环境，Codex CLI 通过仅监听回环地址的临时 OpenAI 兼容桥接供 Retain 调用。Retain 输出的标准化版面、逐段译文和译文 PDF 再保存到 ReadX 文库。

@@ -169,7 +169,8 @@ var declaredUnknownPattern = regexp.MustCompile(`^(?:论文|原文|文中)?[^。
 
 // UnknownValues 与 TS UNKNOWN_VALUES 全表一致。
 var UnknownValues = map[string]bool{
-	"论文未说明": true, "论文中未说明": true, "论文中未找到": true, "未报告": true,
+	"当前文本无法核实": true,
+	"论文未说明":    true, "论文中未说明": true, "论文中未找到": true, "未报告": true,
 	"论文未报告": true, "论文未提及": true, "未提及": true, "原文未说明": true,
 	"文中未提及": true, "论文中没有说明": true,
 }

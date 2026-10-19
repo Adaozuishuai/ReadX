@@ -81,6 +81,30 @@ func writeQueueFile(t *testing.T, root string) {
 	}
 }
 
+func TestRestartReusesTokenFromEnvironment(t *testing.T) {
+	token := strings.Repeat("restart-token-", 5)
+	t.Setenv("CBCT_SERVER_TOKEN", token)
+	root := t.TempDir()
+	p := newPipes()
+	done := make(chan error, 1)
+	go func() {
+		done <- run([]string{"--data-root", root, "--exit-on-stdin-eof"}, p.stdinReader, p.stdoutWriter)
+	}()
+	ready := p.readyLine(t)
+	p.closeStdin()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("restart service did not stop")
+	}
+	if ready["token"] != token {
+		t.Fatal("restart changed the token used by the open reader")
+	}
+}
+
 func TestRunEmitsReadyServesAndStopsOnStdinEOF(t *testing.T) {
 	root := t.TempDir()
 	writeQueueFile(t, root)

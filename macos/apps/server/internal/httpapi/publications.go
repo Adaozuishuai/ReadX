@@ -20,10 +20,13 @@ import (
 	"time"
 
 	"cbctv2/server/internal/legacy"
+	"cbctv2/server/internal/ocr"
 	"cbctv2/server/internal/publication"
+	"cbctv2/server/internal/translate"
 )
 
-const maxPublicationBytes = 100 << 20
+const maxPublicationBytes = ocr.MaxPDFBytes
+const maxPublicationUploadBytes = maxPublicationBytes*16 + (16 << 20)
 
 type importResult struct {
 	Document *DocumentSummary `json:"document,omitempty"`
@@ -48,18 +51,25 @@ type recognizedPaperMetadata struct {
 	TranslatedTitle string
 	Pages           []publicationPageHint
 	Translations    []translateSegment
-	Untranslated    int
-	Authors         []string
-	DOI             string
-	Venue           string
-	Year            int
+	// LayoutPages 是导入时 OCR 识别出的段落坐标：阅读器据此按原版式渲染译文页。
+	LayoutPages       []layoutPage
+	Untranslated      int
+	TranslationQA     *translate.NumericQAReport
+	Authors           []string
+	DOI               string
+	Venue             string
+	Year              int
+	LeeTranslatedPath string
 }
 
 func (s *Server) importPublication(ctx context.Context, name, source string, data []byte, metadata ...recognizedPaperMetadata) (importResult, error) {
 	result := importResult{Name: name}
 	format := "pdf"
 	var book publication.Book
-	if !strings.HasPrefix(string(data[:min(len(data), 1024)]), "%PDF-") {
+	if isPDFData(data) && len(data) > maxPublicationBytes {
+		return result, fmt.Errorf("单个 PDF 超过 OCR 处理上限 50 MB")
+	}
+	if !isPDFData(data) {
 		format = "epub"
 		var err error
 		book, err = publication.ParseEPUB(data)
@@ -160,12 +170,16 @@ func (s *Server) importPublication(ctx context.Context, name, source string, dat
 	return result, err
 }
 
+func isPDFData(data []byte) bool {
+	return strings.HasPrefix(string(data[:min(len(data), 1024)]), "%PDF-")
+}
+
 func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxPublicationBytes+16<<20)
+	r.Body = http.MaxBytesReader(w, r.Body, maxPublicationUploadBytes)
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "上传超过 100 MB")
+			writeError(w, http.StatusRequestEntityTooLarge, "单次上传总量超过 528 MB")
 		} else {
 			writeError(w, http.StatusBadRequest, "multipart 表单无效")
 		}
@@ -174,7 +188,7 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 	defer r.MultipartForm.RemoveAll()
 	files := r.MultipartForm.File["files"]
 	if len(files) == 0 || len(files) > 16 {
-		writeError(w, 400, "每次请选择 1–16 个 PDF / EPUB 文件（合计不超过 100 MB）")
+		writeError(w, 400, "每次请选择 1–16 个 PDF / EPUB 文件（单个 PDF 不超过 50 MB；单次上传总量不超过 816 MB）")
 		return
 	}
 	var hints []publicationMetadataHint
@@ -200,78 +214,107 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 		update("received", "上传已接收，正在检查文件", 0, 0)
 		func() {
 			result := importResult{Name: file.Filename}
+			defer func() {
+				result.Name = file.Filename
+				results = append(results, result)
+			}()
 			f, err := file.Open()
 			if err != nil {
 				result.Error = err.Error()
-				results = append(results, result)
 				return
 			}
 			defer f.Close()
 			data, err := io.ReadAll(io.LimitReader(f, maxPublicationBytes+1))
 			if err == nil && len(data) > maxPublicationBytes {
-				err = fmt.Errorf("文件超过 100 MB")
+				err = fmt.Errorf("单个文件超过 50 MB")
 			}
 			if err == nil {
-				if strings.HasSuffix(strings.ToLower(file.Filename), ".pdf") {
+				if isPDFData(data) {
 					hint := publicationMetadataHint{}
 					if index < len(hints) {
 						hint = hints[index]
 					}
-					update("metadata", "AI 正在识别题目、作者、期刊/会议、年份并生成中文题名，等待模型返回", 0, 0)
-					metadata, recognizeErr := s.recognizePDFMetadata(r.Context(), file.Filename, hint)
-					if recognizeErr == nil {
-						recognizeErr = s.prepareImportTranslations(r.Context(), data, hint.Pages, &metadata, func(completed, total, start, end, cached, untranslated int) {
-							message := fmt.Sprintf("全文翻译已完成 %d/%d 段", completed, total)
-							if start > 0 && completed == cached {
-								message += fmt.Sprintf("；已提交第 %d–%d 段批次，并行处理中", start, end)
-							} else if start > 0 && completed < total {
-								message += fmt.Sprintf("；最近返回第 %d–%d 段，其他批次继续并行处理", start, end)
-							}
-							if cached > 0 {
-								message += fmt.Sprintf("（复用 %d 段已有译文）", cached)
-							}
-							if untranslated > 0 {
-								message += fmt.Sprintf("；%d 段文本暂未获得有效译文，论文仍会入库，可稍后重译", untranslated)
-							}
-							update("translation", message, completed, total)
-						})
+					sum := sha256.Sum256(data)
+					jobKey := "doc-" + hex.EncodeToString(sum[:16])
+					jobCtx, jobCancel := context.WithCancel(ctx)
+					defer jobCancel()
+					s.beginImportJob(jobKey, file.Filename, len(hint.Pages), jobCancel)
+					// 先把这个 key 告知前端：文件刚进篮筐就能打开任务面板并轮询进度。
+					report(importProgress{Stage: "ocr", Message: "任务已创建，等待 OCR", Name: file.Filename, File: index + 1, Files: len(files), JobKey: jobKey})
+					s.jobStage(jobKey, "ocr", "running", "正在执行 OCR 与段落整理", 0, len(hint.Pages))
+					update("ocr", "正在识别论文并整理段落", 0, 0)
+					metadata := recognizedPaperMetadata{Title: strings.TrimSpace(hint.Title), DOI: strings.TrimSpace(hint.DOI)}
+					if author := strings.TrimSpace(hint.Author); author != "" {
+						metadata.Authors = []string{author}
 					}
-					if recognizeErr != nil {
-						result.Error = recognizeErr.Error()
-						results = append(results, result)
+					sizes, _ := importPageSizes(hint.Pages)
+					var processErr error
+					result, processErr = s.runLocalPDFImport(jobCtx, file.Filename, hint.Source, data, sizes, &metadata, func(stage, message string, completed, total int) {
+						update(stage, message, completed, total)
+					})
+					if processErr != nil {
+						result.Error = processErr.Error()
+						status := importFailureStatus(jobCtx, processErr)
+						message := processErr.Error()
+						if status == "cancelled" {
+							message = "已取消"
+						}
+						s.finishImportJob(jobKey, status, message)
 						return
 					}
-					name := file.Filename
-					savingMessage := "正在保存论文文件、元数据、原文和译文到书库"
-					if metadata.Untranslated > 0 {
-						savingMessage += fmt.Sprintf("；%d 段译文未完成，保留原文", metadata.Untranslated)
-					}
-					update("saving", savingMessage, 0, 0)
-					result, err = s.importPublication(r.Context(), name, hint.Source, data, metadata)
-					if err == nil && result.Document != nil {
-						if err = s.saveRecognizedPDFMetadata(r.Context(), result.Document.ID, strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename)), metadata); err == nil {
-							updated, loadErr := s.loadDocument(r.Context(), result.Document.Key)
+					if result.Document != nil {
+						update("saving", "原文与 OCR 段落译文已保存", 1, 1)
+						if err = s.saveRecognizedPDFMetadata(jobCtx, result.Document.ID, strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename)), metadata); err == nil {
+							updated, loadErr := s.loadDocument(jobCtx, result.Document.Key)
 							if loadErr != nil {
 								err = loadErr
 							} else {
 								result.Document = &updated
 							}
 						}
+						if err != nil {
+							result.Error = err.Error()
+							status := importFailureStatus(jobCtx, err)
+							message := err.Error()
+							if status == "cancelled" {
+								message = "已取消"
+							}
+							s.finishImportJob(jobKey, status, message)
+						} else if len(metadata.LayoutPages) == 0 {
+							result.Error = "OCR 没有保存可供排版的段落"
+							s.finishImportJob(jobKey, "failed", result.Error)
+						} else {
+							s.jobStage(jobKey, "render", "done", "Lee 已生成译文 PDF", len(metadata.LayoutPages), len(metadata.LayoutPages))
+							s.finishImportJob(jobKey, "done", "")
+						}
 					}
 				} else {
+					sum := sha256.Sum256(data)
+					jobKey := "doc-" + hex.EncodeToString(sum[:16])
+					jobCtx, jobCancel := context.WithCancel(ctx)
+					defer jobCancel()
+					s.beginImportJob(jobKey, file.Filename, 0, jobCancel)
+					s.jobStage(jobKey, "ocr", "skipped", "EPUB 使用章节结构，无需 OCR", -1, -1)
+					s.jobStage(jobKey, "translate", "skipped", "当前 EPUB 导入流程不执行 PDF 段落翻译", -1, -1)
+					s.jobStage(jobKey, "render", "skipped", "EPUB 按原章节结构阅读，无需 PDF 渲染", -1, -1)
+					s.jobStage(jobKey, "memory", "skipped", "EPUB 使用章节正文，不需要 PDF 论文记忆", -1, -1)
+					report(importProgress{Stage: "saving", Message: "正在解析 EPUB 章节并保存到书库", Name: file.Filename, File: index + 1, Files: len(files), JobKey: jobKey})
 					update("saving", "正在解析 EPUB 章节并保存到书库", 0, 0)
 					source := ""
 					if index < len(hints) {
 						source = hints[index].Source
 					}
-					result, err = s.importPublication(r.Context(), file.Filename, source, data)
+					result, err = s.importPublication(jobCtx, file.Filename, source, data)
+					if err != nil {
+						s.finishImportJob(jobKey, importFailureStatus(jobCtx, err), err.Error())
+					} else {
+						s.finishImportJob(jobKey, "done", "")
+					}
 				}
 			}
 			if err != nil {
 				result.Error = err.Error()
 			}
-			result.Name = file.Filename
-			results = append(results, result)
 		}()
 		last := results[len(results)-1]
 		if last.Error != "" {
@@ -281,6 +324,51 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	finish(results)
+}
+
+// runLocalPDFImport keeps ReadX as the upload entry point and delegates PDF
+// recognition, translation, and rendering to the vendored LeePDF pipeline.
+func (s *Server) runLocalPDFImport(
+	ctx context.Context,
+	name, source string,
+	pdf []byte,
+	sizes []ocr.Size,
+	metadata *recognizedPaperMetadata,
+	progress func(stage, message string, completed, total int),
+) (importResult, error) {
+	if metadata == nil {
+		metadata = &recognizedPaperMetadata{}
+	}
+	_ = sizes // Lee reads page count and exact geometry directly from the PDF.
+	if progress != nil {
+		progress("ocr", "Lee 正在识别并处理论文", 0, 0)
+	}
+	contentHash := sha256.Sum256(pdf)
+	translatedPath, err := s.runLeePDFImport(ctx, "doc-"+hex.EncodeToString(contentHash[:16]), name, pdf, metadata)
+	if err != nil {
+		return importResult{Name: name}, err
+	}
+	metadata.LeeTranslatedPath = translatedPath
+	if err := ctx.Err(); err != nil {
+		return importResult{Name: name}, err
+	}
+	result, err := s.importPublication(ctx, name, source, pdf, *metadata)
+	if err != nil {
+		return result, err
+	}
+	if result.Document != nil {
+		if err := s.adoptLeeTranslatedPDF(result.Document.Key, translatedPath, len(metadata.LayoutPages)); err != nil {
+			return result, err
+		}
+		// OCR and translation have now persisted their source pages. Build the
+		// shared analysis memory before import returns so all five workbook steps
+		// can reuse it without rereading every page on first analysis.
+		_ = s.preparePaperMemoryDuringImport(ctx, result.Document.Key, progress)
+	}
+	if progress != nil {
+		progress("saving", "Lee 处理结果已保存", 1, 1)
+	}
+	return result, nil
 }
 
 // Public-only dialing applies again to redirects and DNS results, avoiding a URL import
@@ -581,6 +669,27 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 		emit(map[string]any{"error": "arXiv 返回的内容不是有效 PDF"})
 		return
 	}
+	processCtx, timeoutCancel := context.WithTimeout(r.Context(), 6*time.Hour)
+	defer timeoutCancel()
+	jobCtx, jobCancel := context.WithCancel(processCtx)
+	defer jobCancel()
+	name := strings.TrimSpace(document.Title)
+	if name == "" {
+		name = id
+	}
+	if !strings.HasSuffix(strings.ToLower(name), ".pdf") {
+		name += ".pdf"
+	}
+	s.beginImportJob(key, name, 0, jobCancel)
+	metadata := recognizedPaperMetadata{Title: document.Title}
+	emit(map[string]any{"progress": map[string]any{"stage": "ocr", "message": "Lee 正在识别并处理论文", "completed": 0, "total": 0}})
+	translatedPath, err := s.runLeePDFImport(jobCtx, key, name, data, &metadata)
+	if err != nil {
+		s.finishImportJob(key, importFailureStatus(jobCtx, err), err.Error())
+		emit(map[string]any{"error": "论文 OCR 与翻译失败: " + err.Error()})
+		return
+	}
+	emit(map[string]any{"progress": map[string]any{"stage": "saving", "message": "正在保存 Lee 处理结果", "completed": 0, "total": 1}})
 
 	paths := legacy.NewPaths(s.cfg.DataRoot)
 	dir := paths.LibraryDir()
@@ -617,23 +726,67 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 		emit(map[string]any{"error": "移动 PDF 到书库失败: " + err.Error()})
 		return
 	}
-	update, err := s.handle.ExecContext(r.Context(), `UPDATE documents SET pdf_path=?,url=?,format='pdf',updated_at=? WHERE id=? AND pdf_path=?`, target, "https://arxiv.org/abs/"+id, nowStamp(), key, document.PDFPath)
+	// 关联失败时不能无条件删文件：并发请求 B 可能已经把这个 target 写进另一条
+	// documents 行（同一篇的论文只有一行，但双击/重试会让两个请求都走到这里）。
+	// 只有确认没有任何行引用它，才清理这个孤儿文件。
+	tx, err := s.handle.BeginTx(r.Context(), nil)
 	if err != nil {
-		_ = os.Remove(target)
+		s.removeUnreferencedLibraryFile(r.Context(), target)
+		emit(map[string]any{"error": "PDF 已下载，但无法开启书库事务: " + err.Error()})
+		return
+	}
+	defer tx.Rollback()
+	stamp := nowStamp()
+	update, err := tx.ExecContext(r.Context(), `UPDATE documents SET pdf_path=?,url=?,format='pdf',updated_at=? WHERE id=? AND pdf_path=?`, target, "https://arxiv.org/abs/"+id, stamp, key, document.PDFPath)
+	if err != nil {
+		tx.Rollback()
+		s.removeUnreferencedLibraryFile(r.Context(), target)
 		emit(map[string]any{"error": "PDF 已下载，但关联书库条目失败: " + err.Error()})
 		return
 	}
+	if err = saveImportText(r.Context(), tx, key, stamp, metadata); err != nil {
+		tx.Rollback()
+		s.removeUnreferencedLibraryFile(r.Context(), target)
+		emit(map[string]any{"error": "PDF 已下载，但保存 OCR 译文失败: " + err.Error()})
+		return
+	}
 	if changed, _ := update.RowsAffected(); changed != 1 {
-		_ = os.Remove(target)
+		tx.Rollback()
+		s.removeUnreferencedLibraryFile(r.Context(), target)
 		emit(map[string]any{"error": "书库条目已被其他操作更新，请刷新后重试"})
 		return
 	}
+	if err = tx.Commit(); err != nil {
+		s.removeUnreferencedLibraryFile(r.Context(), target)
+		emit(map[string]any{"error": "提交论文 OCR 译文失败: " + err.Error()})
+		return
+	}
+	if err := s.adoptLeeTranslatedPDF(key, translatedPath, len(metadata.LayoutPages)); err != nil {
+		s.finishImportJob(key, "failed", err.Error())
+		emit(map[string]any{"error": "PDF 已关联，但保存 Lee 译文 PDF 失败: " + err.Error()})
+		return
+	}
+	s.jobStage(key, "render", "done", "Lee 已生成译文 PDF", len(metadata.LayoutPages), len(metadata.LayoutPages))
+	_ = s.preparePaperMemoryDuringImport(jobCtx, key, func(stage, message string, completed, total int) {
+		emit(map[string]any{"progress": map[string]any{"stage": stage, "message": message, "completed": completed, "total": total}})
+	})
+	s.finishImportJob(key, "done", "")
 	updated, err := s.loadDocument(r.Context(), key)
 	if err != nil {
 		emit(map[string]any{"error": "PDF 已关联，但刷新书目信息失败: " + err.Error()})
 		return
 	}
 	emit(map[string]any{"result": map[string]any{"document": updated, "name": document.Title, "existing": false}})
+}
+
+// removeUnreferencedLibraryFile 只在没有任何 documents 行引用该路径时删除文件。
+// 用于「文件已写入但关联失败」的清理：若并发请求已经把它写进另一条行，文件归对方所有。
+func (s *Server) removeUnreferencedLibraryFile(ctx context.Context, target string) {
+	var refs int
+	if err := s.handle.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE pdf_path = ?`, target).Scan(&refs); err != nil || refs > 0 {
+		return
+	}
+	_ = os.Remove(target)
 }
 
 func (s *Server) handlePublicationURL(w http.ResponseWriter, r *http.Request) {
@@ -726,7 +879,27 @@ func (s *Server) handlePublicationURL(w http.ResponseWriter, r *http.Request) {
 		w.Write(data)
 		return
 	}
-	result, err := s.importPublication(r.Context(), name, final, data)
+	var result importResult
+	if bytes.HasPrefix(data, []byte("%PDF-")) {
+		ctx, cancel := context.WithTimeout(r.Context(), 6*time.Hour)
+		defer cancel()
+		metadata := recognizedPaperMetadata{
+			Title:   strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(body.Title), ".pdf"), ".PDF"),
+			DOI:     strings.TrimPrefix(strings.TrimSpace(body.DOI), "https://doi.org/"),
+			Authors: body.Authors, Venue: body.Venue, Year: body.Year,
+		}
+		result, err = s.runLocalPDFImport(ctx, name, final, data, nil, &metadata, func(stage, message string, completed, total int) {
+			if stream {
+				emit(map[string]any{"progress": map[string]any{"stage": stage, "message": message, "completed": completed, "total": total}})
+			}
+		})
+		if err != nil {
+			fail(http.StatusBadGateway, "论文 OCR 与翻译失败："+err.Error())
+			return
+		}
+	} else {
+		result, err = s.importPublication(r.Context(), name, final, data)
+	}
 	if err != nil {
 		fail(422, "链接未返回可读 PDF/EPUB；可能需要登录或是网页: "+err.Error())
 		return
@@ -840,12 +1013,20 @@ func (s *Server) handleEPUBResource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, err.Error())
 		return
 	}
-	data, err := os.ReadFile(file)
+	// 只流式读取压缩包的中央目录：整本 EPUB 可能有几十 MB，而这里每次只要一张图。
+	// （导入路径仍用内存里的 Archive，体积由上传上限约束。）
+	handle, err := os.Open(file)
 	if err != nil {
 		writeError(w, 404, "原文件不存在")
 		return
 	}
-	z, err := publication.Archive(data)
+	defer handle.Close()
+	info, err := handle.Stat()
+	if err != nil {
+		writeError(w, 404, "原文件不存在")
+		return
+	}
+	z, err := publication.OpenArchive(handle, info.Size())
 	if err != nil {
 		writeError(w, 422, err.Error())
 		return

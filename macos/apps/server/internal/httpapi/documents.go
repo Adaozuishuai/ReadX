@@ -106,7 +106,7 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request) {
 		encoded := json.RawMessage(raw)
 		detail.Reading = &encoded
 	}
-	if s.documentHasPDF(key) {
+	if document.HasPDF {
 		detail.HasPDF = true
 		detail.FromOCR = s.pagesLookLikeOCR(r.Context(), key)
 	}
@@ -116,6 +116,15 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePageList(w http.ResponseWriter, r *http.Request) {
 	key, ok := pathKey(w, r)
 	if !ok {
+		return
+	}
+	// 与 /pages/{page} 和 /documents/{key} 保持一致：文档不存在返回 404，
+	// 否则客户端无法区分「文档不存在」和「还没抽过页」。
+	if _, err := s.loadDocument(r.Context(), key); errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "没有这篇文档")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	pages, err := s.listPages(r.Context(), key)
@@ -245,36 +254,6 @@ func (s *Server) handleStatusPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"key": key, "status": body.Status})
-}
-
-// handlePDF 把本地 PDF 直接流给渲染进程的 pdf.js。ServeFile 自带 Range 支持，
-// 大文件翻页不必整篇下载。路径只允许 library/ 下按 key 匹配到的那一个文件。
-func (s *Server) handlePDF(w http.ResponseWriter, r *http.Request) {
-	key, ok := pathKey(w, r)
-	if !ok {
-		return
-	}
-	if _, err := s.loadDocument(r.Context(), key); errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "没有这篇文档")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	paths := legacy.NewPaths(s.cfg.DataRoot)
-	found, exists := paths.PDFFile(key)
-	if !exists {
-		writeError(w, http.StatusNotFound, "本地没有该论文的 PDF")
-		return
-	}
-	resolved, err := resolveUnderLibrary(paths, found)
-	if err != nil {
-		writeError(w, http.StatusForbidden, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Cache-Control", "no-store")
-	http.ServeFile(w, r, resolved)
 }
 
 func (s *Server) documentHasPDF(key string) bool {

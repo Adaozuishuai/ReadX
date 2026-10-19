@@ -146,10 +146,26 @@ export interface ImportReport {
 declare global {
   interface Window {
     __CBCT_V2__?: BootstrapInfo;
+    __READX_DESKTOP_UPDATES__?: DesktopUpdateBridge;
   }
 }
 
+export interface DesktopUpdateStatus {
+  state: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'downloaded' | 'error' | 'unsupported';
+  currentVersion?: string;
+  version?: string;
+  releaseNotes?: string;
+  percent?: number;
+  message?: string;
+}
+
+export interface DesktopUpdateBridge {
+  check(): Promise<DesktopUpdateStatus>;
+  download(): Promise<DesktopUpdateStatus>;
+  install(): void;
+  onStatus(callback: (status: DesktopUpdateStatus) => void): () => void;
+}
+
 export * from './pdfLayout.js';
-export * from './pdfTypesetting.js';
 
 export * from './outline.js';

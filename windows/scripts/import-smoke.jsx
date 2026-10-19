@@ -130,9 +130,9 @@ window.runImportSmoke = async () => {
     assert(!query('.shot-zone.aiming') && !query('.shot-ball.flying'), 'A pending upload must block another shot');
     assert(calls.length === 1 && all('.shot-chip').length === 2, 'Blocked shots must keep queued files');
     click('取消请求');
-    await until(() => query('.import-progress').dataset.stage === 'cancelled');
+    await until(() => query('.shot-row')?.dataset.state === 'failed');
     assert(calls[0].signal.aborted, 'Cancel must reach the active upload');
-    assert(query('.shot-row').dataset.state === 'failed' && query('.shot-state').textContent === '已中断', 'A cancelled task must show an interrupted state');
+    assert(query('.shot-row')?.dataset.state === 'failed' && query('.shot-state').textContent === '已中断', 'A cancelled task must show an interrupted state');
     assert(!query('input[type="file"]').disabled, 'Cancellation must release the request lock');
     passed.push('duplicate submits are serialized; cancellation reaches the active request and unlocks the queue');
 
@@ -140,32 +140,32 @@ window.runImportSmoke = async () => {
     await until(() => calls.length === 2);
     assert(calls[1].metadata.source === 'https://example.invalid/first', 'First download must retain its own source');
     calls[1].resolve({ results: [{ name: 'paper.pdf', existing: false }] });
-    await until(() => query('.shot-row').dataset.state === 'done');
+    await until(() => query('.shot-row')?.dataset.state === 'done');
     assert(query('.shot-count').textContent === '已导入 1', 'Completed imports must stop displaying a pending count');
     await shoot();
     await until(() => calls.length === 3);
     assert(calls[2].metadata.source === 'https://example.invalid/second', 'Second same-named download must retain its own source');
-    assert(query('.shot-row').dataset.state === 'working', 'A same-named new import must not reuse a previous success');
+    assert(query('.shot-row')?.dataset.state === 'working', 'A same-named new import must not reuse a previous success');
     calls[2].reject(new Error('fixture upload failure'));
-    await until(() => query('.shot-row').dataset.state === 'failed');
+    await until(() => query('.shot-row')?.dataset.state === 'failed');
     assert(query('.shot-state').textContent === '失败', 'An upload error must display failure');
     passed.push('same-named local/downloaded files retain independent sources and task results');
 
-    await addFile(new File(['parse-error'], 'paper.pdf'));
+    await addFile(new File(['server failure'], 'paper.pdf'));
     await shoot();
-    await until(() => query('.import-progress').dataset.stage === 'failed');
-    assert(calls.length === 3, 'Parsing failure must not start an upload');
-    assert(query('.shot-row').dataset.state === 'failed', 'Parsing failure must not display an older same-named success');
-    assert(query('[role="alert"]').textContent.includes('fixture parse failure'), 'Parsing error details must remain visible');
+    await until(() => calls.length === 4);
+    calls[3].resolve({ results: [{ name: 'paper.pdf', existing: false, error: 'fixture pipeline failure' }] });
+    await until(() => query('.shot-row')?.dataset.state === 'failed');
+    assert(document.body.textContent.includes('fixture pipeline failure'), 'Pipeline error details must remain visible');
     assert(query('.shot-count').textContent === '已导入 1', 'Failure must preserve the completed count');
-    passed.push('parsing failures preserve completed results and display the current failure');
+    passed.push('pipeline failures preserve completed results and display the current failure');
 
     await addFile(new File(['direct import'], 'direct.pdf'));
     click('直接导入');
-    await until(() => calls.length === 4);
-    assert(calls[3].file.name === 'direct.pdf', 'Direct import must use the selected queued file');
-    calls[3].resolve({ results: [{ name: 'direct.pdf', existing: false }] });
-    await until(() => query('.shot-row').dataset.state === 'done');
+    await until(() => calls.length === 5);
+    assert(calls[4].file.name === 'direct.pdf', 'Direct import must use the selected queued file');
+    calls[4].resolve({ results: [{ name: 'direct.pdf', existing: false }] });
+    await until(() => query('.shot-row')?.dataset.state === 'done');
     assert(query('.shot-count').textContent === '已导入 2', 'Direct import must share progress and results with a shot');
     passed.push('direct import uses the selected file and the same request lifecycle');
     return passed;

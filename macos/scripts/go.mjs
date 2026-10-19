@@ -8,6 +8,7 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runtimeEnvironment } from './platform-runtime.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const v2Root = path.resolve(here, '..');
@@ -32,6 +33,9 @@ export function resolveGo() {
     'C:/Program Files/Go/bin/go.exe',
     process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Go', 'bin', 'go.exe') : '',
     process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'go', 'bin', 'go.exe') : '',
+    path.resolve(v2Root, '..', '.tools', 'go', 'bin', 'go'),
+    '/opt/homebrew/bin/go',
+    '/usr/local/bin/go',
     '/usr/local/go/bin/go',
     'go',
   ].filter(Boolean);
@@ -50,13 +54,13 @@ export function resolveGo() {
     }
     if (version.major < MIN_GO.major || (version.major === MIN_GO.major && version.minor < MIN_GO.minor)) {
       throw new Error(
-        `需要 Go ${MIN_GO.major}.${MIN_GO.minor}.0 以上，实际 ${version.raw}（${candidate}）。\n升级：winget upgrade --id GoLang.Go`,
+        `需要 Go ${MIN_GO.major}.${MIN_GO.minor}.0 以上，实际 ${version.raw}（${candidate}）。\n升级 Go 工具链，或设置 CBCT_V2_GO`,
       );
     }
     return { command: candidate, version: version.raw };
   }
   throw new Error(
-    '找不到可用的 Go 工具链。安装：winget install --id GoLang.Go，或设置 CBCT_V2_GO 指向 go.exe。' +
+    '找不到可用的 Go 工具链。安装 Go 1.27+（macOS 可用 brew install go），或设置 CBCT_V2_GO。' +
       `\n探测记录：\n${failures.join('\n')}`,
   );
 }
@@ -70,7 +74,7 @@ function parseVersion(text) {
 /** GOPROXY 兜底：本机直连 proxy.golang.org 超时（纯 Go 的 SQLite 驱动也就不需要 CGO）。 */
 export function goEnv(extra = {}) {
   return {
-    ...process.env,
+    ...runtimeEnvironment(v2Root),
     GOPROXY: process.env.GOPROXY ?? 'https://goproxy.cn,direct',
     CGO_ENABLED: process.env.CGO_ENABLED ?? '0',
     ...extra,

@@ -21,6 +21,15 @@ func resolveCLI(name string) (executable, source string, err error) {
 			}
 			return "", "", fmt.Errorf("CBCT_CODEX_PATH 未指向可用的 Codex 程序")
 		}
+		if runtime.GOOS == "darwin" {
+			home, _ := os.UserHomeDir()
+			for _, appRoot := range []string{"/Applications", filepath.Join(home, "Applications")} {
+				candidate := filepath.Join(appRoot, "Codex.app", "Contents", "Resources", "codex")
+				if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+					return candidate, "desktop", nil
+				}
+			}
+		}
 		if runtime.GOOS == "windows" {
 			local := os.Getenv("LOCALAPPDATA")
 			if local == "" {

@@ -1,6 +1,12 @@
 node_modules/
 dist/
 bin/
+.retain-runtime/
+.retain-pip-cache/
+.retain-tmp/
+.release-staging/
+.npm-cache/
+release/
 .tmp-smoke/
 apps/server/dev-info.json
 apps/server/dev-info.json.tmp
@@ -17,3 +23,11 @@ config.json
 !config.example.json
 *.bak
 *.lnk
+.retain-python/
+
+# Vendored CLI entrypoints are source, not build output.
+!resources/rendering-engine/engine/bin/
+!resources/rendering-engine/engine/bin/*.js
+!vendor/retainpdf/backend/rendering-engine/engine/bin/
+!vendor/retainpdf/backend/rendering-engine/engine/bin/*.js
+vendor/retainpdf/data/

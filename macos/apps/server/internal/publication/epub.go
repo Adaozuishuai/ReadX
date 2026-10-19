@@ -32,8 +32,10 @@ type Book struct {
 	Sections []Section
 }
 
-func Archive(data []byte) (*zip.Reader, error) {
-	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+// OpenArchive 校验并打开一个 zip 容器。只需要 io.ReaderAt，因此调用方可以直接传
+// *os.File：服务端读单个图片资源时不必先把整个 EPUB 读进内存。
+func OpenArchive(reader io.ReaderAt, size int64) (*zip.Reader, error) {
+	z, err := zip.NewReader(reader, size)
 	if err != nil {
 		return nil, fmt.Errorf("不是有效的 EPUB 压缩包: %w", err)
 	}
@@ -51,6 +53,11 @@ func Archive(data []byte) (*zip.Reader, error) {
 		}
 	}
 	return z, nil
+}
+
+// Archive 打开内存里的 EPUB（导入时用；体积已由上传上限约束）。
+func Archive(data []byte) (*zip.Reader, error) {
+	return OpenArchive(bytes.NewReader(data), int64(len(data)))
 }
 func ReadResource(z *zip.Reader, name string) ([]byte, error) {
 	f, err := z.Open(name)

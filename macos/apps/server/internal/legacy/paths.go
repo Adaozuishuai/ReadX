@@ -89,3 +89,51 @@ func (p Paths) PDFFile(key string) (string, bool) {
 	}
 	return fallback, fallback != ""
 }
+
+// LibraryPDFIndex 是 library/ 目录的一次快照，匹配规则与 PDFFile 完全一致。
+//
+// 列表接口要对每一行回答"有没有 PDF"。逐行调用 PDFFile 会每行重读一次目录，
+// 几百篇论文就是 O(篇数 × 文件数) 次目录枚举；这里改为每请求读一次。
+type LibraryPDFIndex struct {
+	// pdfs 是 library/ 下的 PDF 文件名（ReadDir 的字典序，与 PDFFile 的遍历顺序一致）。
+	pdfs []string
+	dir  string
+}
+
+// LibraryPDFIndex 读取一次目录。目录不存在时返回空索引（与 PDFFile 的失败语义一致）。
+func (p Paths) LibraryPDFIndex() LibraryPDFIndex {
+	entries, err := os.ReadDir(p.LibraryDir())
+	if err != nil {
+		return LibraryPDFIndex{dir: p.LibraryDir()}
+	}
+	pdfs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".pdf") {
+			continue
+		}
+		pdfs = append(pdfs, entry.Name())
+	}
+	return LibraryPDFIndex{pdfs: pdfs, dir: p.LibraryDir()}
+}
+
+// Match 与 PDFFile 同规则：完全同名优先，其次第一个大小写不敏感的包含匹配。
+func (idx LibraryPDFIndex) Match(key string) (string, bool) {
+	if key == "" {
+		return "", false
+	}
+	needle := strings.ToLower(key)
+	var fallback string
+	for _, name := range idx.pdfs {
+		if !strings.Contains(strings.ToLower(name), needle) {
+			continue
+		}
+		candidate := filepath.Join(idx.dir, name)
+		if strings.EqualFold(strings.TrimSuffix(name, filepath.Ext(name)), key) {
+			return candidate, true
+		}
+		if fallback == "" {
+			fallback = candidate
+		}
+	}
+	return fallback, fallback != ""
+}

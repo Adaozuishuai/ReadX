@@ -2,13 +2,17 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 const ReaderScreen = lazy(() => import('./components/ReaderScreen').then((module) => ({ default: module.ReaderScreen })));
 const ReproductionSection = lazy(() => import('./components/ReproductionSection').then((module) => ({ default: module.ReproductionSection })));
 import { LibraryScreen } from './components/LibraryScreen';
+import type { DocumentSummary } from '@cbct/shared';
 const KnowledgeGraphSection = lazy(() => import('./components/KnowledgeGraphSection').then((module) => ({ default: module.KnowledgeGraphSection })));
+const ReadingCalendarSection = lazy(() => import('./components/ReadingCalendarSection').then((module) => ({ default: module.ReadingCalendarSection })));
 import { useAnnotations } from './hooks/useAnnotations';
 import { useDocument } from './hooks/useDocument';
 import { useLibraryMeta } from './hooks/useLibraryMeta';
 import { useTheme } from './hooks/useTheme';
 import { useWorkspace } from './hooks/useWorkspace';
+import { WorkspaceIcon } from './components/WorkspaceIcon';
 const ImportDialog = lazy(() => import('./components/ImportDialog').then((module) => ({ default: module.ImportDialog })));
+const RetranslateDialog = lazy(() => import('./components/RetranslateDialog').then((module) => ({ default: module.RetranslateDialog })));
 const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then((module) => ({ default: module.AISettingsDialog })));
 
 /**
@@ -25,24 +29,32 @@ const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then
 export default function App() {
   const {
     phase,
+    allDocuments,
     filters,
     setFilters,
     reload,
   } = useWorkspace();
   const [screen, setScreen] = useState<
-    'library' | 'reader' | 'graph' | 'reproduction'
+    'library' | 'reader' | 'graph' | 'reproduction' | 'calendar'
   >('library');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
+  const [retranslateDocument, setRetranslateDocument] = useState<DocumentSummary | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [libraryView, setLibraryView] = useState<'all' | 'favorite' | 'trash' | 'shelves'>(
     'all',
   );
 
+  // documents 只用于书库列表渲染（跟随搜索/筛选）；跨页跳转必须用不受筛选影响的全集，
+  // 否则搜索状态下从图谱点「原文依据」会找不到目标论文、继续用上一篇的 selectedId。
   const documents = phase.kind === 'ready' ? phase.documents.documents : [];
+  const navigationDocuments = useMemo(
+    () => (allDocuments.length ? allDocuments : documents),
+    [allDocuments, documents],
+  );
   const selected = useMemo(
-    () => documents.find((doc) => doc.id === selectedId) ?? null,
-    [documents, selectedId],
+    () => navigationDocuments.find((doc) => doc.id === selectedId) ?? null,
+    [navigationDocuments, selectedId],
   );
   const detail = useDocument(
     screen === 'reader' ? (selected?.key ?? null) : null,
@@ -89,13 +101,13 @@ export default function App() {
   // 图谱里点某条关系的原文依据：选定该文献 → 进阅读页 → 跳到那一页并闪一下出处。
   const citeInDocument = useCallback(
     (target: { key: string; page: number }) => {
-      const doc = documents.find((item) => item.key === target.key);
+      const doc = navigationDocuments.find((item) => item.key === target.key);
       if (doc) setSelectedId(doc.id);
       setPage(target.page);
       setCite((current) => ({ page: target.page, nonce: (current?.nonce ?? 0) + 1 }));
       setScreen('reader');
     },
-    [documents],
+    [navigationDocuments],
   );
 
   const focusAnnotation = useCallback(
@@ -116,19 +128,19 @@ export default function App() {
 
   const openReproduction = useCallback(
     (key: string) => {
-      const target = documents.find((doc) => doc.key === key);
+      const target = navigationDocuments.find((doc) => doc.key === key);
       if (target) setSelectedId(target.id);
       setScreen('reproduction');
     },
-    [documents],
+    [navigationDocuments],
   );
 
   const pickForReproduction = useCallback(
     (key: string) => {
-      const target = documents.find((doc) => doc.key === key);
+      const target = navigationDocuments.find((doc) => doc.key === key);
       if (target) setSelectedId(target.id);
     },
-    [documents],
+    [navigationDocuments],
   );
 
   return (
@@ -144,14 +156,12 @@ export default function App() {
         }
       }}
     >
-      <div className="global-document-actions">
-        <button onClick={() => setImportFiles([])}>＋ 导入 PDF / EPUB</button>
-      </div>
       <HeaderBar
         phase={phase}
         screen={screen}
         onScreen={setScreen}
         onReload={reload}
+        onImport={() => setImportFiles([])}
         theme={theme.choice}
         onThemeChange={theme.setTheme}
       />
@@ -160,10 +170,12 @@ export default function App() {
       {screen === 'library' ? (
         <LibraryScreen
           phase={phase}
+          allDocuments={navigationDocuments}
           filters={filters}
           setFilters={setFilters}
           selectedId={selectedId}
           onOpenDocument={openDocument}
+          onRetranslate={setRetranslateDocument}
           onOpenImport={() => setImportFiles([])}
           onOpenSettings={() => setSettingsOpen(true)}
           meta={libraryMeta}
@@ -174,8 +186,8 @@ export default function App() {
             setScreen(
               view === 'graph'
                 ? 'graph'
-                : view === 'reproduction'
-                  ? 'reproduction'
+                : view === 'calendar'
+                  ? 'calendar'
                   : 'library',
             );
           }}
@@ -200,30 +212,58 @@ export default function App() {
       ) : screen === 'graph' ? (
         <KnowledgeGraphSection
           phase={phase}
-          documents={documents}
+          documents={navigationDocuments}
           onBack={() => setScreen('library')}
           onCite={citeInDocument}
+        />
+      ) : screen === 'calendar' ? (
+        <ReadingCalendarSection
+          phase={phase}
+          documents={navigationDocuments}
+          onBack={() => setScreen('library')}
+          onOpenDocument={openDocument}
         />
       ) : (
         <ReproductionSection
           document={selected}
-          documents={documents}
+          documents={navigationDocuments}
           onPick={pickForReproduction}
           onBack={() => setScreen('library')}
         />
       )}
 
-      {importFiles !== null && (
-        <ImportDialog
-          files={importFiles}
-          onClose={() => setImportFiles(null)}
-          onImported={reload}
-        />
-      )}
-      {settingsOpen && (
-        <AISettingsDialog onClose={() => setSettingsOpen(false)} />
-      )}
       </Suspense>
+      {/* 对话框各自一个边界：首次加载 chunk 时只让弹窗区域回退，绝不卸载整页
+          （否则滚动位置、面板本地状态与已发出的列表请求都会重来一遍）。 */}
+      {importFiles !== null && (
+        <Suspense fallback={null}>
+          <ImportDialog
+            files={importFiles}
+            onClose={() => setImportFiles(null)}
+            onImported={reload}
+            onOpenDocument={openDocument}
+          />
+        </Suspense>
+      )}
+      {retranslateDocument ? (
+        <Suspense fallback={null}>
+          <RetranslateDialog
+            document={retranslateDocument}
+            onClose={() => setRetranslateDocument(null)}
+            onComplete={reload}
+            onOpenReader={() => {
+              const id = retranslateDocument.id;
+              setRetranslateDocument(null);
+              openDocument(id);
+            }}
+          />
+        </Suspense>
+      ) : null}
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <AISettingsDialog onClose={() => setSettingsOpen(false)} />
+        </Suspense>
+      )}
       {phase.kind === 'error' ? (
         <footer className="shrink-0 border-t border-bad/30 bg-bad/5 px-5 py-2">
           <p className="text-[12px] leading-relaxed text-bad">
@@ -238,69 +278,66 @@ export default function App() {
 }
 
 /**
- * 顶栏：参考实现没有全局顶栏（导航在书库侧栏里），这里保留一条极细的状态条——
- * 连接状态与主题切换是本仓库的既有能力，用户在阅读页也需要够到主题。
+ * 全局工作区导航：书库、图谱、日历、主题与导入入口在各页面保持一致。
  */
 function HeaderBar({
   phase,
   screen,
   onScreen,
   onReload,
+  onImport,
   theme,
   onThemeChange,
 }: {
   phase: ReturnType<typeof useWorkspace>['phase'];
-  screen: 'library' | 'reader' | 'graph' | 'reproduction';
-  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction') => void;
+  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar';
+  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar') => void;
   onReload: () => void;
+  onImport: () => void;
   theme: string;
   onThemeChange: (theme: 'light' | 'dark' | 'paper' | 'system') => void;
 }) {
   const ready = phase.kind === 'ready';
   return (
-    <header className="flex h-10 shrink-0 items-center gap-3 border-b border-line bg-surface px-4 text-[11px]">
+    <header className="app-header">
+      <button type="button" className="app-brand" onClick={() => onScreen('library')} aria-label="ReadX，返回书库">
+        <span className="brand-mark" aria-hidden="true">◈</span><span>ReadX</span>
+      </button>
+      <nav className="app-navigation" aria-label="工作区导航">
       <button
         type="button"
         onClick={() => onScreen('library')}
-        className={
-          screen === 'library'
-            ? 'font-medium text-ink'
-            : 'text-ink-faint hover:text-ink'
-        }
+        aria-current={screen === 'library' || screen === 'reader' ? 'page' : undefined}
+        className={screen === 'library' || screen === 'reader' ? 'active' : ''}
       >
-        书库
+        <WorkspaceIcon name="library" size={16} /><span>书库</span>
       </button>
       <button
         type="button"
         onClick={() => onScreen('graph')}
-        className={
-          screen === 'graph'
-            ? 'font-medium text-ink'
-            : 'text-ink-faint hover:text-ink'
-        }
+        aria-current={screen === 'graph' ? 'page' : undefined}
+        className={screen === 'graph' ? 'active' : ''}
       >
-        图谱
+        <WorkspaceIcon name="graph" size={16} /><span>图谱</span>
       </button>
       <button
         type="button"
-        onClick={() => onScreen('reproduction')}
-        className={
-          screen === 'reproduction'
-            ? 'font-medium text-ink'
-            : 'text-ink-faint hover:text-ink'
-        }
+        onClick={() => onScreen('calendar')}
+        aria-current={screen === 'calendar' ? 'page' : undefined}
+        className={screen === 'calendar' ? 'active' : ''}
       >
-        复现
+        <WorkspaceIcon name="calendar" size={16} /><span>日历</span>
       </button>
-      <span className="ml-auto flex items-center gap-2">
-        <span className="flex items-center gap-0.5 rounded-pill bg-surface-sunk p-0.5">
+      </nav>
+      <div className="app-header-actions">
+        <div className="theme-switch" role="group" aria-label="界面主题">
           {(['light', 'dark', 'paper', 'system'] as const).map((item) => (
             <button
               key={item}
               type="button"
               onClick={() => onThemeChange(item)}
               aria-pressed={theme === item}
-              className={`rounded-pill px-1.5 py-0.5 text-[10px] transition ${theme === item ? 'bg-surface font-medium text-ink shadow-sm' : 'text-ink-faint hover:text-ink'}`}
+              className={theme === item ? 'active' : ''}
             >
               {
                 {
@@ -312,19 +349,22 @@ function HeaderBar({
               }
             </button>
           ))}
-        </span>
+        </div>
+        <select className="theme-select" aria-label="界面主题" value={theme} onChange={event => onThemeChange(event.target.value as 'light' | 'dark' | 'paper' | 'system')}>
+          <option value="light">浅色</option><option value="dark">深色</option><option value="paper">纸张</option><option value="system">跟随系统</option>
+        </select>
         <button
           type="button"
           onClick={onReload}
-          className={[
-            'rounded-pill px-2 py-0.5 font-medium transition',
-            ready ? 'bg-good/10 text-good' : 'bg-bad/10 text-bad',
-          ].join(' ')}
+          className={`connection-button${ready ? ' ready' : ''}`}
           title={ready ? '后端已连接，点按重连' : '后端未连接，点按重试'}
         >
-          {ready ? '已连接' : '未连接 · 重试'}
+          <span aria-hidden="true" />{ready ? '已连接' : '未连接 · 重试'}
         </button>
-      </span>
+        <button type="button" className="primary-button global-import" onClick={onImport}>
+          <span>＋ 导入 PDF / EPUB</span>
+        </button>
+      </div>
     </header>
   );
 }

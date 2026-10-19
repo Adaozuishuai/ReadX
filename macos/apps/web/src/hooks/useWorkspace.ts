@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { DocumentsResponse, ImportReport, MetaResponse } from '@cbct/shared';
+import type { DocumentSummary, DocumentsResponse, ImportReport, MetaResponse } from '@cbct/shared';
 import { ApiError, api } from '../api/client';
 
 export type WorkspacePhase =
@@ -25,6 +25,11 @@ function hintFor(error: unknown): string {
 
 export function useWorkspace(): {
   phase: WorkspacePhase;
+  /**
+   * 不受书库搜索/状态筛选影响的文献全集：图谱、日历、复现的跨页跳转必须按 key
+   * 在这一份里找人，否则搜索时点「原文依据」会打开上一篇论文。
+   */
+  allDocuments: DocumentSummary[];
   filters: Filters;
   setFilters: (next: Partial<Filters>) => void;
   reload: () => void;
@@ -35,6 +40,7 @@ export function useWorkspace(): {
   clearImportNotice: () => void;
 } {
   const [phase, setPhase] = useState<WorkspacePhase>({ kind: 'loading' });
+  const [allDocuments, setAllDocuments] = useState<DocumentSummary[]>([]);
   const [filters, setFiltersState] = useState<Filters>({ status: '', q: '' });
   const [attempt, setAttempt] = useState(0);
   const [importing, setImporting] = useState(false);
@@ -75,6 +81,22 @@ export function useWorkspace(): {
 
   // 搜索输入的去抖在组件层用 useDebouncedValue 处理，这里只按「已提交的 filters」发请求。
 
+  // 搜索/筛选只影响书库列表；导航另取一份全集，且只在 reload 时刷新，不随每次输入重发。
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const result = await api.documents(controller.signal);
+        if (controller.signal.aborted) return;
+        setAllDocuments(result.documents);
+      } catch {
+        // 这里失败不覆盖主请求的错误提示：书库本身会把连接问题显示出来。
+        // 调用方在 allDocuments 为空时会退回过滤后的列表，导航仍然可用（只是受搜索影响）。
+      }
+    })();
+    return () => controller.abort();
+  }, [attempt]);
+
   const runImport = useCallback(() => {
     setImporting(true);
     setImportError(null);
@@ -92,6 +114,7 @@ export function useWorkspace(): {
 
   return {
     phase,
+    allDocuments,
     filters,
     setFilters,
     reload,

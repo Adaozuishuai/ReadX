@@ -85,6 +85,9 @@ func (r *Renderer) resolve() (engineDir, fontDir, script string, err error) {
 	engineDir = os.Getenv("CBCT_RENDER_ENGINE_DIR")
 	if engineDir == "" {
 		candidates := []string{}
+		if root := os.Getenv("READX_WORKSPACE_DIR"); root != "" {
+			candidates = append(candidates, filepath.Join(root, "resources", "rendering-engine"))
+		}
 		if r.DataRoot != "" {
 			candidates = append(candidates, filepath.Join(r.DataRoot, "windows", "resources", "rendering-engine"))
 			candidates = append(candidates, filepath.Join(r.DataRoot, "resources", "rendering-engine"))
@@ -121,6 +124,9 @@ func (r *Renderer) resolve() (engineDir, fontDir, script string, err error) {
 	script = os.Getenv("CBCT_RENDER_SCRIPT")
 	if script == "" {
 		candidates := []string{}
+		if root := os.Getenv("READX_WORKSPACE_DIR"); root != "" {
+			candidates = append(candidates, filepath.Join(root, "scripts", "render-translated-pdf.cjs"))
+		}
 		if r.DataRoot != "" {
 			candidates = append(candidates, filepath.Join(r.DataRoot, "windows", "scripts", "render-translated-pdf.cjs"))
 		}
@@ -143,7 +149,7 @@ func (r *Renderer) resolve() (engineDir, fontDir, script string, err error) {
 		return "", "", "", lookErr
 	}
 	if missing := r.missingNodeModules(); len(missing) > 0 {
-		return "", "", "", fmt.Errorf("渲染引擎缺少依赖 %s：请在 windows 目录运行 npm install", strings.Join(missing, "、"))
+		return "", "", "", fmt.Errorf("渲染引擎缺少依赖 %s：请在对应平台工程目录运行 npm install", strings.Join(missing, "、"))
 	}
 	return engineDir, fontDir, script, nil
 }
@@ -165,6 +171,9 @@ func (r *Renderer) nodeBinary() (string, error) {
 // missingNodeModules 检查脚本工作目录下能不能解析到运行时依赖。
 func (r *Renderer) missingNodeModules() []string {
 	roots := []string{}
+	if root := os.Getenv("READX_WORKSPACE_DIR"); root != "" {
+		roots = append(roots, filepath.Join(root, "node_modules"))
+	}
 	if r.DataRoot != "" {
 		roots = append(roots, filepath.Join(r.DataRoot, "windows", "node_modules"))
 	}
@@ -172,7 +181,7 @@ func (r *Renderer) missingNodeModules() []string {
 		roots = append(roots, filepath.Join(filepath.Dir(executable), "..", "node_modules"))
 	}
 	if configured := strings.TrimSpace(os.Getenv("CBCT_RENDER_ENGINE_DIR")); configured != "" {
-		roots = append(roots, filepath.Join(filepath.Dir(filepath.Dir(configured)), "node_modules"))
+		roots = append(roots, filepath.Join(filepath.Dir(configured), "node_modules"), filepath.Join(filepath.Dir(filepath.Dir(configured)), "node_modules"))
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		roots = append(roots, filepath.Join(cwd, "node_modules"))

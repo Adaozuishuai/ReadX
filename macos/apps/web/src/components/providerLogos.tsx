@@ -24,6 +24,8 @@ const BRAND_MONOGRAM: Record<string, { text: string; color: string }> = {
   glm: { text: 'GLM', color: '#3859FF' },
   volcengine: { text: '方', color: '#1664FF' },
   lmstudio: { text: 'LM', color: '#8B5CF6' },
+  // 自定义服务商没有品牌：用中性符号，避免看起来像某一家。
+  custom: { text: '＋', color: '#8A8F98' },
 };
 
 export function ProviderLogo({ id, size = 16 }: { id: string; size?: number }) {

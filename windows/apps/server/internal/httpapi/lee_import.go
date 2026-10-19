@@ -92,7 +92,7 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 	if err != nil {
 		return "", err
 	}
-	backendRoot := filepath.Join(s.cfg.DataRoot, "windows", "vendor", "retainpdf", "backend")
+	backendRoot := filepath.Join(leeWorkspaceRoot(s.cfg.DataRoot), "vendor", "retainpdf", "backend")
 	if resourcesRoot := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resourcesRoot != "" {
 		candidate := filepath.Join(resourcesRoot, "vendor", "retainpdf", "backend")
 		if _, statErr := os.Stat(filepath.Join(candidate, "pipeline", "retainpdf_pipeline", "entrypoints", "console.py")); statErr == nil {
@@ -184,7 +184,7 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 	env = setEnv(env, "PYTHONIOENCODING", "utf-8")
 	env = setEnv(env, "RETAIN_PADDLE_API_TOKEN", ocrConfig.Token)
 	env = setEnv(env, "READX_RETAIN_TRANSLATION_API_KEY", translationAPIKey)
-	resourceRoot := filepath.Join(s.cfg.DataRoot, "windows", "resources")
+	resourceRoot := filepath.Join(leeWorkspaceRoot(s.cfg.DataRoot), "resources")
 	if resources := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resources != "" {
 		if _, statErr := os.Stat(filepath.Join(resources, "rendering-engine", "engine", "bin", "rpr-retain.js")); statErr == nil {
 			resourceRoot = resources
@@ -200,8 +200,8 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 		env = setEnv(env, "RETAINPDF_NODE_BIN", node)
 		env = setEnv(env, "ELECTRON_RUN_AS_NODE", "1")
 	}
-	if runtime.GOOS == "windows" {
-		nodeModules := filepath.Join(s.cfg.DataRoot, "windows", "node_modules")
+	{
+		nodeModules := filepath.Join(leeWorkspaceRoot(s.cfg.DataRoot), "node_modules")
 		if resources := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resources != "" {
 			candidate := filepath.Join(resources, "node_modules")
 			if _, statErr := os.Stat(candidate); statErr == nil {
@@ -449,12 +449,16 @@ func leePipelinePython(dataRoot string) (string, []string, string, error) {
 		}
 		return path, nil, sitePackages, nil
 	}
+	venvParts := []string{".retain-runtime", "bin", "python3"}
+	if runtime.GOOS == "windows" {
+		venvParts = []string{".retain-runtime", "Scripts", "python.exe"}
+	}
 	candidates := []string{
-		filepath.Join(dataRoot, "windows", ".retain-runtime", "Scripts", "python.exe"),
-		filepath.Join(dataRoot, ".retain-runtime", "Scripts", "python.exe"),
+		filepath.Join(append([]string{leeWorkspaceRoot(dataRoot)}, venvParts...)...),
+		filepath.Join(append([]string{dataRoot}, venvParts...)...),
 	}
 	if sourceRoot := leeSourceRoot(); sourceRoot != "" {
-		candidates = append(candidates, filepath.Join(sourceRoot, ".retain-runtime", "Scripts", "python.exe"))
+		candidates = append(candidates, filepath.Join(append([]string{sourceRoot}, venvParts...)...))
 	}
 	for _, candidate := range candidates {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
@@ -462,12 +466,18 @@ func leePipelinePython(dataRoot string) (string, []string, string, error) {
 			// 仓库位于低完整性盘（例如沙箱里的 E:\CODE）时，它无法写 %TEMP% 等中完整性
 			// 目录，日志创建会 EACCES。改用 venv 指向的基础解释器，并把 site-packages
 			// 加进 PYTHONPATH，既保留依赖又避免低完整性限制。
-			base, site := venvBasePython(candidate)
-			return base, nil, site, nil
+			if runtime.GOOS == "windows" {
+				base, site := venvBasePython(candidate)
+				return base, nil, site, nil
+			}
+			return candidate, nil, "", nil
 		}
 	}
 	if resourcesRoot := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resourcesRoot != "" {
 		candidate := filepath.Join(resourcesRoot, "python", "python.exe")
+		if runtime.GOOS != "windows" {
+			candidate = filepath.Join(resourcesRoot, "python", "bin", "python3")
+		}
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate, nil, filepath.Join(resourcesRoot, "python", "Lib", "site-packages"), nil
 		}
@@ -493,7 +503,7 @@ func leePipelinePython(dataRoot string) (string, []string, string, error) {
 			}
 		}
 	}
-	return "", nil, "", errors.New("LeePDF 需要 Python 3.11 或 3.12；可设置 READX_PYTHON 指向已安装 Lee 依赖的 python.exe")
+	return "", nil, "", errors.New("LeePDF 需要 Python 3.11 或 3.12；可设置 READX_PYTHON 指向已安装 Lee 依赖的 Python 解释器")
 }
 
 // venvBasePython 读取 pyvenv.cfg 的 home，返回 venv 背后的基础解释器与 site-packages。
@@ -525,6 +535,29 @@ func venvBasePython(venvPython string) (string, string) {
 		return base, site
 	}
 	return venvPython, site
+}
+
+// Resolve from the binary first: -trimpath removes absolute source filenames.
+func leeWorkspaceRoot(dataRoot string) string {
+	if configured := strings.TrimSpace(os.Getenv("READX_WORKSPACE_DIR")); configured != "" {
+		return configured
+	}
+	if executable, err := os.Executable(); err == nil {
+		candidate := filepath.Clean(filepath.Join(filepath.Dir(executable), "..", "..", ".."))
+		if _, err := os.Stat(filepath.Join(candidate, "vendor", "retainpdf", "backend")); err == nil {
+			return candidate
+		}
+	}
+	platform := "windows"
+	if runtime.GOOS == "darwin" {
+		platform = "macos"
+	}
+	for _, candidate := range []string{filepath.Join(dataRoot, platform), dataRoot, leeSourceRoot()} {
+		if _, err := os.Stat(filepath.Join(candidate, "vendor", "retainpdf", "backend")); err == nil {
+			return candidate
+		}
+	}
+	return filepath.Join(dataRoot, platform)
 }
 
 func leeSourceRoot() string {

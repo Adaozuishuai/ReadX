@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
+import type { DesktopUpdateStatus } from '@cbct/shared';
 import { statusLabel } from '@cbct/shared';
 import type { Category, DocumentMeta } from '../api/client';
 import { api } from '../api/client';
@@ -12,13 +13,14 @@ import { LibraryTrashButton } from './LibraryTrashButton';
 import { EmptyTrashDialog } from './EmptyTrashDialog';
 import { DailyRecommendations } from './DailyRecommendations';
 import { ResizeHandle } from './ResizeHandle';
+import { WorkspaceIcon, type WorkspaceIconName } from './WorkspaceIcon';
 
 type Layout = 'grid' | 'list' | 'table';
 type SortKey = 'title' | 'year' | 'status';
 
 /** 每日推荐的独立侧栏：开合与宽度都按用户上次的选择保存。 */
 const DAILY_STORAGE = 'cbct-v2-library-daily';
-const DAILY_DEFAULT_WIDTH = 360;
+const DAILY_DEFAULT_WIDTH = 316;
 const DAILY_MIN_WIDTH = 260;
 const DAILY_MAX_WIDTH = 720;
 
@@ -64,14 +66,17 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 /** 左侧导航的视图项（复刻参考实现：全部文档 / 收藏 / 回收站）。 */
-type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'reproduction' | 'graph';
+type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'calendar' | 'graph';
 
 interface Props {
   phase: WorkspacePhase;
+  /** 不受搜索影响的文献全集：侧栏计数与「自动补缺失 PDF」都按它算。 */
+  allDocuments: DocumentSummary[];
   filters: Filters;
   setFilters: (next: Partial<Filters>) => void;
   selectedId: string | null;
   onOpenDocument: (id: string) => void;
+  onRetranslate: (doc: DocumentSummary) => void;
   onOpenImport: () => void;
   onOpenSettings: () => void;
   meta: ReturnType<typeof useLibraryMeta>;
@@ -89,10 +94,12 @@ interface Props {
  */
 export function LibraryScreen({
   phase,
+  allDocuments,
   filters,
   setFilters,
   selectedId,
   onOpenDocument,
+  onRetranslate,
   onOpenImport,
   onOpenSettings,
   meta,
@@ -148,13 +155,14 @@ export function LibraryScreen({
 
   const rawDocuments = phase.kind === 'ready' ? phase.documents.documents : [];
   const total = phase.kind === 'ready' ? phase.meta.documentsTotal : 0;
-  const trashCount = rawDocuments.filter((doc) => meta.items[doc.key]?.deleted).length;
+  // 计数基于全集：搜索只缩小列表，不该让「回收站/收藏」的数字跟着缩水。
+  const trashCount = allDocuments.filter((doc) => meta.items[doc.key]?.deleted).length;
   const activeDocuments = rawDocuments.filter((doc) => !meta.items[doc.key]?.deleted);
-  const favoriteCount = rawDocuments.filter((doc) => meta.items[doc.key]?.favorite && !meta.items[doc.key]?.deleted).length;
+  const favoriteCount = allDocuments.filter((doc) => meta.items[doc.key]?.favorite && !meta.items[doc.key]?.deleted).length;
   const toggleTrash = (key: string) => meta.patch(key, { deleted: !meta.items[key]?.deleted });
-  const missingPDFs = useMemo(() => rawDocuments.filter((doc) =>
+  const missingPDFs = useMemo(() => allDocuments.filter((doc) =>
     !meta.items[doc.key]?.deleted && doc.title.trim() && doc.format !== 'epub' && !(doc.hasPdf ?? Boolean(doc.pdfPath))),
-  [rawDocuments, meta.items]);
+  [allDocuments, meta.items]);
 
   const fetchMissingArxivPDFs = async () => {
     if (fetchingArxiv || missingPDFs.length === 0) return;
@@ -227,24 +235,37 @@ export function LibraryScreen({
   const toggleSort = (key: SortKey) =>
     setSort((current) => (current.key === key ? { key, reverse: !current.reverse } : { key, reverse: false }));
 
-  const VIEWS: { id: ViewId; label: string; count?: number }[] = [
-    { id: 'all', label: '全部文档', count: total - trashCount },
-    { id: 'shelves', label: '书架', count: activeDocuments.length },
-    { id: 'favorite', label: '收藏', count: favoriteCount },
-    { id: 'trash', label: '回收站', count: trashCount },
-    { id: 'graph', label: '知识图谱' },
-    { id: 'reproduction', label: '复现准备' },
+  // 书架计数按**论文**算：只数真的被归入某个书架的非回收站论文。
+  // 原先用的是 activeDocuments.length（全部未删除论文），数字看起来像"书架个数"，
+  // 也把没归类的论文算了进去。
+  const shelfNames = useMemo(() => new Set(meta.categories.map((item) => item.name)), [meta.categories]);
+  const shelvedDocuments = useMemo(
+    () => activeDocuments.filter((doc) => (meta.items[doc.key]?.categories ?? []).some((name) => shelfNames.has(name))),
+    [activeDocuments, meta.items, shelfNames],
+  );
+  const countInShelf = useCallback(
+    (name: string) => activeDocuments.filter((doc) => (meta.items[doc.key]?.categories ?? []).includes(name)).length,
+    [activeDocuments, meta.items],
+  );
+
+  const VIEWS: { id: ViewId; label: string; icon: WorkspaceIconName; count?: number }[] = [
+    { id: 'all', label: '全部文档', icon: 'library', count: total - trashCount },
+    { id: 'shelves', label: '书架', icon: 'shelves', count: shelvedDocuments.length },
+    { id: 'favorite', label: '收藏', icon: 'star', count: favoriteCount },
+    { id: 'trash', label: '回收站', icon: 'trash', count: trashCount },
+    { id: 'graph', label: '知识图谱', icon: 'graph' },
+    { id: 'calendar', label: '阅读日历', icon: 'calendar' },
   ];
 
   return (
     <div className={`app-shell${dailyOpen ? ' daily-open' : ''}`}>
       <aside className={`library-sidebar${collapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-brand">
-          <span>ReadX</span>
-          <span className="rounded-pill bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">v2</span>
+          <strong>个人书库</strong>
+          <span>RESEARCH LIBRARY</span>
         </div>
 
-        <nav className="flex flex-col gap-0.5">
+        <nav className="flex flex-col gap-1" aria-label="书库视图">
           {VIEWS.map((item) => (
             <button
               key={item.id}
@@ -254,16 +275,17 @@ export function LibraryScreen({
                 onViewChange(item.id);
               }}
               aria-current={view === item.id ? 'page' : undefined}
+              title={item.label}
               className={`nav-item${view === item.id ? ' active' : ''}`}
             >
-              {item.label}
+              <WorkspaceIcon name={item.icon} /><span className="nav-label">{item.label}</span>
               {item.count != null && item.count > 0 ? <span className="nav-count">{item.count}</span> : null}
             </button>
           ))}
         </nav>
 
         {meta.categories.length || managingCategories ? (
-          <div className="flex flex-col gap-1 px-1">
+          <div className="sidebar-shelves flex flex-col gap-1 px-1">
               <span className="px-2 text-[10px] uppercase tracking-wide text-ink-faint">我的书架</span>
             {meta.categories.map((item) => (
               <button
@@ -274,7 +296,8 @@ export function LibraryScreen({
                 style={{ minHeight: 32 }}
               >
                 <span className="ann-color-dot" style={{ background: categoryDot(item.color) }} />
-                {item.name}
+                <span className="min-w-0 flex-1 truncate text-left">{item.name}</span>
+                {countInShelf(item.name) > 0 ? <span className="nav-count">{countInShelf(item.name)}</span> : null}
               </button>
             ))}
             <button
@@ -289,7 +312,7 @@ export function LibraryScreen({
           <button
             type="button"
             onClick={() => setManagingCategories(true)}
-            className="px-3 py-1 text-left text-[11px] text-ink-faint hover:text-accent"
+            className="sidebar-shelves px-3 py-1 text-left text-[11px] text-ink-faint hover:text-accent"
           >
             + 新建书架
           </button>
@@ -298,9 +321,10 @@ export function LibraryScreen({
         {managingCategories ? <CategoryManager meta={meta} onDone={() => setManagingCategories(false)} /> : null}
 
         <div className="sidebar-bottom">
+          <UpdateControl />
           {/* 左下角：AI 助手设置。放在持久可见的侧栏底部，不再占顶栏空间。 */}
-          <button type="button" className="nav-item" onClick={onOpenSettings}>
-            AI 助手设置
+          <button type="button" className="nav-item" onClick={onOpenSettings} title="AI 助手设置">
+            <WorkspaceIcon name="settings" /><span className="nav-label">AI 助手设置</span>
           </button>
           {meta.error ? <p className="px-3 text-[10px] leading-relaxed text-bad">{meta.error}</p> : null}
         </div>
@@ -308,21 +332,26 @@ export function LibraryScreen({
 
       <section className="library-main">
         <header className="library-topbar">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="library-heading">
             <button
               type="button"
               onClick={() => setCollapsed((value) => !value)}
-              className="rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-ink-soft transition hover:text-ink"
+              className="sidebar-toggle"
               title={collapsed ? '展开侧栏' : '收起侧栏'}
+              aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+              aria-expanded={!collapsed}
             >
-              {collapsed ? '»' : '«'}
+              <WorkspaceIcon name="panel" size={17} />
             </button>
-            <h1 className="truncate text-[15px] font-medium">
-              {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'shelves' ? '我的书架' : view === 'graph' ? '知识图谱' : '复现准备'}
+            <div className="min-w-0">
+            <p className="section-eyebrow">MY LIBRARY</p>
+            <h1>
+              {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'shelves' ? '我的书架' : view === 'graph' ? '知识图谱' : '阅读日历'}
             </h1>
-            <span className="text-[11px] text-ink-faint">{documents.length} 份文档</span>
+            <p className="library-description">集中管理论文、精读笔记与复现计划。</p>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="library-view-actions">
             {missingPDFs.length > 0 ? (
               <button type="button" className="mr-2 rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-accent hover:border-accent disabled:opacity-50" disabled={fetchingArxiv} onClick={() => void fetchMissingArxivPDFs()}>
                 {fetchingArxiv ? '正在自动获取…' : `自动获取缺失 PDF（${missingPDFs.length}）`}
@@ -334,25 +363,27 @@ export function LibraryScreen({
                 清空回收站
               </button>
             ) : null}
+            <div className="view-switch" role="group" aria-label="文献布局">
             {(['grid', 'list', 'table'] as Layout[]).map((item) => (
               <button
                 key={item}
                 type="button"
                 onClick={() => setLayout(item)}
                 aria-pressed={layout === item}
-                className={`rounded-md px-2 py-1 text-[11px] transition ${layout === item ? 'bg-surface-sunk font-medium text-ink' : 'text-ink-faint hover:text-ink'}`}
+                className={layout === item ? 'active' : ''}
               >
-                {item === 'grid' ? '网格' : item === 'list' ? '列表' : '表格'}
+                <WorkspaceIcon name={item} size={15} /><span>{item === 'grid' ? '网格' : item === 'list' ? '列表' : '表格'}</span>
               </button>
             ))}
+            </div>
             <button
               type="button"
               onClick={() => setDailyOpen((value) => !value)}
               aria-pressed={dailyOpen}
               title="每日论文推荐单独占一个侧栏；宽度可拖拽，双击分隔线复位"
-              className={`rounded-md px-2 py-1 text-[11px] transition ${dailyOpen ? 'bg-surface-sunk font-medium text-ink' : 'text-ink-faint hover:text-ink'}`}
+              className={`discovery-toggle${dailyOpen ? ' active' : ''}`}
             >
-              每日推荐
+              <WorkspaceIcon name="sparkles" size={15} /><span>每日推荐</span>
             </button>
           </div>
         </header>
@@ -361,6 +392,13 @@ export function LibraryScreen({
           {arxivProgress ? <p role="status" className="mb-2 rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">{arxivProgress}</p> : null}
           {arxivSummary ? <p role="status" className="mb-2 rounded-md bg-surface-sunk px-3 py-2 text-xs text-ink-soft">{arxivSummary}</p> : null}
           {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空仅移除书库条目和关联阅读数据，所有 PDF / EPUB 文件均保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
+          {phase.kind === 'ready' && view !== 'trash' ? (
+            <div className="library-metrics" aria-label="当前列表概览">
+              <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="file" /></span><strong>{documents.length}</strong><span>当前文献</span></div>
+              <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="library" /></span><strong>{documents.filter(doc => doc.status === 'reading').length}</strong><span>正在阅读</span></div>
+              <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="check" /></span><strong>{documents.filter(doc => doc.status === 'done').length}</strong><span>已精读</span></div>
+            </div>
+          ) : null}
           <div className="library-controls">
             <label className="search-field">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -371,6 +409,7 @@ export function LibraryScreen({
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 placeholder="搜索标题 / 作者 / 会场"
+                aria-label="搜索文献标题、作者或会场"
               />
             </label>
             <span style={{ flex: 1 }} />
@@ -430,6 +469,7 @@ export function LibraryScreen({
               meta={meta.items}
               selectedId={selectedId}
               onSelect={onOpenDocument}
+              onRetranslate={onRetranslate}
               onOpenReproduction={onOpenReproduction}
               onToggleTrash={toggleTrash}
               onSetShelves={(key, categories) => meta.patch(key, { categories })}
@@ -446,6 +486,7 @@ export function LibraryScreen({
                   categories={meta.categories}
                   selected={doc.id === selectedId}
                   onSelect={() => onOpenDocument(doc.id)}
+                  onRetranslate={() => onRetranslate(doc)}
                   onOpenReproduction={onOpenReproduction}
                   onToggleTrash={() => toggleTrash(doc.key)}
                   onSetShelves={(categories) => meta.patch(doc.key, { categories })}
@@ -464,6 +505,7 @@ export function LibraryScreen({
                   categories={meta.categories}
                   selected={doc.id === selectedId}
                   onSelect={() => onOpenDocument(doc.id)}
+                  onRetranslate={() => onRetranslate(doc)}
                   onOpenReproduction={onOpenReproduction}
                   onToggleFavorite={() => void meta.patch(doc.key, { favorite: !meta.items[doc.key]?.favorite }).catch(() => undefined)}
                   onToggleTrash={() => toggleTrash(doc.key)}
@@ -480,6 +522,7 @@ export function LibraryScreen({
               sort={sort}
               onSort={toggleSort}
               onSelect={onOpenDocument}
+              onRetranslate={onRetranslate}
               onOpenReproduction={onOpenReproduction}
               onToggleTrash={toggleTrash}
             />
@@ -507,7 +550,7 @@ export function LibraryScreen({
           />
           <aside className="daily-sidebar" style={{ width: dailyWidth }} aria-label="每日论文推荐">
             <header className="daily-sidebar-head">
-              <span className="truncate text-[12px] font-medium text-ink">每日论文推荐</span>
+              <span className="flex items-center gap-2 truncate text-[14px] font-semibold text-ink"><WorkspaceIcon name="sparkles" size={17} />每日论文推荐</span>
               <button
                 type="button"
                 onClick={() => setDailyOpen(false)}
@@ -528,14 +571,114 @@ export function LibraryScreen({
   );
 }
 
+function UpdateControl() {
+  const [status, setStatus] = useState<DesktopUpdateStatus>(() => (
+    window.__READX_DESKTOP_UPDATES__
+      ? { state: 'idle' }
+      : { state: 'unsupported', message: '应用内更新仅在 Windows 桌面安装版中提供。' }
+  ));
+  const [confirmingUpdate, setConfirmingUpdate] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const dismissedVersion = useRef<string | null>(null);
+  const bridge = window.__READX_DESKTOP_UPDATES__;
+
+  useEffect(() => bridge?.onStatus(setStatus), [bridge]);
+  useEffect(() => {
+    if (status.state === 'available' && status.version && dismissedVersion.current !== status.version) {
+      setConfirmingUpdate(true);
+    }
+  }, [status.state, status.version]);
+  useEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    if (confirmingUpdate && !element.open) element.showModal();
+    else if (!confirmingUpdate && element.open) element.close();
+  }, [confirmingUpdate]);
+
+  const postpone = () => {
+    if (status.version) dismissedVersion.current = status.version;
+    setConfirmingUpdate(false);
+  };
+
+  const run = async () => {
+    if (!bridge) return;
+    if (status.state === 'available') {
+      setConfirmingUpdate(false);
+      setStatus({ ...status, state: 'downloading', percent: 0 });
+      setStatus(await bridge.download());
+    } else if (status.state === 'downloaded') {
+      bridge.install();
+    } else {
+      setStatus({ ...status, state: 'checking' });
+      setStatus(await bridge.check());
+    }
+  };
+
+  const busy = status.state === 'checking' || status.state === 'downloading';
+  const label = status.state === 'checking' ? '正在检查更新…'
+    : status.state === 'current' ? `已是最新版本${status.currentVersion ? ` · v${status.currentVersion}` : ''}`
+      : status.state === 'available' ? `下载更新 · v${status.version}`
+        : status.state === 'downloading' ? `正在下载 · ${Math.round(status.percent ?? 0)}%`
+          : status.state === 'downloaded' ? `重启并安装${status.version ? ` · v${status.version}` : ''}`
+            : status.state === 'error' ? '检查更新失败 · 点击重试'
+              : status.state === 'unsupported' ? '桌面版更新'
+                : '检查更新';
+  const detail = status.state === 'error' || status.state === 'unsupported' ? status.message : undefined;
+  const disabled = !bridge || busy;
+
+  return (
+    <>
+      <div className={`sidebar-update${busy ? ' is-busy' : ''}`}>
+        <button
+          type="button"
+          className="nav-item sidebar-update-button"
+          onClick={() => void run()}
+          disabled={disabled}
+          title={detail ?? label}
+          aria-label={detail ? `${label}：${detail}` : label}
+        >
+          <WorkspaceIcon name="reset" />
+          <span className="nav-label">{label}</span>
+        </button>
+        {status.state === 'downloading' ? <div className="sidebar-update-progress" role="progressbar" aria-valuenow={Math.round(status.percent ?? 0)} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${Math.round(status.percent ?? 0)}%` }} /></div> : null}
+        {detail ? <p className="sidebar-update-detail nav-label" title={detail}>{detail}</p> : null}
+      </div>
+      <dialog
+        ref={dialog}
+        className="app-dialog update-confirm-dialog"
+        aria-labelledby="update-confirm-title"
+        onCancel={(event) => { event.preventDefault(); postpone(); }}
+        onClose={() => setConfirmingUpdate(false)}
+      >
+        <header>
+          <div>
+            <p className="section-eyebrow">READX UPDATE</p>
+            <h2 id="update-confirm-title">发现新版本</h2>
+          </div>
+          {status.version ? <span className="update-version-chip">v{status.version}</span> : null}
+        </header>
+        <section className="update-release-notes" aria-label="本次更新功能说明">
+          <h3>本次更新</h3>
+          <pre>{status.releaseNotes || '此版本暂未附更新说明。'}</pre>
+        </section>
+        <footer>
+          <button type="button" className="update-later-button" onClick={postpone}>暂不更新</button>
+          <button type="button" className="update-primary-button" onClick={() => void run()}>立即更新</button>
+        </footer>
+      </dialog>
+    </>
+  );
+}
+
 function ShelfOverview({
-  documents, categories, meta, selectedId, onSelect, onOpenReproduction, onToggleTrash, onSetShelves,
+  documents, categories, meta, selectedId, onSelect, onRetranslate, onOpenReproduction, onToggleTrash, onSetShelves,
 }: {
   documents: DocumentSummary[];
   categories: Category[];
   meta: Record<string, DocumentMeta>;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onRetranslate: (doc: DocumentSummary) => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: (key: string) => Promise<unknown>;
   onSetShelves: (key: string, categories: string[]) => Promise<unknown>;
@@ -570,6 +713,7 @@ function ShelfOverview({
               categories={categories}
               selected={doc.id === selectedId}
               onSelect={() => onSelect(doc.id)}
+              onRetranslate={() => onRetranslate(doc)}
               onOpenReproduction={onOpenReproduction}
               onToggleTrash={() => onToggleTrash(doc.key)}
               onSetShelves={(names) => onSetShelves(doc.key, names)}
@@ -587,6 +731,7 @@ function ListRow({
   categories,
   selected,
   onSelect,
+  onRetranslate,
   onOpenReproduction,
   onToggleFavorite,
   onToggleTrash,
@@ -596,6 +741,7 @@ function ListRow({
   categories: Category[];
   selected: boolean;
   onSelect: () => void;
+  onRetranslate: (doc: DocumentSummary) => void;
   onOpenReproduction: (key: string) => void;
   onToggleFavorite: () => void;
   onToggleTrash: () => Promise<unknown>;
@@ -630,6 +776,7 @@ function ListRow({
         <button type="button" onClick={onToggleFavorite} className={meta?.favorite ? 'text-accent' : 'text-ink-faint hover:text-ink'}>
           {meta?.favorite ? '★' : '☆'}
         </button>
+        {doc.format !== 'epub' && doc.hasPdf ? <button type="button" onClick={() => onRetranslate(doc)} className="text-ink-faint hover:text-accent">重新翻译</button> : null}
         <button type="button" onClick={() => onOpenReproduction(doc.key)} className="text-ink-faint hover:text-accent">
           复现
         </button>
@@ -646,6 +793,7 @@ function DocumentTable({
   sort,
   onSort,
   onSelect,
+  onRetranslate,
   onOpenReproduction,
   onToggleTrash,
 }: {
@@ -655,6 +803,7 @@ function DocumentTable({
   sort: { key: SortKey; reverse: boolean };
   onSort: (key: SortKey) => void;
   onSelect: (id: string) => void;
+  onRetranslate: (doc: DocumentSummary) => void;
   onOpenReproduction: (key: string) => void;
   onToggleTrash: (key: string) => Promise<unknown>;
 }) {
@@ -706,6 +855,7 @@ function DocumentTable({
               </td>
               <td className="px-2 py-2">
                 <div className="flex items-center gap-2">
+                {doc.format !== 'epub' && doc.hasPdf ? <button type="button" onClick={() => onRetranslate(doc)} className="rounded-md border border-line bg-surface px-2 py-0.5 text-[10px] text-ink-soft transition hover:border-accent hover:text-accent">重新翻译</button> : null}
                 <button
                   type="button"
                   onClick={() => onOpenReproduction(doc.key)}

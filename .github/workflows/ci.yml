@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20.19'
+          node-version: '22'
           cache: npm
           cache-dependency-path: windows/package-lock.json
 
@@ -71,24 +71,55 @@ jobs:
         working-directory: windows
         run: npm test
 
-  macos-tree:
-    name: macOS 源码树 · Go
+  platform-parity:
+    name: Windows / macOS core parity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/sync-platforms.mjs --check
 
+  macos:
+    name: macOS · Go + web + Electron + PDF runtime
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: macos/apps/server/go.mod
           cache-dependency-path: macos/apps/server/go.sum
-
-      # macOS 前端仍是旧副本（见审查报告），先只保证其后端可构建、测试通过，
-      # 避免它继续悄悄腐坏。
-      - name: go test
-        working-directory: macos/apps/server
-        run: go test ./...
-
-      - name: gofmt
-        working-directory: macos/apps/server
-        shell: bash
-        run: test -z "$(gofmt -l .)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: macos/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+      - name: Install dependencies
+        working-directory: macos
+        run: npm ci
+      - name: Prepare OCR / translation / rendering runtime
+        working-directory: macos
+        run: npm run setup:runtime && npm run check:runtime
+      - name: Test and build
+        working-directory: macos
+        run: |
+          export READX_PYTHON="$PWD/.retain-runtime/bin/python3"
+          export TYPST_BIN="$PWD/.retain-runtime/typst/typst"
+          npm test
+          npm run build
+      - name: Import component regression
+        working-directory: macos
+        run: npm run test:import
+      - name: Electron desktop regression
+        working-directory: macos
+        run: npm run test:desktop
+      - name: Prepare and package app (local unsigned validation)
+        working-directory: macos
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          node scripts/prepare-release.mjs
+          npm exec --workspace=@cbct/desktop -- electron-builder --mac --dir --publish never
+          npm run test:packaged

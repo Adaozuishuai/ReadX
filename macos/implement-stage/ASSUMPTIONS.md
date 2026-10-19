@@ -1,3 +1,5 @@
+> 历史实现记录。当前双端架构与验证入口以 `../../docs/architecture.md` 和 `../README.md` 为准；下文不能作为本次 macOS 验收结果。
+
 # Assumption Ledger — Figure-aware five-step reading
 <!-- ASK mode: never -->
 

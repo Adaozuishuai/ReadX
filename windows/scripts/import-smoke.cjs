@@ -60,6 +60,8 @@ function connect(browser) {
 async function main() {
   const executable = [
     process.env.CBCT_SMOKE_BROWSER,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
     path.join(process.env['PROGRAMFILES(X86)'] || 'C:/Program Files (x86)', 'Microsoft/Edge/Application/msedge.exe'),
     path.join(process.env.PROGRAMFILES || 'C:/Program Files', 'Google/Chrome/Application/chrome.exe'),
   ].find(candidate => candidate && fs.existsSync(candidate));
@@ -75,21 +77,16 @@ async function main() {
     fs.writeFileSync(path.join(workspace, 'index.html'), `<!doctype html>
       <style>.shot-zone { position: relative; width: 600px; height: 340px; }</style>
       <div id="root"></div><script type="module" src="/scripts/import-smoke.jsx"></script>`);
-    const metadataModule = path.join(root, 'apps/web/src/api/pdfMetadata.ts').replace(/\\/g, '/');
+    const metadataModule = path.join(root, 'apps/web/src/components/DocumentJobDialog.tsx').replace(/\\/g, '/');
     server = await createServer({
       root,
       configFile: false,
       logLevel: 'error',
       plugins: [react(), {
-        name: 'mock-pdf-metadata',
+        name: 'mock-job-preview',
         load(id) {
           if (id.split('?')[0].replace(/\\/g, '/') === metadataModule) {
-            return `export async function readPDFMetadata(file, signal) {
-              signal.throwIfAborted();
-              const firstPage = await file.text();
-              if (firstPage === 'parse-error') throw new Error('fixture parse failure');
-              return { firstPage };
-            }`;
+            return 'export function DocumentJobDialog() { return null; }';
           }
         },
       }],

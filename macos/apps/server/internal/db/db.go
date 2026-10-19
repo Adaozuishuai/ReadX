@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"cbctv2/server/internal/securefile"
 
 	_ "modernc.org/sqlite"
 )
@@ -40,6 +43,11 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("创建数据目录失败: %w", err)
+		}
+		// 数据库里有论文正文、批注与阅读记录：目录权限与配置文件同级别收紧
+		// （Windows 上 chmod 不设置 DACL，这里显式设置并让新建文件继承）。
+		if err := securefile.RestrictToCurrentUser(dir); err != nil {
+			log.Printf("收紧数据目录权限失败（不影响启动）: %v", err)
 		}
 	}
 	handle, err := sql.Open(driverName, "file:"+filepath.ToSlash(path))

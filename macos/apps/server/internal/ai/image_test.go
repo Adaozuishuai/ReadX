@@ -206,8 +206,8 @@ func TestGenerateWithImageAnthropicBody(t *testing.T) {
 }
 
 func TestGenerateWithImageRejectsCLIAndOversizedImage(t *testing.T) {
-	// CLI 渠道：必须直接报错，绝不能悄悄把图片丢掉后当纯文本问模型。
-	for _, provider := range []string{"codex", "claude", "kimi"} {
+	// Unsupported CLI channels must reject images. Codex has an attachment transport.
+	for _, provider := range []string{"claude", "kimi"} {
 		cfg := Config{Provider: provider, Model: "m"}
 		_, err := NewClient(cfg).GenerateWithImage(context.Background(), "SYS", "USER", visionImage(), 0, time.Second)
 		if err == nil || !strings.Contains(err.Error(), "不支持图片输入") {
