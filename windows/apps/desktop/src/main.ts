@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
-import electronUpdater, { type UpdateInfo } from 'electron-updater';
+import { autoUpdater, type UpdateInfo } from 'electron-updater';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -18,7 +18,6 @@ import type { BootstrapInfo, DesktopUpdateStatus, ReadyInfo } from '@cbct/shared
 const READY_PREFIX = 'CBCT_V2_READY ';
 const READY_TIMEOUT_MS = 30_000;
 const SHUTDOWN_GRACE_MS = 4_000;
-const { autoUpdater } = electronUpdater;
 let availableUpdateVersion: string | undefined;
 let downloadedUpdateReady = false;
 
