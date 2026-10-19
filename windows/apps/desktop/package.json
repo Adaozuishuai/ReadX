@@ -51,6 +51,7 @@
     ],
     "win": {
       "icon": "icon.ico",
+      "signExecutable": false,
       "target": [
         {
           "target": "nsis",

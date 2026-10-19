@@ -43,10 +43,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $notesPath = "windows/release-notes/$env:GITHUB_REF_NAME.md"
-          if (Test-Path $notesPath) {
-            gh release create "$env:GITHUB_REF_NAME" --draft --title "ReadX $env:GITHUB_REF_NAME" --notes-file $notesPath
+          gh release view "$env:GITHUB_REF_NAME" --json databaseId *> $null
+          if ($LASTEXITCODE -eq 0) {
+            if (Test-Path $notesPath) {
+              gh release edit "$env:GITHUB_REF_NAME" --title "ReadX $env:GITHUB_REF_NAME" --notes-file $notesPath
+            } else {
+              gh release edit "$env:GITHUB_REF_NAME" --title "ReadX $env:GITHUB_REF_NAME"
+            }
           } else {
-            gh release create "$env:GITHUB_REF_NAME" --draft --title "ReadX $env:GITHUB_REF_NAME" --generate-notes
+            if (Test-Path $notesPath) {
+              gh release create "$env:GITHUB_REF_NAME" --draft --title "ReadX $env:GITHUB_REF_NAME" --notes-file $notesPath
+            } else {
+              gh release create "$env:GITHUB_REF_NAME" --draft --title "ReadX $env:GITHUB_REF_NAME" --generate-notes
+            }
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to create or update release $env:GITHUB_REF_NAME."
           }
 
       - name: Build self-contained installer
