@@ -76,4 +76,4 @@ npm run test:packaged
 
 产物位于 `release/`：当前架构的 ReadX.app、DMG 和更新用 ZIP。包内包含 Go、React、Python 及依赖、Typst、RetainPDF、Node 渲染依赖和字体。普通用户不需要开发工具，OCR 与云端模型仍需联网。
 
-本机未签名构建不代表通过 Gatekeeper 或公证。仓库的 `build-macos.yml` 在 macOS runner 上构建 DMG，并在推送 `macos-vX.Y.Z` 标签后将 DMG 上传到同版本的 GitHub Release；Windows 安装包由 `vX.Y.Z` 标签对应的 Release workflow 构建。当前 macOS Release 提供 DMG 安装包，不提供应用内静默更新所需的签名 ZIP 与 `latest-mac.yml`。
+本机未签名构建不代表通过 Gatekeeper 或公证。仓库的 `build-macos.yml` 在 macOS runner 上构建 DMG、ZIP、blockmap 和 `latest-mac.yml`，并在推送 `macos-vX.Y.Z` 标签后上传到同版本的 GitHub Release；Windows 安装包由 `vX.Y.Z` 标签对应的 Release workflow 构建。自动更新是否可用还取决于 macOS 对未签名应用的安全策略；首次启动或更新若被系统拦截，请从 Release 下载 DMG 手动安装。
