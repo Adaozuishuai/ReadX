@@ -16,12 +16,17 @@ func TestFullTranslationIsCommittedWithImportAndRestoredWithoutModel(t *testing.
 	calls := 0
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
 		calls++
-		var count int
-		if err := handle.QueryRow(`SELECT count(*) FROM documents`).Scan(&count); err != nil {
-			t.Error(err)
-		}
-		if count != 0 {
-			t.Error("entry created before full translation")
+		// The import now saves its paper memory after inserting the document,
+		// so later assistant calls are allowed to observe the committed row.
+		// Keep the original invariant for the initial Lee translation request.
+		if calls == 1 && len(sources) > 0 {
+			var count int
+			if err := handle.QueryRow(`SELECT count(*) FROM documents`).Scan(&count); err != nil {
+				t.Error(err)
+			}
+			if count != 0 {
+				t.Error("entry created before Lee translation")
+			}
 		}
 		if len(sources) == 0 {
 			return `{"title":"Real paper title","translatedTitle":"真实论文标题","authors":[],"year":0}`, 200

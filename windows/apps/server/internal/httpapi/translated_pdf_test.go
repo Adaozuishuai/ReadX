@@ -275,15 +275,15 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 	if rows != 1 {
 		t.Fatalf("应保存 1 条 OCR 段落译文，实际 %d", rows)
 	}
-	// 2) 导入任务记录了 OCR / 翻译 / 渲染 三个阶段。
+	// 2) 导入任务记录 OCR / 翻译 / 渲染和论文记忆四个阶段。
 	res, jobPayload := post(t, bundle, http.MethodGet, "/v1/documents/"+key+"/job", "")
 	if res.StatusCode != http.StatusOK || jobPayload["available"] != true {
 		t.Fatalf("任务状态不可用: %d %v", res.StatusCode, jobPayload)
 	}
 	job, _ := jobPayload["job"].(map[string]any)
 	stages, _ := job["stages"].([]any)
-	if len(stages) != 3 {
-		t.Fatalf("应有 3 个阶段，实际 %v", job["stages"])
+	if len(stages) != 4 {
+		t.Fatalf("应有 4 个阶段，实际 %v", job["stages"])
 	}
 	stageStatus := func(name string) string {
 		for _, raw := range stages {
@@ -295,8 +295,8 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 		}
 		return ""
 	}
-	if stageStatus("ocr") != "done" || stageStatus("translate") != "done" {
-		t.Fatalf("OCR/翻译阶段应已完成: %v", stages)
+	if stageStatus("ocr") != "done" || stageStatus("translate") != "done" || stageStatus("memory") != "done" {
+		t.Fatalf("OCR/翻译/论文记忆阶段应已完成: %v", stages)
 	}
 	// 渲染在导入响应之后后台进行：等它收尾（测试环境用真实 rpr，通常 < 2s）。
 	deadline := time.Now().Add(20 * time.Second)
