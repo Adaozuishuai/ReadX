@@ -82,8 +82,8 @@ type layoutBlock struct {
 	ProviderContinuationOrder int            `json:"providerContinuationOrder"`
 	ProviderContinuationScore float64        `json:"providerContinuationScore"`
 	ProviderContinuationSkip  string         `json:"providerContinuationSkip,omitempty"`
-	LeeMetadata            map[string]any `json:"retainMetadata,omitempty"`
-	LeeContent             map[string]any `json:"retainContent,omitempty"`
+	LeeMetadata               map[string]any `json:"retainMetadata,omitempty"`
+	LeeContent                map[string]any `json:"retainContent,omitempty"`
 }
 
 type layoutPage struct {
@@ -459,7 +459,7 @@ func (s *Server) prepareOCRLayoutTranslations(ctx context.Context, pdf []byte, s
 				ProviderContinuationRole: block.ProviderContinuationRole, ProviderContinuationScope: block.ProviderContinuationScope,
 				ProviderContinuationOrder: block.ProviderContinuationOrder, ProviderContinuationScore: block.ProviderContinuationScore,
 				ProviderContinuationSkip: block.ProviderContinuationSkip,
-				LeeMetadata:           block.LeeMetadata, LeeContent: block.LeeContent,
+				LeeMetadata:              block.LeeMetadata, LeeContent: block.LeeContent,
 			})
 			if hasTranslationItem {
 				segments = append(segments, block.Text)
@@ -557,7 +557,7 @@ func layoutOCRPages(layout layoutDoc) []ocr.Page {
 				ProviderContinuationRole: block.ProviderContinuationRole, ProviderContinuationScope: block.ProviderContinuationScope,
 				ProviderContinuationOrder: block.ProviderContinuationOrder, ProviderContinuationScore: block.ProviderContinuationScore,
 				ProviderContinuationSkip: block.ProviderContinuationSkip,
-				LeeMetadata:           block.LeeMetadata,
+				LeeMetadata:              block.LeeMetadata,
 			})
 		}
 		pages[index] = page

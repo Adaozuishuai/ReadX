@@ -107,8 +107,8 @@ type Block struct {
 	ProviderContinuationOrder int
 	ProviderContinuationScore float64
 	ProviderContinuationSkip  string
-	LeeMetadata            map[string]any
-	LeeContent             map[string]any
+	LeeMetadata               map[string]any
+	LeeContent                map[string]any
 }
 
 // Segment 保留 LeePDF document.v1 的正文/公式片段边界。Paddle 不提供

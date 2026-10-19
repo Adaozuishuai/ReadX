@@ -48,13 +48,13 @@ type leePageSize struct {
 
 type leeNormalizationRequest struct {
 	LayoutParsingResults []json.RawMessage `json:"layoutParsingResults"`
-	PageSizes            []leePageSize  `json:"pageSizes"`
+	PageSizes            []leePageSize     `json:"pageSizes"`
 	DocumentID           string            `json:"documentId"`
 	ProviderVersion      string            `json:"providerVersion"`
 }
 
 type leeNormalizationResult struct {
-	Document leeDocument `json:"document"`
+	Document leeDocument    `json:"document"`
 	Report   map[string]any `json:"report"`
 }
 
@@ -81,32 +81,32 @@ type leePage struct {
 	Width     float64        `json:"width"`
 	Height    float64        `json:"height"`
 	Metadata  map[string]any `json:"metadata"`
-	Blocks    []leeBlock  `json:"blocks"`
+	Blocks    []leeBlock     `json:"blocks"`
 }
 
 type leeBlock struct {
-	ID               string          `json:"block_id"`
-	PageIndex        int             `json:"page_index"`
-	Order            int             `json:"order"`
-	Type             string          `json:"type"`
-	SubType          string          `json:"sub_type"`
-	BBox             []float64       `json:"bbox"`
-	Text             string          `json:"text"`
-	Lines            []leeLine    `json:"lines"`
-	Segments         []leeSegment `json:"segments"`
-	LayoutRole       string          `json:"layout_role"`
-	SemanticRole     string          `json:"semantic_role"`
-	StructureRole    string          `json:"structure_role"`
-	Metadata         map[string]any  `json:"metadata"`
-	Source           map[string]any  `json:"source"`
-	Policy           map[string]any  `json:"policy"`
-	Content          map[string]any  `json:"content"`
-	ContinuationHint map[string]any  `json:"continuation_hint"`
+	ID               string         `json:"block_id"`
+	PageIndex        int            `json:"page_index"`
+	Order            int            `json:"order"`
+	Type             string         `json:"type"`
+	SubType          string         `json:"sub_type"`
+	BBox             []float64      `json:"bbox"`
+	Text             string         `json:"text"`
+	Lines            []leeLine      `json:"lines"`
+	Segments         []leeSegment   `json:"segments"`
+	LayoutRole       string         `json:"layout_role"`
+	SemanticRole     string         `json:"semantic_role"`
+	StructureRole    string         `json:"structure_role"`
+	Metadata         map[string]any `json:"metadata"`
+	Source           map[string]any `json:"source"`
+	Policy           map[string]any `json:"policy"`
+	Content          map[string]any `json:"content"`
+	ContinuationHint map[string]any `json:"continuation_hint"`
 }
 
 type leeLine struct {
-	BBox      []float64       `json:"bbox"`
-	Precision string          `json:"bbox_precision"`
+	BBox      []float64    `json:"bbox"`
+	Precision string       `json:"bbox_precision"`
 	Spans     []leeSegment `json:"spans"`
 }
 
@@ -279,8 +279,8 @@ func projectLeeDocument(document leeDocument) ([]Page, error) {
 				ProviderContinuationScope: anyString(sourceBlock.ContinuationHint["scope"]),
 				ProviderContinuationOrder: anyInt(sourceBlock.ContinuationHint["reading_order"]),
 				ProviderContinuationScore: anyFloat(sourceBlock.ContinuationHint["confidence"]),
-				LeeMetadata:            sourceBlock.Metadata,
-				LeeContent:             sourceBlock.Content,
+				LeeMetadata:               sourceBlock.Metadata,
+				LeeContent:                sourceBlock.Content,
 			}
 			block.RawBlockOrder, block.HasRawBlockOrder = anyIntOK(sourceBlock.Metadata["raw_block_order"])
 			if block.ID == "" {
