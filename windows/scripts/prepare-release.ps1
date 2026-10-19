@@ -60,7 +60,15 @@ $typstArchive = Join-Path $env:TEMP $typstArchiveName
 $typstUrl = "https://github.com/typst/typst/releases/download/v$typstVersion/$typstArchiveName"
 $typstSha256 = '19ce3551153c2fe7ee9fa2f95208310c8f4d3209fedb699e0333faf8913f6736'
 Invoke-WebRequest -Uri $typstUrl -OutFile $typstArchive
-$actualTypstSha256 = (Get-FileHash -LiteralPath $typstArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$archiveStream = [System.IO.File]::OpenRead($typstArchive)
+try {
+  $actualTypstSha256 = [BitConverter]::ToString($sha256.ComputeHash($archiveStream)).Replace('-', '').ToLowerInvariant()
+}
+finally {
+  $archiveStream.Dispose()
+  $sha256.Dispose()
+}
 if ($actualTypstSha256 -ne $typstSha256) {
   throw "Typst $typstVersion archive checksum mismatch: $actualTypstSha256"
 }
