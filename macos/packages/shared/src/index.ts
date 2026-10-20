@@ -165,6 +165,7 @@ export interface DesktopUpdateBridge {
   check(): Promise<DesktopUpdateStatus>;
   download(): Promise<DesktopUpdateStatus>;
   install(): void;
+  openLatestRelease(): void;
   onStatus(callback: (status: DesktopUpdateStatus) => void): () => void;
 }
 

@@ -608,6 +608,10 @@ function UpdateControl() {
 
   const run = async () => {
     if (!bridge) return;
+    if (status.state === 'unsupported' && status.message?.includes('Developer ID')) {
+      bridge.openLatestRelease();
+      return;
+    }
     if (status.state === 'available') {
       setConfirmingUpdate(false);
       setStatus({ ...status, state: 'downloading', percent: 0 });
@@ -627,6 +631,7 @@ function UpdateControl() {
         : status.state === 'downloading' ? `正在下载 · ${Math.round(status.percent ?? 0)}%`
           : status.state === 'downloaded' ? `重启并安装${status.version ? ` · v${status.version}` : ''}`
             : status.state === 'error' ? '检查更新失败 · 点击重试'
+              : status.state === 'unsupported' && status.message?.includes('Developer ID') ? '下载 macOS 更新'
               : status.state === 'unsupported' ? '桌面版更新'
                 : '检查更新';
   const detail = status.state === 'error' || status.state === 'unsupported' ? status.message : undefined;
