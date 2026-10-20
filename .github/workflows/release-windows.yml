@@ -1,6 +1,13 @@
 name: Windows Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and upload
+        required: true
+        default: v0.1.7
+        type: string
   push:
     tags:
       - 'v*'
@@ -9,15 +16,26 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   windows:
     name: Build ReadX Windows installer
     runs-on: windows-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Check release version
+        run: |
+          $version = (Get-Content windows/apps/desktop/package.json -Raw | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -ne "v$version") { throw "Release tag $env:RELEASE_TAG does not match desktop version $version." }
 
       - uses: actions/setup-go@v5
         with:
@@ -42,23 +60,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notesPath = "windows/release-notes/$env:GITHUB_REF_NAME.md"
-          gh release view "$env:GITHUB_REF_NAME" --json databaseId *> $null
+          $notesPath = "windows/release-notes/$env:RELEASE_TAG.md"
+          gh release view "$env:RELEASE_TAG" --json databaseId *> $null
           if ($LASTEXITCODE -eq 0) {
             if (Test-Path $notesPath) {
-              gh release edit "$env:GITHUB_REF_NAME" --title "ReadX $env:GITHUB_REF_NAME" --notes-file $notesPath
+              gh release edit "$env:RELEASE_TAG" --title "ReadX $env:RELEASE_TAG" --notes-file $notesPath
             } else {
-              gh release edit "$env:GITHUB_REF_NAME" --title "ReadX $env:GITHUB_REF_NAME"
+              gh release edit "$env:RELEASE_TAG" --title "ReadX $env:RELEASE_TAG"
             }
           } else {
             if (Test-Path $notesPath) {
-              gh release create "$env:GITHUB_REF_NAME" --draft --title "ReadX $env:GITHUB_REF_NAME" --notes-file $notesPath
+              gh release create "$env:RELEASE_TAG" --draft --title "ReadX $env:RELEASE_TAG" --notes-file $notesPath
             } else {
-              gh release create "$env:GITHUB_REF_NAME" --draft --title "ReadX $env:GITHUB_REF_NAME" --generate-notes
+              gh release create "$env:RELEASE_TAG" --draft --title "ReadX $env:RELEASE_TAG" --generate-notes
             }
           }
           if ($LASTEXITCODE -ne 0) {
-            throw "Unable to create or update release $env:GITHUB_REF_NAME."
+            throw "Unable to create or update release $env:RELEASE_TAG."
           }
 
       - name: Build application and release resources
@@ -67,16 +85,55 @@ jobs:
           npm run build
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-release.ps1
 
-      - name: Package and upload Windows installer
+      - name: Package Windows installer
         working-directory: windows
-        run: npm exec --workspace=@cbct/desktop -- electron-builder --win nsis --x64 --publish always
+        timeout-minutes: 15
+        run: npm exec --workspace=@cbct/desktop -- electron-builder --win nsis --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Preserve installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReadX-Windows-${{ env.RELEASE_TAG }}
+          if-no-files-found: error
+          path: |
+            windows/release/*.exe
+            windows/release/*.exe.blockmap
+            windows/release/latest.yml
+
+      - name: Upload Windows release assets
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = $env:RELEASE_TAG.Substring(1)
+          $assets = @("windows/release/ReadX-Setup-$version.exe", "windows/release/ReadX-Setup-$version.exe.blockmap", 'windows/release/latest.yml')
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Missing release asset: $asset" }
+          }
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            gh release upload $env:RELEASE_TAG @assets --clobber
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw 'Uploading Windows release assets failed after three attempts.' }
+            Start-Sleep -Seconds (10 * $attempt)
+          }
 
       - name: Publish release after update assets are uploaded
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $releaseId = gh release view $env:GITHUB_REF_NAME --json databaseId --jq .databaseId
+          $releaseId = gh release view $env:RELEASE_TAG --json databaseId --jq .databaseId
           if (-not $releaseId) { throw 'ReadX release was not created.' }
+          $uploadedAssetsJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/$releaseId/assets"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to verify uploaded release assets.' }
+          $uploadedAssets = $uploadedAssetsJson | ConvertFrom-Json
+          $version = $env:RELEASE_TAG.Substring(1)
+          foreach ($name in @("ReadX-Setup-$version.exe", "ReadX-Setup-$version.exe.blockmap", 'latest.yml')) {
+            $local = Get-Item -LiteralPath "windows/release/$name"
+            $remote = $uploadedAssets | Where-Object { $_.name -eq $name }
+            if (-not $remote -or $remote.state -ne 'uploaded' -or $remote.size -ne $local.Length) {
+              throw "Release asset is missing, incomplete, or has the wrong size: $name"
+            }
+          }
           gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/$releaseId" -F draft=false
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing ReadX release failed.' }
