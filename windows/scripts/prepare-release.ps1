@@ -1,6 +1,9 @@
 $ErrorActionPreference = 'Stop'
 
 $windowsRoot = Split-Path -Parent $PSScriptRoot
+$nsisPatchScript = Join-Path $PSScriptRoot 'patch-nsis-uninstaller.ps1'
+& $nsisPatchScript
+
 $stageRoot = Join-Path $windowsRoot '.release-staging'
 $resourceRoot = Join-Path $stageRoot 'resources'
 $resolvedRoot = [System.IO.Path]::GetFullPath($windowsRoot).TrimEnd('\') + '\'
