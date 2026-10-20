@@ -15,6 +15,7 @@ const ImportDialog = lazy(() => import('./components/ImportDialog').then((module
 const RetranslateDialog = lazy(() => import('./components/RetranslateDialog').then((module) => ({ default: module.RetranslateDialog })));
 const DocumentJobDialog = lazy(() => import('./components/DocumentJobDialog').then((module) => ({ default: module.DocumentJobDialog })));
 const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then((module) => ({ default: module.AISettingsDialog })));
+const PresentationWorkspace = lazy(() => import('./components/PresentationWorkspace').then((module) => ({ default: module.PresentationWorkspace })));
 
 /**
  * 视觉版式 v2（对齐 cynicalight/reader 的布局结构，token 映射到本仓库暖色系）：
@@ -36,7 +37,7 @@ export default function App() {
     reload,
   } = useWorkspace();
   const [screen, setScreen] = useState<
-    'library' | 'reader' | 'graph' | 'reproduction' | 'calendar'
+    'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation'
   >('library');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
@@ -162,6 +163,7 @@ export default function App() {
         phase={phase}
         screen={screen}
         onScreen={setScreen}
+        onPresentation={() => setScreen('presentation')}
         onReload={reload}
         onImport={() => setImportFiles([])}
         theme={theme.choice}
@@ -198,6 +200,8 @@ export default function App() {
           onTrashEmptied={() => { setSelectedId(null); reload(); }}
           onReload={reload}
         />
+      ) : screen === 'presentation' ? (
+        <PresentationWorkspace documents={navigationDocuments.filter((doc) => !libraryMeta.items[doc.key]?.deleted)} onBack={() => setScreen('library')} />
       ) : screen === 'reader' ? (
         <ReaderScreen
           key={selected?.id ?? 'empty'}
@@ -306,14 +310,16 @@ function HeaderBar({
   phase,
   screen,
   onScreen,
+  onPresentation,
   onReload,
   onImport,
   theme,
   onThemeChange,
 }: {
   phase: ReturnType<typeof useWorkspace>['phase'];
-  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar';
-  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar') => void;
+  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation';
+  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation') => void;
+  onPresentation: () => void;
   onReload: () => void;
   onImport: () => void;
   theme: string;
@@ -349,6 +355,9 @@ function HeaderBar({
         className={screen === 'calendar' ? 'active' : ''}
       >
         <WorkspaceIcon name="calendar" size={16} /><span>日历</span>
+      </button>
+      <button type="button" onClick={onPresentation} aria-current={screen === 'presentation' ? 'page' : undefined} className={screen === 'presentation' ? 'active' : ''} title="从书库选择论文生成演示稿">
+        <WorkspaceIcon name="file" size={16} /><span>PPT</span>
       </button>
       </nav>
       <div className="app-header-actions">

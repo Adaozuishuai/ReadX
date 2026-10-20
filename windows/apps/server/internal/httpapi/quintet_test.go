@@ -58,18 +58,30 @@ func TestQuintetGenerationValidatesAndPreservesEachStep(t *testing.T) {
 			if err := scanner.Err(); err != nil {
 				t.Fatal(err)
 			}
-			if response.StatusCode != 200 || progressEvents < 3 || payload["saved"] != true || payload["validationError"] != nil || payload["attempts"] != float64(1) {
+			if response.StatusCode != 200 || payload["validationError"] != nil {
 				t.Fatalf("generation failed: %d %v", response.StatusCode, payload)
+			}
+			if kind == "reproduction" {
+				if payload["skipped"] != true {
+					t.Fatalf("expected reproduction to be skipped without a repository link: %v", payload)
+				}
+				return
+			}
+			if progressEvents < 3 || payload["saved"] != true || payload["attempts"] != float64(1) {
+				t.Fatalf("expected generated section to be saved: %v", payload)
 			}
 		})
 	}
 	response := do(t, bundle.frontend, "GET", "/v1/readings/k1", bundle.token)
 	payload := decode(t, response)
 	entries := payload["entries"].(map[string]any)
-	for _, kind := range []string{"motivation", "method", "reproduction"} {
+	for _, kind := range []string{"motivation", "method"} {
 		if entries[kind] == nil {
 			t.Fatalf("missing saved step %s", kind)
 		}
+	}
+	if entries["reproduction"] != nil {
+		t.Fatal("reproduction should not be saved when the abstract has no repository link")
 	}
 	response, payload = post(t, bundle, http.MethodPost, "/v1/reproduction/k1/analyze", `{"value":`+quoteJSON(string(raw))+`}`)
 	if response.StatusCode != 200 || payload["revision"] == nil {

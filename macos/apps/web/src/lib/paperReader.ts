@@ -11,12 +11,12 @@ export async function preparePaperReading(_key: string, pdf: PDFDocumentProxy | 
     input.pageCount = pdf.numPages;
     signal.throwIfAborted();
     report({ percent: 8, message: '复用导入时准备的论文记忆' });
-    input.unavailableVisuals = [];
     let encodedSize = 0;
     for (const visual of visuals) {
       signal.throwIfAborted();
       if (visual.extractionStatus !== 'ready' || visual.reviewStatus === 'needs-review') {
-        input.unavailableVisuals.push(`Page ${visual.page} 的「${visual.caption.slice(0, 120)}」尚无完整、可用的原图选区`);
+        // A missing or manually unreviewed crop must not mark every workbook
+        // section as incomplete. The section can still be generated from text.
         continue;
       }
       try {
@@ -27,10 +27,8 @@ export async function preparePaperReading(_key: string, pdf: PDFDocumentProxy | 
         encodedSize += reference.imagePNG.length;
       } catch (error) {
         if (signal.aborted) throw error;
-        input.unavailableVisuals.push(`Page ${visual.page} 的「${visual.caption.slice(0, 120)}」原图暂未附入正文`);
       }
     }
-    if (input.unavailableVisuals.length > 256) input.unavailableVisuals = [...input.unavailableVisuals.slice(0, 255), `另有 ${input.unavailableVisuals.length - 255} 张原图尚未附入正文`];
   }
   return input;
 }

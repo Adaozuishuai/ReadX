@@ -4,6 +4,7 @@
 
 <h1 align="center">ReadX</h1>
 <p align="center"><strong>Research papers, read with context.</strong><br>把论文读懂，也把图表、译文与研究思路连起来。</p>
+<p align="center"><a href="docs/media/ReadX-宣传片.mp4">▶ 观看 ReadX 产品介绍视频</a></p>
 
 <p align="center">
   <a href="https://github.com/Leechion/ReadX/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Leechion/ReadX?display_name=tag&style=flat-square&color=276653"></a>
@@ -44,7 +45,7 @@ ReadX 是面向科研论文的本地阅读工作区。导入 PDF 后，ReadX 识
 
 ## 精读五重奏
 
-五个部分可以单独生成，并行处理；分析会复用导入时整理的论文上下文。图表与对应章节一起进入分析正文，公式和结果表格保留为可读格式。
+五个部分可以单独生成，并行处理；分析会复用导入时整理的论文上下文。图表与对应章节一起进入分析正文，公式和结果表格保留为可读格式。完成后可导出 Markdown；也可从顶部导航进入独立 PPT 工作区，选择书库论文生成 16:9 演示稿，先通读全文，再按重点解读、对比、方法流程、图文证据、数据聚焦和核心观点六种版式编排。相关原图等比嵌入正文页，预览与导出共用页面布局；宽表和长内容自动分页，完整小节写入讲者备注。中英文使用微软雅黑，数字使用 Times New Roman。
 
 <p align="center">
   <img src="docs/images/readx-quintet.svg" alt="精读五重奏的五个分析部分" width="100%">
@@ -58,16 +59,16 @@ ReadX 是面向科研论文的本地阅读工作区。导入 PDF 后，ReadX 识
 
 > v0.1.3 首次加入应用内检查更新。已安装 v0.1.2 或更早版本的用户，请先从 Release 页面安装一次 v0.1.3；后续版本可以从应用内检查和安装。
 
-## 更新内容 · v0.1.5
+## 更新内容 · v0.1.6
 
-- Windows 与 macOS 同步发布；macOS DMG 随同版本上传到 Release。
-- 更新 ReadX macOS 书本图标，并为 macOS 发布 DMG、ZIP 和更新元数据。
-- 译文 PDF 保存入库后立即结束导入，论文记忆在后台整理；书库可从“处理”查看状态。
-- Codex 模型列表、推理强度与 Fast 模式按实际模型能力呈现；改进模型选择交互。
-- 修正 PDF 批注选区定位与高亮绘制，减少色块重叠、文字截断和下划线重叠。
-- 修复翻译缓存并发写入冲突，更新任务恢复和阶段进度展示。
+- 新增独立 PPT 工作区，可从书库选择论文，上传并保存自定义模板，查看逐页实时预览；内置主题作为默认样式使用，不出现在模板库列表中。
+- 生成前先阅读论文全文并调用本地 `baoyu-slide-deck` skill 规划内容；新增六种学术版式，原图按比例嵌入，宽表与长内容自动分页，来源写入讲者备注。
+- 五重奏章节可并行单独生成并复用导入时整理的论文记忆；相关图表直接编入对应章节正文。
+- 增强图表识别校验，可在原文页面定位图表区域；修正 PDF 批注高亮、下划线与选区边界。
+- 改进阅读器的连续滚动、原文与译文同步定位，以及导入任务状态恢复和后台论文记忆处理。
+- 同步 Windows 与 macOS 的功能和界面。
 
-更多细节见 [v0.1.5 Release](https://github.com/Leechion/ReadX/releases/tag/v0.1.5)。
+更多细节见 [v0.1.6 Release](https://github.com/Leechion/ReadX/releases/tag/v0.1.6)。
 
 ## 数据与隐私
 

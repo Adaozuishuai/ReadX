@@ -30,6 +30,18 @@ export function textFromPDF(content: TextContent): string {
 
 type PDFMarkRect = { x: number; y: number; width: number; height: number };
 
+function visualAt(layout: PDFLayout, x: number, y: number): number | null {
+  const px = x * layout.width, py = y * layout.height;
+  let index: number | null = null;
+  for (let i = 0; i < (layout.visuals?.length ?? 0); i++) {
+    const block = layout.visuals![i]!;
+    if (px < block.x || px > block.x + block.width || py < block.y || py > block.y + block.height) continue;
+    const previous = index === null ? null : layout.visuals![index]!;
+    if (!previous || block.width * block.height < previous.width * previous.height) index = i;
+  }
+  return index;
+}
+
 function mergePDFMarkRects(rects: PDFMarkRect[]): PDFMarkRect[] {
   const rows: { top: number; bottom: number; rects: PDFMarkRect[] }[] = [];
   for (const rect of [...rects]
@@ -403,8 +415,8 @@ export function PDFPage({
   const [renderedPage, setRenderedPage] = useState<number | null>(null);
   const [rendering, setRendering] = useState(true);
   const [error, setError] = useState('');
-  const [hoveredParagraph, setHoveredParagraph] = useState<number | null>(null);
-  useEffect(() => setHoveredParagraph(null), [page, layout, paragraphMode]);
+  const [hoveredRegion, setHoveredRegion] = useState<{ kind: 'paragraph' | 'visual'; index: number } | null>(null);
+  useEffect(() => setHoveredRegion(null), [page, layout, paragraphMode]);
   useEffect(() => {
     if (!container.current) return;
     let frame = 0;
@@ -561,16 +573,29 @@ export function PDFPage({
           onMouseMove={(event) => {
             if (!paragraphMode || !paragraphLayout) return;
             const bounds = event.currentTarget.getBoundingClientRect();
-            const index = paragraphAt(paragraphLayout, (event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
-            setHoveredParagraph((previous) => previous === index ? previous : index);
+            const x = (event.clientX - bounds.left) / bounds.width;
+            const y = (event.clientY - bounds.top) / bounds.height;
+            const visual = visualAt(paragraphLayout, x, y);
+            if (visual !== null) {
+              setHoveredRegion((previous) => previous?.kind === 'visual' && previous.index === visual ? previous : { kind: 'visual', index: visual });
+              return;
+            }
+            const paragraph = paragraphAt(paragraphLayout, x, y);
+            if (paragraph !== null) {
+              setHoveredRegion((previous) => previous?.kind === 'paragraph' && previous.index === paragraph ? previous : { kind: 'paragraph', index: paragraph });
+              return;
+            }
+            setHoveredRegion(null);
           }}
-          onMouseLeave={() => setHoveredParagraph(null)}
+          onMouseLeave={() => setHoveredRegion(null)}
           onClick={(event) => {
             if (!paragraphMode || !paragraphLayout || event.detail > 1) return;
             const selection = window.getSelection();
             if (selection && !selection.isCollapsed && selection.rangeCount && event.currentTarget.contains(selection.getRangeAt(0).commonAncestorContainer)) return;
             const bounds = event.currentTarget.getBoundingClientRect();
-            const index = paragraphAt(paragraphLayout, (event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
+            const x = (event.clientX - bounds.left) / bounds.width, y = (event.clientY - bounds.top) / bounds.height;
+            if (visualAt(paragraphLayout, x, y) !== null) return;
+            const index = paragraphAt(paragraphLayout, x, y);
             if (index === null) return;
             const block = paragraphLayout.blocks[index]!;
             const targetY = block.y / paragraphLayout.height;
@@ -585,9 +610,10 @@ export function PDFPage({
         >
           <canvas ref={canvas} />
           <div className="textLayer" ref={textLayer} />
-          {paragraphMode && paragraphLayout && hoveredParagraph !== null && (() => {
-            const block = paragraphLayout.blocks[hoveredParagraph];
-            return block && <div className="pdf-paragraph-hover" aria-hidden="true" style={{ left: `${block.x / paragraphLayout.width * 100}%`, top: `${block.y / paragraphLayout.height * 100}%`, width: `${block.width / paragraphLayout.width * 100}%`, height: `${block.height / paragraphLayout.height * 100}%` }} />;
+          {paragraphMode && paragraphLayout && hoveredRegion !== null && (() => {
+            const isVisual = hoveredRegion.kind === 'visual';
+            const block = isVisual ? paragraphLayout.visuals?.[hoveredRegion.index] : paragraphLayout.blocks[hoveredRegion.index];
+            return block && <div className={`pdf-paragraph-hover${isVisual ? ' pdf-visual-hover' : ''}`} aria-hidden="true" style={{ left: `${block.x / paragraphLayout.width * 100}%`, top: `${block.y / paragraphLayout.height * 100}%`, width: `${block.width / paragraphLayout.width * 100}%`, height: `${block.height / paragraphLayout.height * 100}%` }}>{isVisual && <span>{paragraphLayout.visuals?.[hoveredRegion.index]?.kind === 'table' ? 'OCR 表格' : 'OCR 图片'}</span>}</div>;
           })()}
           <div className="pdf-marks">
             {(() => {

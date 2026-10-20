@@ -92,6 +92,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/ai/test", withAuth(s.handleAIProbe))
 	mux.Handle("POST /v1/ai/models", withAuth(s.handleAIModels))
 	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
+	mux.Handle("POST /v1/ai/presentation-theme", withAuth(s.handleAIPresentationTheme))
+	mux.Handle("POST /v1/ai/presentation-plan", withAuth(s.handleAIPresentationPlan))
 	mux.Handle("POST /v1/ai/generate", withAuth(s.handleAIGenerate))
 	mux.Handle("POST /v1/ai/paper-page", withAuth(s.handlePaperPage))
 	mux.Handle("GET /v1/readings/{key}", withAuth(s.handleReadingGet))

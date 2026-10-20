@@ -6,6 +6,7 @@ import type { PaperVisual, PaperVisualProgress, VisualSelection, VisualMention }
 import { VisualRegionEditor } from './VisualRegionEditor';
 
 export function PaperVisualGallery({
+  documentKey,
   visuals,
   analyses,
   activeStep,
@@ -22,6 +23,7 @@ export function PaperVisualGallery({
   onDismiss,
   onRestoreIgnored,
 }: {
+  documentKey?: string;
   visuals: PaperVisual[];
   analyses: ReadingVisualAnalysis[];
   activeStep: ReadingKind;
@@ -77,6 +79,6 @@ export function PaperVisualGallery({
         <div className="paper-visual-actions"><button type="button" className="precision-button" onClick={() => onCite(item.page)}>跳到 Page {item.page}</button>{pdfDocument && onSaveSelection && <button className="precision-button" disabled={!!progress} onClick={() => setEditor(item)}>校正范围</button>}{item.reviewStatus === 'manual' && onResetSelection && <button className="precision-button" disabled={!!progress} onClick={() => onResetSelection(item.id)}>{item.id.startsWith('manual-') ? '移除手动选区' : '恢复自动选区'}</button>}{item.reviewStatus !== 'manual' && onDismiss && <button className="precision-button" disabled={!!progress} onClick={() => onDismiss(item.id)}>忽略此候选</button>}</div>
       </div>
     </article>)}
-    {editor !== undefined && pdfDocument && onSaveSelection && <VisualRegionEditor key={editor?.id || 'new'} document={pdfDocument} visual={editor} activeStep={activeStep} onSave={onSaveSelection} onClose={() => setEditor(undefined)} />}
+    {editor !== undefined && pdfDocument && onSaveSelection && <VisualRegionEditor key={editor?.id || 'new'} documentKey={documentKey} document={pdfDocument} visual={editor} activeStep={activeStep} onSave={onSaveSelection} onClose={() => setEditor(undefined)} />}
   </section>;
 }

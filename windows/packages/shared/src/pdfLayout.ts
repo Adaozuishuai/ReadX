@@ -13,10 +13,16 @@ export interface PDFTextBox {
 export interface PDFTextBlock extends PDFTextBox {
   fontSize: number;
 }
+export interface PDFVisualBlock extends PDFTextBox {
+  kind: 'table' | 'image';
+  label?: string;
+}
 export interface PDFLayout {
   width: number;
   height: number;
   blocks: PDFTextBlock[];
+  /** OCR layout objects that are not selectable prose paragraphs. */
+  visuals?: PDFVisualBlock[];
   /** Decorative initial letters, excluded from cached paragraph segmentation. */
   ornaments?: PDFTextBox[];
 }

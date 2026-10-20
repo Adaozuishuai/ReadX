@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { api, type LeeVisualBlock } from '../api/client';
 import type { PaperVisual, ReadingKind, VisualBounds, VisualSelection } from '../hooks/usePaperVisuals';
 
 const STEPS: { value: ReadingKind; label: string }[] = [{ value: 'motivation', label: '实验动机' }, { value: 'method', label: '方法公式' }, { value: 'experiment', label: '实验配置' }, { value: 'results', label: '结果分析' }, { value: 'reproduction', label: '代码复现' }];
@@ -8,8 +9,8 @@ function clamp(bounds: VisualBounds): VisualBounds {
   return { x: Math.max(0, Math.min(1 - width, bounds.x)), y: Math.max(0, Math.min(1 - height, bounds.y)), width, height };
 }
 
-export function VisualRegionEditor({ document, visual, activeStep, onSave, onClose }: {
-  document: PDFDocumentProxy; visual: PaperVisual | null; activeStep: ReadingKind;
+export function VisualRegionEditor({ documentKey, document, visual, activeStep, onSave, onClose }: {
+  documentKey?: string; document: PDFDocumentProxy; visual: PaperVisual | null; activeStep: ReadingKind;
   onSave: (selection: VisualSelection) => Promise<void>; onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -20,6 +21,8 @@ export function VisualRegionEditor({ document, visual, activeStep, onSave, onClo
   const [caption, setCaption] = useState(visual?.caption ?? '');
   const [step, setStep] = useState<ReadingKind>(visual?.suggestedStep ?? activeStep);
   const [loading, setLoading] = useState(true);
+  const [ocrBlocks, setOcrBlocks] = useState<LeeVisualBlock[]>([]);
+  const [ocrLoading, setOcrLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const [error, setError] = useState('');
@@ -51,6 +54,17 @@ export function VisualRegionEditor({ document, visual, activeStep, onSave, onClo
     })();
     return () => { cancelled = true; task?.cancel(); if (url) URL.revokeObjectURL(url); };
   }, [document, pageNumber, visual]);
+  useEffect(() => {
+    if (!documentKey) { setOcrBlocks([]); return; }
+    const controller = new AbortController();
+    setOcrLoading(true);
+    setOcrBlocks([]);
+    void api.paragraphs(documentKey, pageNumber, controller.signal)
+      .then((result) => { if (!controller.signal.aborted) setOcrBlocks(result.visuals ?? []); })
+      .catch(() => { if (!controller.signal.aborted) setOcrBlocks([]); })
+      .finally(() => { if (!controller.signal.aborted) setOcrLoading(false); });
+    return () => controller.abort();
+  }, [documentKey, pageNumber]);
   const save = async () => {
     if (lock.current || loading || !preview) return;
     lock.current = true; setBusy(true); setError('');
@@ -74,9 +88,16 @@ export function VisualRegionEditor({ document, visual, activeStep, onSave, onClo
         onPointerUp={(e) => { drag.current = null; if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }} onPointerCancel={() => { drag.current = null; }}
         onKeyDown={(e) => { if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) || busy) return; e.preventDefault(); const shift = e.shiftKey ? 0.001 : 0.01; setBounds((b) => clamp({ ...b, x: b.x + (e.key === 'ArrowLeft' ? -shift : e.key === 'ArrowRight' ? shift : 0), y: b.y + (e.key === 'ArrowUp' ? -shift : e.key === 'ArrowDown' ? shift : 0) })); }}>
         <img src={preview} alt={`原 PDF 第 ${pageNumber} 页`} draggable={false} />
-        <div className="visual-region-selection" style={{ left: `${bounds.x * 100}%`, top: `${bounds.y * 100}%`, width: `${bounds.width * 100}%`, height: `${bounds.height * 100}%` }}><span>保留此范围</span></div>
+        <div className="visual-region-selection" style={{ left: `${bounds.x * 100}%`, top: `${bounds.y * 100}%`, width: `${bounds.width * 100}%`, height: `${bounds.height * 100}%` }}><span>图表选区</span></div>
+        {ocrBlocks.map((block) => {
+          const x = block.box[0] / size.width, y = block.box[1] / size.height;
+          const width = (block.box[2] - block.box[0]) / size.width, height = (block.box[3] - block.box[1]) / size.height;
+          if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+          return <div key={`${block.index}-${block.kind}`} className="visual-region-ocr" style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${width * 100}%`, height: `${height * 100}%` }}><span>OCR {block.kind === 'table' ? '表格' : '图片'}</span></div>;
+        })}
       </div>}
     </div><aside className="visual-region-controls"><label>原 PDF 页码<select value={pageNumber} disabled={busy || !!visual} onChange={(e) => setPageNumber(Number(e.target.value))}>{Array.from({ length: document.numPages }, (_, i) => <option key={i + 1} value={i + 1}>Page {i + 1}</option>)}</select></label>
+      <p className="visual-region-ocr-status" role="status">{ocrLoading ? '正在读取该页 OCR 图表框…' : ocrBlocks.length ? `OCR 识别到 ${ocrBlocks.length} 个结构框。蓝色虚线为 OCR 框，绿色实线为当前图表选区。` : '该页 OCR 未返回表格或图片结构框；可结合原页调整图表选区。'}</p>
       <label>图表类型<select value={kind} disabled={busy} onChange={(e) => setKind(e.target.value as 'figure' | 'table')}><option value="figure">插图</option><option value="table">表格</option></select></label>
       <label>{visual ? '原图注' : '标题（可选）'}<textarea value={caption} readOnly={!!visual} disabled={busy} onChange={(e) => setCaption(e.target.value)} rows={4} maxLength={3900} placeholder="图注" /></label>
       <label>所属精读步骤<select value={step} disabled={busy} onChange={(e) => setStep(e.target.value as ReadingKind)}>{STEPS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}</select></label>

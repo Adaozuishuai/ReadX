@@ -229,6 +229,14 @@ func (s *Server) generatePaperReading(ctx context.Context, key string, body gene
 		emit(map[string]any{"error": "原页目录无效"})
 		return
 	}
+	if body.Kind == "reproduction" {
+		if _, repositoryURL := abstractRepositoryURL(source); repositoryURL == "" {
+			message := "摘要末句没有代码仓库链接，已跳过代码复现。"
+			progress(100, message)
+			emit(map[string]any{"result": map[string]any{"saved": true, "kind": body.Kind, "skipped": true, "message": message, "pruned": false, "demoted": []string{}, "validationError": nil, "attempts": 0}, "done": true})
+			return
+		}
+	}
 	issues := []string{}
 	progress(42, "正在读取已保存的论文记忆")
 	material, err := s.ensurePaperMemory(ctx, key, source, cfg, client, progress)
@@ -246,7 +254,12 @@ func (s *Server) generatePaperReading(ctx context.Context, key string, body gene
 		emit(map[string]any{"error": "论文记忆生成失败: " + err.Error()})
 		return
 	}
-	visuals, visualIssues, err := s.analyzePaperVisuals(ctx, key, source, material, cfg, client, body.Visuals, images, progress)
+	repository := ""
+	if body.Kind == "reproduction" {
+		progress(48, "正在定位摘要末句的代码仓库并读取源码")
+		repository = s.reproductionRepositoryContext(ctx, source)
+	}
+	visuals, _, err := s.analyzePaperVisuals(ctx, key, source, material, cfg, client, body.Visuals, images, progress)
 	if err != nil {
 		emit(map[string]any{"error": err.Error()})
 		return
@@ -256,8 +269,9 @@ func (s *Server) generatePaperReading(ctx context.Context, key string, body gene
 		emit(map[string]any{"result": map[string]any{"saved": true, "kind": "visuals", "demoted": []string{}, "attempts": 1}, "done": true})
 		return
 	}
-	issues = append(issues, visualIssues...)
-	issues = append(issues, body.UnavailableVisuals...)
+	// Figure crops are optional context. A crop that cannot be attached or
+	// analyzed should not make an otherwise complete prose section partial;
+	// the shared figure gallery retains responsibility for those diagnostics.
 	old, _ := s.loadReadingEntry(ctx, key, body.Kind)
 	if old.Value != "" || old.Narrative != "" {
 		if err := s.saveReadingEntry(ctx, key, fmt.Sprintf("paperHistory:%s:%d", body.Kind, time.Now().UnixNano()), old); err != nil {
@@ -282,7 +296,7 @@ func (s *Server) generatePaperReading(ctx context.Context, key string, body gene
 			}
 		}
 		catalog, _ := json.Marshal(assigned)
-		prompt := ai.PaperSectionPrompt(body.Kind, title, material, string(catalog), entry.Narrative)
+		prompt := ai.PaperSectionPrompt(body.Kind, title, material, string(catalog), entry.Narrative, repository)
 		var value string
 		var sectionErr error
 		reused := false

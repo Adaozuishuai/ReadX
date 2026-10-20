@@ -41,6 +41,15 @@ function leeLayout(paragraphs: LeeParagraphs): PDFLayout {
       height: Math.max(0, block.box[3] - block.box[1]),
       fontSize: Math.max(8, (block.box[3] - block.box[1]) * 0.8),
     })),
+    visuals: (paragraphs.visuals ?? []).map((block) => ({
+      text: block.text,
+      x: block.box[0],
+      y: block.box[1],
+      width: Math.max(0, block.box[2] - block.box[0]),
+      height: Math.max(0, block.box[3] - block.box[1]),
+      kind: block.kind,
+      label: block.text || (block.kind === 'table' ? 'OCR 表格' : 'OCR 图片'),
+    })),
   };
 }
 

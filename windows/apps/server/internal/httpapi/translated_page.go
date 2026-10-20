@@ -621,6 +621,13 @@ type paragraphBlock struct {
 	Translatable bool       `json:"translatable"`
 }
 
+type visualLayoutBlock struct {
+	Index int        `json:"index"`
+	Kind  string     `json:"kind"`
+	Text  string     `json:"text"`
+	Box   [4]float64 `json:"box"`
+}
+
 // handleDocumentParagraphs 返回 Lee document.v1 归一化后的页面段落：
 // 阅读器的「段落识别」直接使用这套块与坐标，不再用 PDF.js 重新切段。
 func (s *Server) handleDocumentParagraphs(w http.ResponseWriter, r *http.Request) {
@@ -647,12 +654,17 @@ func (s *Server) handleDocumentParagraphs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !available || pageNumber > len(layout.Pages) {
-		writeJSON(w, http.StatusOK, map[string]any{"available": false, "page": pageNumber, "blocks": []paragraphBlock{}})
+		writeJSON(w, http.StatusOK, map[string]any{"available": false, "page": pageNumber, "blocks": []paragraphBlock{}, "visuals": []visualLayoutBlock{}})
 		return
 	}
 	entry := layout.Pages[pageNumber-1]
 	blocks := make([]paragraphBlock, 0, len(entry.Blocks))
+	visuals := make([]visualLayoutBlock, 0)
 	for index, block := range entry.Blocks {
+		if kind, ok := visualLayoutKind(block.Kind); ok {
+			visuals = append(visuals, visualLayoutBlock{Index: index, Kind: kind, Text: strings.TrimSpace(block.Text), Box: block.Box})
+			continue
+		}
 		text := strings.TrimSpace(block.Text)
 		if text == "" || nonParagraphKind(block.Kind) {
 			continue
@@ -665,8 +677,19 @@ func (s *Server) handleDocumentParagraphs(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"available": true, "page": pageNumber,
-		"width": entry.Width, "height": entry.Height, "blocks": blocks,
+		"width": entry.Width, "height": entry.Height, "blocks": blocks, "visuals": visuals,
 	})
+}
+
+func visualLayoutKind(kind string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "table", "table_body":
+		return "table", true
+	case "image", "figure", "chart":
+		return "image", true
+	default:
+		return "", false
+	}
 }
 
 // nonParagraphKind 排除公式、表格与图片块：它们没有可提问的正文段落。

@@ -160,6 +160,8 @@ export interface ReadingsResponse {
 export interface GenerateResponse {
   saved: boolean;
   kind: string;
+  skipped?: boolean;
+  message?: string;
   pruned: boolean;
   demoted: string[];
   validationError: string | null;
@@ -173,6 +175,7 @@ export interface GenerateProgress {
 
 export interface ChatChunk {
   meta?: { included: number; total: number; scope: string; unit?: string; provider?: string; model?: string; reasoningEffort?: string };
+  progress?: string;
   delta?: string;
   done?: boolean;
   text?: string;
@@ -255,6 +258,95 @@ export async function streamChat(
   if (!terminal) throw new ApiError('连接中断，回答未完成，未保存。', 502);
 }
 
+/** 使用已配置的助教模型分析 PPT 模板摘要，不附带论文正文。 */
+export async function streamPresentationTheme(summary: string, onChunk: (chunk: ChatChunk) => void, signal?: AbortSignal): Promise<void> {
+  const { apiBase, token } = bootstrap();
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${apiBase}/v1/ai/presentation-theme`, { method: 'POST', headers, body: JSON.stringify({ summary }), signal, credentials: 'omit' });
+  if (!response.ok) {
+    const text = await response.text();
+    let message = `HTTP ${response.status}`;
+    try { message = (JSON.parse(text) as ApiFailure).error || message; } catch { if (text) message = text.slice(0, 200); }
+    throw new ApiError(message, response.status);
+  }
+  if (!response.body) throw new ApiError('模板分析服务没有返回流式内容。', response.status);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let terminal = false;
+  const processLine = (raw: string) => {
+    const line = raw.trim();
+    if (!line.startsWith('data:')) return;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === '[DONE]') return;
+    try {
+      const chunk = JSON.parse(payload) as ChatChunk;
+      if (chunk.done || chunk.error) terminal = true;
+      onChunk(chunk);
+    } catch { /* Ignore malformed SSE frames; a missing terminal frame is reported below. */ }
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    lines.forEach(processLine);
+  }
+  processLine(buffer + decoder.decode());
+  if (!terminal) throw new ApiError('模板分析连接中断。', 502);
+}
+
+export interface PresentationPlanInput {
+  paperKey: string;
+  title: string;
+  authors: string[];
+  sections: { kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction'; label: string; content: string }[];
+  visuals: { id: string; kind: string; page: number; caption: string; section: string; insight?: string }[];
+  templateContext?: string;
+}
+
+/** Run the bundled baoyu-slide-deck skill through the configured AI provider. */
+export async function streamPresentationPlan(input: PresentationPlanInput, onChunk: (chunk: ChatChunk) => void, signal?: AbortSignal): Promise<void> {
+  const { apiBase, token } = bootstrap();
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${apiBase}/v1/ai/presentation-plan`, { method: 'POST', headers, body: JSON.stringify(input), signal, credentials: 'omit' });
+  if (!response.ok) {
+    const text = await response.text();
+    let message = `HTTP ${response.status}`;
+    try { message = (JSON.parse(text) as ApiFailure).error || message; } catch { if (text) message = text.slice(0, 200); }
+    throw new ApiError(message, response.status);
+  }
+  if (!response.body) throw new ApiError('baoyu-slide-deck 没有返回页面规划。', response.status);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let terminal = false;
+  const processLine = (raw: string) => {
+    const line = raw.trim();
+    if (!line.startsWith('data:')) return;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === '[DONE]') return;
+    try {
+      const chunk = JSON.parse(payload) as ChatChunk;
+      if (chunk.done || chunk.error) terminal = true;
+      onChunk(chunk);
+    } catch { /* Ignore malformed SSE frames; a missing terminal frame is reported below. */ }
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    lines.forEach(processLine);
+  }
+  processLine(buffer + decoder.decode());
+  if (!terminal) throw new ApiError('baoyu-slide-deck 页面规划连接中断。', 502);
+}
+
 export interface Annotation {
   locator?: AnnotationLocator;
   id: string;
@@ -287,12 +379,20 @@ export interface LeeParagraph {
   translatable: boolean;
 }
 
+export interface LeeVisualBlock {
+  index: number;
+  kind: 'table' | 'image';
+  text: string;
+  box: [number, number, number, number];
+}
+
 export interface LeeParagraphs {
   available: boolean;
   page: number;
   width: number;
   height: number;
   blocks: LeeParagraph[];
+  visuals: LeeVisualBlock[];
 }
 
 export interface TranslatedPDFResponse {

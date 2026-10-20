@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
 import type { DesktopUpdateStatus } from '@cbct/shared';
 import { statusLabel } from '@cbct/shared';
@@ -17,6 +18,42 @@ import { WorkspaceIcon, type WorkspaceIconName } from './WorkspaceIcon';
 
 type Layout = 'grid' | 'list' | 'table';
 type SortKey = 'title' | 'year' | 'status';
+
+const RELEASE_NOTE_TAGS = new Set(['p', 'br', 'hr', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'strong', 'b', 'em', 'i', 'code', 'pre', 'blockquote', 'a']);
+const RELEASE_NOTE_DROP_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'svg', 'math']);
+
+function releaseNoteNode(node: Node, key: string): ReactNode {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+  if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+  const element = node as HTMLElement;
+  const tag = element.tagName.toLowerCase();
+  if (RELEASE_NOTE_DROP_TAGS.has(tag)) return null;
+  const children = Array.from(element.childNodes).map((child, index) => releaseNoteNode(child, `${key}-${index}`));
+  if (!RELEASE_NOTE_TAGS.has(tag)) return children;
+  if (tag === 'br' || tag === 'hr') return createElement(tag, { key });
+  if (tag === 'a') {
+    const rawHref = element.getAttribute('href');
+    if (!rawHref) return createElement('span', { key }, children);
+    try {
+      const href = new URL(rawHref, window.location.href);
+      if (!['http:', 'https:', 'mailto:'].includes(href.protocol)) return createElement('span', { key }, children);
+      return createElement('a', { key, href: href.href, target: '_blank', rel: 'noopener noreferrer' }, children);
+    } catch {
+      return createElement('span', { key }, children);
+    }
+  }
+  return createElement(tag, { key }, children);
+}
+
+function ReleaseNotesContent({ value }: { value: string }) {
+  const source = value.replace(/\\(?=<\/?[a-z][^>]*>)/gi, '');
+  const template = document.createElement('template');
+  // Some release editors escape the angle brackets with a preceding backslash.
+  template.innerHTML = source;
+  const isHtml = /<\/?[a-z][^>]*>/i.test(source);
+  return <div className={`update-release-notes-content${isHtml ? ' is-html' : ''}`}>{Array.from(template.content.childNodes).map((node, index) => releaseNoteNode(node, `release-note-${index}`))}</div>;
+}
 
 /** 每日推荐的独立侧栏：开合与宽度都按用户上次的选择保存。 */
 const DAILY_STORAGE = 'cbct-v2-library-daily';
@@ -665,7 +702,7 @@ function UpdateControl() {
         </header>
         <section className="update-release-notes" aria-label="本次更新功能说明">
           <h3>本次更新</h3>
-          <pre>{status.releaseNotes || '此版本暂未附更新说明。'}</pre>
+          <ReleaseNotesContent value={status.releaseNotes || '此版本暂未附更新说明。'} />
         </section>
         <footer>
           <button type="button" className="update-later-button" onClick={postpone}>暂不更新</button>
