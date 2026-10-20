@@ -24,7 +24,6 @@ jobs:
           cache: npm
           cache-dependency-path: macos/package-lock.json
       - uses: astral-sh/setup-uv@v6
-      - run: node scripts/sync-platforms.mjs --check
       - name: Install and verify runtime
         working-directory: macos
         run: npm ci && npm run setup:runtime && npm run check:runtime
