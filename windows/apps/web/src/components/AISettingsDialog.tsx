@@ -13,7 +13,7 @@ import { ProviderLogo } from './providerLogos';
 interface ProviderPreset {
   id: string;
   name: string;
-  kind: 'openai' | 'anthropic' | 'codex' | 'claude' | 'kimi';
+  kind: 'openai' | 'anthropic' | 'codex' | 'claude' | 'kimi' | 'workbuddy';
   baseURL?: string;
   model?: string;
   local?: boolean;
@@ -38,6 +38,7 @@ const PRESETS: ProviderPreset[] = [
   { id: 'ollama', name: '本机 Ollama', kind: 'openai', baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5:7b', local: true },
   { id: 'lmstudio', name: '本机 LM Studio', kind: 'openai', baseURL: 'http://127.0.0.1:1234/v1', local: true },
   { id: 'codex', name: 'Codex Desktop / CLI', kind: 'codex', logo: 'openai' },
+    { id: 'workbuddy', name: 'WorkBuddy 国内版', kind: 'workbuddy', logo: 'workbuddy' },
   { id: 'claude-cli', name: 'Claude Code CLI', kind: 'claude', logo: 'claude' },
   { id: 'kimi-cli', name: 'Kimi Code CLI', kind: 'kimi', logo: 'kimi' },
   // 自定义放最后：它是个"空模板"，不是某家厂商。
@@ -84,6 +85,8 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   const [modelError, setModelError] = useState('');
   const [modelOpen, setModelOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState('');
+  const [workBuddyLoginURL, setWorkBuddyLoginURL] = useState('');
+  const [workBuddyLoginPending, setWorkBuddyLoginPending] = useState(false);
   const modelRequest = useRef(0);
   const saveLock = useRef(false);
   const testLock = useRef(false);
@@ -167,15 +170,19 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
     const sequence = ++modelRequest.current;
     setModels([]); setCatalog([]); setModelError(''); setModelOpen(false);
     setLoadingModels(false);
-    if (provider !== 'codex') return;
+    if (provider !== 'codex' && !(provider === 'workbuddy' && settings?.workbuddy?.authenticated)) return;
     let alive = true;
     setLoadingModels(true);
-    void api.listModels({ provider: 'codex', baseURL: '' }).then((result) => {
-      if (alive && sequence === modelRequest.current) { setModels(result.models); setCatalog(result.catalog ?? []); }
+    void api.listModels({ provider, baseURL: '' }).then((result) => {
+      if (alive && sequence === modelRequest.current) {
+        setModels(result.models);
+        setCatalog(result.catalog ?? []);
+        if (provider === 'workbuddy' && !settings?.model?.trim()) setModel(result.models[0] ?? '');
+      }
     }).catch((cause) => { if (alive && sequence === modelRequest.current) setModelError(cause instanceof Error ? cause.message : String(cause)); })
       .finally(() => { if (alive && sequence === modelRequest.current) setLoadingModels(false); });
     return () => { alive = false; ++modelRequest.current; };
-  }, [provider, baseURL]);
+  }, [provider, baseURL, settings?.workbuddy?.authenticated, settings?.model]);
   const selectedCodexModel = catalog.find((item) => model ? item.model === model || item.id === model : item.isDefault);
   const selectedCodexEfforts = reasoningOptionsForSelection(catalog, model, selectedCodexModel);
 
@@ -282,6 +289,38 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const startWorkBuddyLogin = async () => {
+    setNotice('');
+    try {
+      const result = await api.workbuddyLogin();
+      setWorkBuddyLoginURL(result.url);
+      setWorkBuddyLoginPending(true);
+      window.open(result.url, '_blank', 'noopener,noreferrer');
+      setNotice('已打开 WorkBuddy 国内版登录页；完成登录后 ReadX 会自动获取模型目录。');
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  useEffect(() => {
+    if (!workBuddyLoginPending) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void api.workbuddyLoginStatus().then(async (value) => {
+        if (!active) return;
+        if (value.login?.error) {
+          setNotice(value.login.error);
+          setWorkBuddyLoginPending(false);
+        } else if (value.authenticated && !value.login?.pending) {
+          setWorkBuddyLoginPending(false);
+          setSettings(await api.settings());
+          setNotice('WorkBuddy 国内版已登录，正在读取模型目录…');
+        }
+      }).catch(() => {});
+    }, 1200);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [workBuddyLoginPending]);
+
   return (
     <dialog
       className="app-dialog ai-settings"
@@ -321,6 +360,8 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
             <small>
               {provider === 'codex'
                 ? `${settings?.codex?.source === 'desktop' ? 'Codex Desktop' : '本机 Codex'} · ${settings?.codex?.authenticated ? '已登录' : settings?.cli.codex ? '待确认登录' : '未检测到'}`
+                : provider === 'workbuddy'
+                  ? `WorkBuddy 国内版 · ${settings?.workbuddy?.authenticated ? `已登录${settings.workbuddy.nickname ? `（${settings.workbuddy.nickname}）` : ''}` : '未登录'}`
                 : cli ? `本机 CLI · ${settings?.cli[provider] ? '已检测到' : '未检测到'}` : baseURL || '尚未填写地址'}
               {model ? ` · ${model}` : ''}
             </small>
@@ -383,6 +424,19 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
               )}
               {' '}调用在临时目录中进行，并关闭文档工具访问。
             </p>
+          </section>
+        ) : provider === 'workbuddy' ? (
+            <section className="ai-card">
+              <header><span className="ai-card-icon" aria-hidden="true">◉</span>连接 WorkBuddy 国内版</header>
+              <p className="ai-hint">使用腾讯国内版 CodeBuddy 账号登录，ReadX 会同步 WorkBuddy 国内版账号可用模型。登录令牌保存在本机，不需要填写 API Key。</p>
+            <div className="ai-ocr-actions">
+              {settings?.workbuddy?.authenticated ? <span className="ai-chip ok">已登录{settings.workbuddy.nickname ? ` · ${settings.workbuddy.nickname}` : ''}</span> : null}
+              <button type="button" className="ai-save-button" disabled={workBuddyLoginPending || busy} onClick={() => void startWorkBuddyLogin()}>
+                {workBuddyLoginPending ? '等待登录…' : settings?.workbuddy?.authenticated ? '重新登录' : '登录 WorkBuddy 国内版'}
+              </button>
+              {settings?.workbuddy?.authenticated ? <button type="button" className="ai-save-button" disabled={busy || workBuddyLoginPending} onClick={() => void api.workbuddyLogout().then(() => api.settings()).then(setSettings).then(() => { setModels([]); setNotice('已退出 WorkBuddy 国内版。'); })}>退出登录</button> : null}
+              {workBuddyLoginURL ? <a className="ai-hint" href={workBuddyLoginURL} target="_blank" rel="noreferrer">如果登录页没有自动打开，点击这里继续</a> : null}
+            </div>
           </section>
         ) : (
           <>
@@ -463,9 +517,9 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               className="ai-model-button"
-              disabled={busy || (cli && provider !== 'codex') || loadingModels}
+              disabled={busy || (cli && provider !== 'codex') || (provider === 'workbuddy' && !settings?.workbuddy?.authenticated) || loadingModels}
               onClick={() => void loadModels()}
-              title={provider === 'codex' ? '读取本机 Codex 模型和推理强度目录' : cli ? 'CLI 渠道使用它自己的默认模型' : '读取当前地址的可用模型'}
+                title={provider === 'codex' ? '读取本机 Codex 模型和推理强度目录' : provider === 'workbuddy' ? '读取已登录 WorkBuddy 国内版账号的模型目录' : cli ? 'CLI 渠道使用它自己的默认模型' : '读取当前地址的可用模型'}
             >
               {loadingModels ? '获取中…' : '获取模型列表'}
             </button>
@@ -523,7 +577,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
               ? modelError
               : models.length
                 ? `已获取 ${models.length} 个模型，点输入框右侧箭头或直接输入筛选。`
-                : '提问、翻译与精读生成共用这个渠道；不填则用服务端默认值。可先获取模型列表再挑选。'}
+                : provider === 'workbuddy' ? (settings?.workbuddy?.authenticated ? '点击「获取模型列表」同步当前 WorkBuddy 国内版账号可用的模型。' : '请先登录 WorkBuddy 国内版，再获取模型列表。') : '提问、翻译与精读生成共用这个渠道；不填则用服务端默认值。可先获取模型列表再挑选。'}
           </p>
         </section>
 
@@ -540,7 +594,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
           </header>
           <div className="ai-test-row">
             <p className="ai-hint">
-              {cli ? '使用本机已登录账户和当前模型配置确认连接。' : '测试前会保存当前输入的服务地址、模型与密钥。'}
+              {cli || provider === 'workbuddy' ? '使用已登录账户和当前模型配置确认连接。' : '测试前会保存当前输入的服务地址、模型与密钥。'}
             </p>
             <span className={`ai-chip${test.state === 'ok' ? ' ok' : test.state === 'fail' ? ' bad' : ''}`}>
               {test.state === 'testing' ? '正在测试…' : test.state === 'ok' ? '连接可用' : test.state === 'fail' ? '连接失败' : '待测试'}

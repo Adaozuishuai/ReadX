@@ -625,6 +625,7 @@ export interface AISettings {
   status: AIStatus;
   cli: Record<string, boolean>;
   codex?: { available: boolean; authenticated: boolean; source: string; message: string };
+  workbuddy?: { authenticated: boolean; nickname?: string; expiresAt?: number; login?: { state?: string; url?: string; pending: boolean; error?: string } };
 }
 export interface CodexModel {
   id: string;
@@ -868,6 +869,9 @@ export const api = {
   /** 读取当前地址可用的模型列表：Key 可传刚输入的（未保存也能先看），否则用该地址已保存的。 */
   listModels: (body: { provider: string; baseURL: string; apiKey?: string; refresh?: boolean }) =>
     request<{ models: string[]; catalog?: CodexModel[]; source?: string; notice?: string }>('/v1/ai/models', { method: 'POST', body }),
+  workbuddyLogin: () => request<{ state: string; url: string; pending: boolean }>('/v1/ai/workbuddy/login', { method: 'POST', body: {} }),
+  workbuddyLoginStatus: () => request<{ authenticated: boolean; nickname?: string; expiresAt?: number; login?: { state?: string; url?: string; pending: boolean; error?: string } }>('/v1/ai/workbuddy/login'),
+  workbuddyLogout: () => request<{ authenticated: boolean }>('/v1/ai/workbuddy/login', { method: 'DELETE' }),
   upload: uploadPublications,
   importURL: importRemotePublication,
   dailyRecommendations: (signal?: AbortSignal) => request<{ papers: DailyRecommendation[]; fetchedAt: string }>('/v1/discovery/daily', { signal }),

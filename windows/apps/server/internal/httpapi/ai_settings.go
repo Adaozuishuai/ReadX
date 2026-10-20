@@ -40,7 +40,7 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		if decodeJSON(w, r, &body) != nil {
 			return
 		}
-		if body.Provider != "openai" && body.Provider != "anthropic" && body.Provider != "codex" && body.Provider != "claude" && body.Provider != "kimi" {
+		if body.Provider != "openai" && body.Provider != "anthropic" && body.Provider != "codex" && body.Provider != "claude" && body.Provider != "kimi" && body.Provider != "workbuddy" {
 			writeError(w, 400, "不支持的 AI 接入方式")
 			return
 		}
@@ -110,7 +110,7 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, err.Error())
 			return
 		}
-		if !cfg.IsCLI() {
+		if !cfg.IsCLI() && cfg.ProviderName() != "workbuddy" {
 			check := cfg
 			check.APIKey = "validate"
 			if _, err := check.Endpoint(); err != nil {
@@ -152,7 +152,7 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg, _ := ai.LoadConfig(path)
-	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "reasoningEffort": cfg.ReasoningEffort, "codexFastMode": cfg.CodexFastMode, "translationPreparation": cfg.TranslationPreparation, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}, "codex": ai.CodexStatus(r.Context())})
+	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "reasoningEffort": cfg.ReasoningEffort, "codexFastMode": cfg.CodexFastMode, "translationPreparation": cfg.TranslationPreparation, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}, "codex": ai.CodexStatus(r.Context()), "workbuddy": s.workBuddyStatus(cfg)})
 }
 
 // handleAIModels 读取当前地址可用的模型列表：OpenAI 兼容与 Anthropic 都提供 GET /models。
@@ -170,6 +170,20 @@ func (s *Server) handleAIModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	provider := strings.TrimSpace(body.Provider)
+	if provider == "workbuddy" {
+		cfg, err := s.aiConfig()
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		models, err := ai.WorkBuddyModels(r.Context(), cfg)
+		if err != nil {
+			writeError(w, 502, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"models": models, "source": "workbuddy", "notice": "模型目录来自 WorkBuddy 客户端内部接口"})
+		return
+	}
 	if provider == "codex" {
 		cfg, _ := s.aiConfig()
 		models, err := cfg.CodexModels(r.Context(), body.Refresh)

@@ -33,6 +33,8 @@ const staticCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 type Server struct {
 	downloadPublication func(context.Context, string, int64, func(int64, int64)) ([]byte, string, error)
 	settingsMu          sync.Mutex
+	workBuddyLoginMu    sync.Mutex
+	workBuddyLogin      workBuddyLoginStatus
 	appStateMu          sync.Mutex
 	// graphMu 只保护「读缓存 → 调 180s 模型 → 写缓存」的短窗口：模型调用期间不持锁，
 	// 否则一次抽取会把图谱读写与其它 app_state 功能一起卡死。
@@ -91,6 +93,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /v1/ai/settings", withAuth(s.handleAISettings))
 	mux.Handle("POST /v1/ai/test", withAuth(s.handleAIProbe))
 	mux.Handle("POST /v1/ai/models", withAuth(s.handleAIModels))
+	mux.Handle("POST /v1/ai/workbuddy/login", withAuth(s.handleWorkBuddyLogin))
+	mux.Handle("GET /v1/ai/workbuddy/login", withAuth(s.handleWorkBuddyLoginStatus))
+	mux.Handle("DELETE /v1/ai/workbuddy/login", withAuth(s.handleWorkBuddyLogout))
 	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
 	mux.Handle("POST /v1/ai/presentation-theme", withAuth(s.handleAIPresentationTheme))
 	mux.Handle("POST /v1/ai/presentation-plan", withAuth(s.handleAIPresentationPlan))

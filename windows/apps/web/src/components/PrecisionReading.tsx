@@ -17,7 +17,7 @@ import { NarrativeReading } from './NarrativeReading';
 import { ReadingVisuals } from './ReadingVisuals';
 import type { ReactNode } from 'react';
 
-const LABELS: Record<string, string> = { sections: '章节', fields: '证据条目', title: '标题', k: '要点', v: '事实', page: 'Page', excerpt: '逐字依据', formulas: '公式', latex: 'LaTeX', explanation: '解释与条件', dataset: '数据集', acquisition: '采集几何', training: '训练', loss: '损失', metrics: '指标', baselines: '基线', tables: '结果表', caption: '表题', header: '表头', protocol: '协议', columns: '指标列', rows: '结果行', method: '方法', cells: '数值', valueText: '原始数值', uncertaintyText: '误差', stability: '稳定性', ablation: '消融', generalization: '泛化', efficiency: '效率', statistics: '统计报告', missing: '缺失信息', resources: '代码、数据与权重', environment: '环境', cost: '计算成本', risks: '风险', finding: '论文依据', assessment: '分析与推断', action: '核对行动', interpretation: '有条件的解读', evidence: '证据' };
+const LABELS: Record<string, string> = { sections: '章节', fields: '证据条目', title: '标题', k: '要点', v: '事实', page: 'Page', excerpt: '逐字依据', formulas: '公式', latex: 'LaTeX', explanation: '解释与条件', dataset: '研究对象与数据', acquisition: '研究设计与条件', training: '实施流程', loss: '分析方法', metrics: '评价标准', baselines: '对照或基线', tables: '结果表', caption: '表题', header: '表头', protocol: '协议', columns: '指标列', rows: '结果行', method: '方法', cells: '数值', valueText: '原始数值', uncertaintyText: '误差', stability: '稳健性', ablation: '组件或分组分析', generalization: '外部验证与泛化', efficiency: '效率与成本', statistics: '统计报告', missing: '缺失信息', resources: '代码、数据与材料', environment: '环境', cost: '资源成本', risks: '风险', finding: '论文依据', assessment: '分析与推断', action: '核对行动', interpretation: '有条件的解读', evidence: '证据' };
 
 function markdownValue(value: unknown, depth = 0): string {
   if (value == null) return '论文未说明';
@@ -81,8 +81,8 @@ export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pd
     const raw = (parsed.ok ? parsed.value : {}) as Record<string, unknown>;
     if (active === 'motivation' || active === 'method') sectionNames = Array.isArray(raw.sections) ? raw.sections.filter((s) => s && typeof s.title === 'string' && Array.isArray(s.fields) && s.fields.every((f: { k?: unknown; v?: unknown } | null) => f && typeof f.k === 'string' && typeof f.v === 'string')).map((s: { title: string }) => s.title) : [];
     else if (active === 'experiment') sectionNames = parseExperimentEntries(entry?.value || '')?.filter((g) => g.group !== '结果').map((g) => g.group) ?? [];
-    else if (active === 'results' && Array.isArray(raw.tables)) sectionNames = ['结果表', '稳定性', '消融实验', '泛化能力', '效率', '统计报告', '缺失与待核对'];
-    else if (active === 'reproduction' && Array.isArray(raw.resources)) sectionNames = ['代码、数据与权重', '环境与依赖', '训练成本', '实现缺失', '风险与评测协议'];
+    else if (active === 'results' && Array.isArray(raw.tables)) sectionNames = ['结果表', '稳健性', '组件或分组分析', '外部验证与泛化', '效率与成本', '统计报告', '缺失与待核对'];
+    else if (active === 'reproduction' && Array.isArray(raw.resources)) sectionNames = ['代码、数据与材料', '环境与依赖', '资源成本', '实现缺失', '风险与评估协议'];
   } catch { /* Older prose receives an illustrated supplement below it. */ }
   const renderVisuals = (section: string) => <ReadingVisuals items={inlineItems.filter((item) => item.section === section)} visuals={visuals} onCite={onCite} />;
   const unplacedSections = entry?.narrative ? [] : [...new Set(inlineItems.filter((item) => !sectionNames.includes(item.section)).map((item) => item.section))];

@@ -194,12 +194,12 @@ func GroupsOf(x ExperimentExtraction) []struct {
 		Label  string
 		Fields []Field
 	}{
-		{"dataset", "数据集", x.Dataset},
-		{"acquisition", "采集与几何", x.Acquisition},
-		{"training", "训练", x.Training},
-		{"loss", "损失", x.Loss},
-		{"baselines", "对比基线", x.Baselines},
-		{"metrics", "评价指标", x.Metrics},
+		{"dataset", "研究对象与数据", x.Dataset},
+		{"acquisition", "研究设计与条件", x.Acquisition},
+		{"training", "实施流程", x.Training},
+		{"loss", "分析方法", x.Loss},
+		{"baselines", "对照或基线", x.Baselines},
+		{"metrics", "评价标准", x.Metrics},
 		{"results", "结果", x.Results},
 	}
 }

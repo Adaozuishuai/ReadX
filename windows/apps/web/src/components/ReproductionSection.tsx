@@ -6,7 +6,7 @@ import { api } from '../api/client';
 const GROUPS: { id: keyof ReproductionAnalysis; label: string }[] = [
   { id: 'resources', label: '资源 · 数据 / 代码 / 权重' },
   { id: 'environment', label: '环境 · 依赖 / 特殊算子' },
-  { id: 'cost', label: '训练成本 · 时间 / 显存' },
+  { id: 'cost', label: '资源成本 · 时间 / 设备 / 材料' },
   { id: 'missing', label: '关键缺失 · 几何 / 预处理 / 参数' },
   { id: 'risks', label: '风险 · 实现 / 评测协议' },
 ];
