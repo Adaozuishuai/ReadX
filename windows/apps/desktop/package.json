@@ -51,6 +51,7 @@
     ],
     "win": {
       "icon": "icon.ico",
+      "signAndEditExecutable": false,
       "signExecutable": false,
       "target": [
         {
