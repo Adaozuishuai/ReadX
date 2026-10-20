@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags:
+      - 'v*'
       - 'macos-v*'
 
 permissions:
@@ -38,21 +39,35 @@ jobs:
           path: |
             macos/release/*.dmg
             macos/release/*.zip
+            macos/release/*.blockmap
+            macos/release/latest-mac.yml
           retention-days: 7
 
       - name: Upload DMG to the existing GitHub Release
-        if: startsWith(github.ref, 'refs/tags/macos-v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/macos-v')
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          release_tag="${GITHUB_REF_NAME#macos-}"
-          gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null
+          release_tag="$GITHUB_REF_NAME"
+          if [[ "$release_tag" == macos-v* ]]; then
+            release_tag="${release_tag#macos-}"
+          fi
+          for attempt in {1..12}; do
+            if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              break
+            fi
+            if ((attempt == 12)); then
+              echo "Release $release_tag was not created after waiting for the release workflow."
+              exit 1
+            fi
+            sleep 5
+          done
           shopt -s nullglob
-          dmg_files=(macos/release/*.dmg)
-          if ((${#dmg_files[@]} != 1)); then
-            echo "Expected exactly one DMG, found ${#dmg_files[@]}"
+          release_files=(macos/release/*.dmg macos/release/*.zip macos/release/*.blockmap macos/release/latest-mac.yml)
+          if ((${#release_files[@]} < 4)); then
+            echo "Expected DMG, ZIP, blockmaps, and latest-mac.yml; found ${#release_files[@]} files"
             exit 1
           fi
-          gh release upload "$release_tag" "${dmg_files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$release_tag" "${release_files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
