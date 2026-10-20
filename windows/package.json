@@ -17,6 +17,7 @@
     "pdf-lib": "1.17.1"
   },
   "scripts": {
+    "postinstall": "patch-package",
     "build": "npm run build -w @cbct/shared && npm run build -w @cbct/web && npm run build -w @cbct/desktop && node scripts/build-server.mjs",
     "build:release": "npm run build && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-release.ps1 && npm run package:windows -w @cbct/desktop",
     "build:release:publish": "npm run build && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-release.ps1 && npm exec --workspace=@cbct/desktop -- electron-builder --win nsis --x64 --publish always",
@@ -34,6 +35,7 @@
     "electron-winstaller@5.4.0": true
   },
   "devDependencies": {
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "patch-package": "^8.0.1"
   }
 }

@@ -61,9 +61,15 @@ jobs:
             throw "Unable to create or update release $env:GITHUB_REF_NAME."
           }
 
-      - name: Build self-contained installer
+      - name: Build application and release resources
         working-directory: windows
-        run: npm run build:release:publish
+        run: |
+          npm run build
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-release.ps1
+
+      - name: Package and upload Windows installer
+        working-directory: windows
+        run: npm exec --workspace=@cbct/desktop -- electron-builder --win nsis --x64 --publish always
         env:
           GH_TOKEN: ${{ github.token }}
 
