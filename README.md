@@ -4,7 +4,10 @@
 
 <h1 align="center">ReadX</h1>
 <p align="center"><strong>Research papers, read with context.</strong><br>把论文读懂，也把图表、译文与研究思路连起来。</p>
-<p align="center"><a href="docs/media/ReadX-宣传片.mp4">▶ 观看 ReadX 产品介绍视频</a></p>
+<p align="center">
+  <a href="docs/media/ReadX-宣传片-绿色版.mp4"><img src="docs/media/ReadX-宣传片-绿色版-封面.png" alt="ReadX 产品介绍视频封面，点击播放" width="720"></a><br>
+  <a href="docs/media/ReadX-宣传片-绿色版.mp4">▶ 观看 / 下载 ReadX 产品介绍视频（MP4）</a>
+</p>
 
 <p align="center">
   <a href="https://github.com/Leechion/ReadX/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Leechion/ReadX?display_name=tag&style=flat-square&color=276653"></a>
