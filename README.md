@@ -128,6 +128,17 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 
 从[最新 Release](https://github.com/Leechion/ReadX/releases/latest)下载 Windows 或 macOS 安装包。启动后，在 **AI 助手设置**中选择模型服务并配置连接；Codex Desktop 用户可先登录 Codex，再从 ReadX 中连接。
 
+#### macOS 首次启动
+
+将 `ReadX.app` 拖到“应用程序”文件夹后，如果 macOS 拦截首次启动，在“终端”中依次执行：
+
+```sh
+sudo spctl --master-disable
+xattr -cr /Applications/ReadX.app
+```
+
+第一条命令会全局关闭 Gatekeeper，降低 macOS 对应用的安全检查。请只对从可信来源下载并确认过的 ReadX 安装包执行；首次打开后，可用 `sudo spctl --master-enable` 重新启用 Gatekeeper。`sudo` 提示输入密码时，终端不会显示输入内容。
+
 详细的安装、AI 配置、数据存放位置和故障排查说明见 [Windows 使用文档](windows/README.md)；macOS 构建说明见 [macOS 文档](macos/README.md)。
 
 ### 隐私说明

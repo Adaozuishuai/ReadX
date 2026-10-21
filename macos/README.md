@@ -81,6 +81,17 @@ node scripts/packaged-smoke.mjs --check-updates
 
 本机未签名构建不代表通过 Gatekeeper 或公证。仓库的 `build-macos.yml` 在 macOS runner 上构建 DMG、ZIP、blockmap 和 `latest-mac.yml`，并在推送 `macos-vX.Y.Z` 标签后上传到同版本的 GitHub Release；Windows 安装包由 `vX.Y.Z` 标签对应的 Release workflow 构建。自动更新是否可用还取决于 macOS 对未签名应用的安全策略；首次启动或更新若被系统拦截，请从 Release 下载 DMG 手动安装。
 
+### 首次启动被 macOS 拦截
+
+先将 `ReadX.app` 拖到“应用程序”文件夹，再在“终端”中依次执行：
+
+```sh
+sudo spctl --master-disable
+xattr -cr /Applications/ReadX.app
+```
+
+第一条命令会全局关闭 Gatekeeper，降低系统对所有应用的安全检查。请仅对可信来源且已确认的 ReadX 安装包执行；打开 ReadX 后，建议运行 `sudo spctl --master-enable` 恢复 Gatekeeper。输入 `sudo` 密码时，终端不会显示字符。
+
 打包测试使用独立书库与 Electron 配置目录，不操作日常书库。CI 使用完整 ZIP 打包，拒绝缺少 `app-update.yml` 的应用目录。
 
 本机构建不会创建线上更新。更新源缺少 macOS 更新清单时会尝试读取最新公开发布版本，并提示该平台暂不可更新；不能据此判断当前版本已是最新。更新测试还覆盖并发、重试、窗口重开、超时、安装前置条件，以及 Mac 下载完成后等待原生更新器校验的顺序。
