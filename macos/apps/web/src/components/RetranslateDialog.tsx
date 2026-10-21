@@ -38,14 +38,9 @@ export function RetranslateDialog({
         const fileTitle = (document.title || 'paper').replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ').trim().slice(0, 140) || 'paper';
         const file = new File([data], `${fileTitle}.pdf`, { type: 'application/pdf' });
         setCoverFile(file);
-        const result = await api.upload([file], request.signal, [
-          { title: '', author: '', doi: '', arxiv: '', firstPage: '' },
-        ], (event) => {
-          if (event.progress?.jobKey) setJobKey(event.progress.jobKey);
-        });
-        const imported = result.results[0];
-        if (!imported) throw new Error('服务未返回重新翻译结果，请刷新书库确认');
-        if (imported.error) setError(imported.error);
+        const result = await api.retranslate(document.key, request.signal);
+        if (request.signal.aborted) return;
+        setJobKey(result.jobKey);
         setBusy(false);
         onComplete();
       } catch (cause) {
@@ -64,6 +59,7 @@ export function RetranslateDialog({
   return (
     <DocumentJobDialog
       document={document}
+      fileKey={document.key}
       jobKey={jobKey}
       coverFile={coverFile}
       importing={busy}

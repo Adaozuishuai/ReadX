@@ -60,6 +60,7 @@ function stageUnit(stage: JobStage | undefined) {
  */
 export function DocumentJobDialog({
   document,
+  fileKey,
   jobKey,
   coverFile,
   importing = false,
@@ -69,6 +70,8 @@ export function DocumentJobDialog({
   onOpenReader,
 }: {
   document: JobDocument;
+  /** Original library key when jobKey identifies a retranslation attempt. */
+  fileKey?: string;
   /** 导入过程中文档尚未入库：用服务端提前返回的任务键轮询任务。 */
   jobKey?: string | null;
   /** 导入中的封面直接用本地文件渲染，避免请求还不存在的文档文件。 */
@@ -80,6 +83,7 @@ export function DocumentJobDialog({
   onOpenReader: () => void;
 }) {
   const effectiveKey = pending && !jobKey ? '' : jobKey || document.key;
+  const assetKey = fileKey || effectiveKey;
   const dialog = useRef<HTMLDialogElement>(null);
   const [tab, setTab] = useState<Tab>('progress');
   const [job, setJob] = useState<DocumentJob | null>(null);
@@ -126,9 +130,9 @@ export function DocumentJobDialog({
     let cancelled = false;
     setCover('');
     if (document.format === 'epub') return;
-    if (!coverFile && !effectiveKey) return;
+    if (!coverFile && !assetKey) return;
     void (async () => {
-      const data = coverFile ? await coverFile.arrayBuffer() : await api.file(effectiveKey);
+      const data = coverFile ? await coverFile.arrayBuffer() : await api.file(assetKey);
       if (cancelled) return;
       const pdf = await getDocument({ data: new Uint8Array(data) }).promise;
       const page = await pdf.getPage(1);
@@ -151,7 +155,7 @@ export function DocumentJobDialog({
     return () => {
       cancelled = true;
     };
-  }, [coverFile, effectiveKey, document.format]);
+  }, [coverFile, assetKey, document.format]);
 
   const copyKey = async () => {
     if (!effectiveKey) return;
@@ -176,10 +180,10 @@ export function DocumentJobDialog({
   };
 
   const downloadOriginal = async () => {
-    if (!effectiveKey) return;
+    if (!assetKey) return;
     setNotice('');
     try {
-      const data = await api.file(effectiveKey);
+      const data = await api.file(assetKey);
       const epub = document.format === 'epub';
       download(new Blob([data], { type: epub ? 'application/epub+zip' : 'application/pdf' }), `${effectiveKey}.${epub ? 'epub' : 'pdf'}`);
     } catch (error) {
@@ -188,10 +192,10 @@ export function DocumentJobDialog({
   };
 
   const downloadTranslated = async () => {
-    if (!effectiveKey) return;
+    if (!assetKey) return;
     setNotice('');
     try {
-      download(await api.downloadTranslatedPDF(effectiveKey), `${effectiveKey}-translated.pdf`);
+      download(await api.downloadTranslatedPDF(assetKey), `${assetKey}-translated.pdf`);
     } catch {
       setNotice('还没有生成译文 PDF：先在阅读器里“导出译文 PDF”。');
     }

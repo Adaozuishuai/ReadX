@@ -219,7 +219,7 @@ func (s *Server) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if _, err := s.recalculateDocumentStatus(r.Context(), key); err != nil {
-		writeError(w, http.StatusInternalServerError, "更新阅读状态失败: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "刷新阅读状态失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, item)
@@ -304,13 +304,12 @@ func (s *Server) handleAnnotationDelete(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "非法批注 id: "+err.Error())
 		return
 	}
-	var documentID string
-	if err := s.handle.QueryRowContext(r.Context(), `SELECT document_id FROM annotations WHERE id = ?`, id).Scan(&documentID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "没有这条批注")
-		} else {
-			writeError(w, http.StatusInternalServerError, "读取批注文档失败: "+err.Error())
-		}
+	var key string
+	if err := s.handle.QueryRowContext(r.Context(), `SELECT document_id FROM annotations WHERE id=?`, id).Scan(&key); errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "没有这条批注")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取批注文档失败: "+err.Error())
 		return
 	}
 	result, err := s.handle.ExecContext(r.Context(), `DELETE FROM annotations WHERE id = ?`, id)
@@ -322,8 +321,8 @@ func (s *Server) handleAnnotationDelete(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "没有这条批注")
 		return
 	}
-	if _, err := s.recalculateDocumentStatus(r.Context(), documentID); err != nil {
-		writeError(w, http.StatusInternalServerError, "更新阅读状态失败: "+err.Error())
+	if _, err := s.recalculateDocumentStatus(r.Context(), key); err != nil {
+		writeError(w, http.StatusInternalServerError, "刷新阅读状态失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})

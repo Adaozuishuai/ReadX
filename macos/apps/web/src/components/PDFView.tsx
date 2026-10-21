@@ -112,9 +112,27 @@ export function usePDF(key: string | null, translated = false) {
     setIndexing('');
     void (async () => {
       try {
-        const data = translated
-          ? await api.translatedFile(key, controller.signal)
-          : await api.file(key, controller.signal);
+        let data!: ArrayBuffer;
+        if (translated) {
+          // Import writes translated pages before assembling the final PDF.
+          // Keep checking so a reader opened mid-import switches to the complete
+          // document as soon as LeePDF finishes its render stage.
+          while (!controller.signal.aborted) {
+            try {
+              data = await api.translatedFile(key, controller.signal);
+              break;
+            } catch {
+              if (controller.signal.aborted) return;
+              await new Promise<void>((resolve) => {
+                const timer = window.setTimeout(resolve, 2500);
+                controller.signal.addEventListener('abort', () => { window.clearTimeout(timer); resolve(); }, { once: true });
+              });
+            }
+          }
+          if (controller.signal.aborted) return;
+        } else {
+          data = await api.file(key, controller.signal);
+        }
         if (controller.signal.aborted) return;
         task = getDocument({
           data,
@@ -617,7 +635,16 @@ export function PDFPage({
                   width: visual.width / paragraphLayout.width,
                   height: visual.height / paragraphLayout.height,
                 };
-                onSelect({ annotation: { page, quote: visual.text.trim() || '公式', kind: 'highlight', locator: { kind: 'pdf', rects: [rect] } }, top: event.clientY, left: event.clientX });
+                onSelect({
+                  annotation: {
+                    page,
+                    quote: visual.text.trim() || '公式',
+                    kind: 'highlight',
+                    locator: { kind: 'pdf', rects: [rect] },
+                  },
+                  top: event.clientY,
+                  left: event.clientX,
+                });
               }
               return;
             }

@@ -408,6 +408,16 @@ export interface TranslatedPDFResponse {
   download: string;
 }
 
+export interface TranslationPreview {
+  available: boolean;
+  page: number;
+  width?: number;
+  height?: number;
+  translatedBlocks?: number;
+  totalBlocks?: number;
+  blocks: { source: string; target: string; box: [number, number, number, number] }[];
+}
+
 export interface RenderStatus {
   available: boolean;
   error: string;
@@ -626,6 +636,7 @@ export interface AISettings {
   status: AIStatus;
   cli: Record<string, boolean>;
   codex?: { available: boolean; authenticated: boolean; source: string; message: string };
+  workbuddy?: { authenticated: boolean; nickname?: string; expiresAt?: number; login?: { state?: string; url?: string; pending: boolean; error?: string } };
 }
 export interface CodexModel {
   id: string;
@@ -869,6 +880,9 @@ export const api = {
   /** 读取当前地址可用的模型列表：Key 可传刚输入的（未保存也能先看），否则用该地址已保存的。 */
   listModels: (body: { provider: string; baseURL: string; apiKey?: string; refresh?: boolean }) =>
     request<{ models: string[]; catalog?: CodexModel[]; source?: string; notice?: string }>('/v1/ai/models', { method: 'POST', body }),
+  workbuddyLogin: () => request<{ state: string; url: string; pending: boolean }>('/v1/ai/workbuddy/login', { method: 'POST', body: {} }),
+  workbuddyLoginStatus: () => request<{ authenticated: boolean; nickname?: string; expiresAt?: number; login?: { state?: string; url?: string; pending: boolean; error?: string } }>('/v1/ai/workbuddy/login'),
+  workbuddyLogout: () => request<{ authenticated: boolean }>('/v1/ai/workbuddy/login', { method: 'DELETE' }),
   upload: uploadPublications,
   importURL: importRemotePublication,
   dailyRecommendations: (signal?: AbortSignal) => request<{ papers: DailyRecommendation[]; fetchedAt: string }>('/v1/discovery/daily', { signal }),
@@ -946,6 +960,16 @@ export const api = {
     request<LeeParagraphs>(
       `/v1/documents/${encodeURIComponent(key)}/pages/${page}/paragraphs`,
       { signal },
+    ),
+  translationPreview: (key: string, page: number, signal?: AbortSignal) =>
+    request<TranslationPreview>(
+      `/v1/documents/${encodeURIComponent(key)}/pages/${page}/translation-preview`,
+      { signal },
+    ),
+  retranslate: (key: string, signal?: AbortSignal) =>
+    request<{ jobKey: string; status: string }>(
+      `/v1/documents/${encodeURIComponent(key)}/retranslate`,
+      { method: 'POST', signal },
     ),
   section: (key: string, index: number, signal?: AbortSignal) =>
     request<EPUBSection>(
@@ -1187,7 +1211,7 @@ export const api = {
   documentsMeta: (signal?: AbortSignal) =>
     request<DocumentMetaResponse>('/v1/documents-meta', { signal }),
   emptyTrash: (keys: string[]) =>
-    request<{ deletedKeys: string[]; filesPreserved: boolean }>('/v1/trash/empty', {
+    request<{ deletedKeys: string[]; libraryCopiesRemoved: number; originalFilesPreserved: boolean }>('/v1/trash/empty', {
       method: 'POST',
       body: { keys },
     }),

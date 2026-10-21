@@ -439,7 +439,7 @@ export function LibraryScreen({
         <div className="library-content">
           {arxivProgress ? <p role="status" className="mb-2 rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">{arxivProgress}</p> : null}
           {arxivSummary ? <p role="status" className="mb-2 rounded-md bg-surface-sunk px-3 py-2 text-xs text-ink-soft">{arxivSummary}</p> : null}
-          {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空仅移除书库条目和关联阅读数据，所有 PDF / EPUB 文件均保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
+          {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空会删除 library 文件夹中未被其他论文引用的导入副本，原始位置文件保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
           {phase.kind === 'ready' && view !== 'trash' ? (
             <div className="library-metrics" aria-label="当前列表概览">
               <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="file" /></span><strong>{documents.length}</strong><span>当前文献</span></div>

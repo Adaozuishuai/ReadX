@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestTrashEmptyPreservesAllPaperFiles(t *testing.T) {
+func TestTrashEmptyRemovesLibraryCopyAndPreservesOriginalAndActiveFiles(t *testing.T) {
 	bundle, paths := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
 	original := filepath.Join(t.TempDir(), "original-paper.pdf")
@@ -24,7 +24,8 @@ func TestTrashEmptyPreservesAllPaperFiles(t *testing.T) {
 	importedKey := result.Document.Key
 	copyPath := filepath.Join(paths.LibraryDir(), importedKey+".pdf")
 	files := map[string]string{}
-	for _, name := range []string{original, copyPath, filepath.Join(paths.LibraryDir(), "2209.14540.pdf"), paths.TextCacheFile("2209.14540"), paths.ReadingFile("2209.14540")} {
+	activeCopy := filepath.Join(paths.LibraryDir(), "2209.14540.pdf")
+	for _, name := range []string{original, activeCopy, paths.TextCacheFile("2209.14540"), paths.ReadingFile("2209.14540")} {
 		body, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -62,8 +63,11 @@ func TestTrashEmptyPreservesAllPaperFiles(t *testing.T) {
 	}
 	requestBody, _ := json.Marshal(map[string]any{"keys": []string{"2209.14540", importedKey, importedKey}})
 	res, response := post(t, bundle, http.MethodPost, "/v1/trash/empty", string(requestBody))
-	if res.StatusCode != 200 || response["filesPreserved"] != true || len(response["deletedKeys"].([]any)) != 2 {
+	if res.StatusCode != 200 || response["originalFilesPreserved"] != true || response["libraryCopiesRemoved"] != float64(1) || len(response["deletedKeys"].([]any)) != 2 {
 		t.Fatalf("clear failed: %d %v", res.StatusCode, response)
+	}
+	if _, err := os.Stat(copyPath); !os.IsNotExist(err) {
+		t.Fatalf("imported library copy should be removed: %v", err)
 	}
 	for _, table := range []string{"document_pages", "readings", "annotations", "translations", "document_sections", "reading_locations"} {
 		var count int
