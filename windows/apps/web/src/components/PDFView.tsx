@@ -112,9 +112,27 @@ export function usePDF(key: string | null, translated = false) {
     setIndexing('');
     void (async () => {
       try {
-        const data = translated
-          ? await api.translatedFile(key, controller.signal)
-          : await api.file(key, controller.signal);
+        let data!: ArrayBuffer;
+        if (translated) {
+          // Import writes translated pages before assembling the final PDF.
+          // Keep checking so a reader opened mid-import switches to the complete
+          // document as soon as LeePDF finishes its render stage.
+          while (!controller.signal.aborted) {
+            try {
+              data = await api.translatedFile(key, controller.signal);
+              break;
+            } catch {
+              if (controller.signal.aborted) return;
+              await new Promise<void>((resolve) => {
+                const timer = window.setTimeout(resolve, 2500);
+                controller.signal.addEventListener('abort', () => { window.clearTimeout(timer); resolve(); }, { once: true });
+              });
+            }
+          }
+          if (controller.signal.aborted) return;
+        } else {
+          data = await api.file(key, controller.signal);
+        }
         if (controller.signal.aborted) return;
         task = getDocument({
           data,
@@ -221,6 +239,7 @@ export function PDFDocumentView({
   layout,
   paragraphMode = false,
   onParagraph,
+  onAnnotationClick,
   navigationRequest,
 }: {
   document: PDFDocumentProxy;
@@ -233,6 +252,7 @@ export function PDFDocumentView({
   layout?: PDFLayout | null;
   paragraphMode?: boolean;
   onParagraph?: (paragraph: SelectedParagraph) => void;
+  onAnnotationClick?: (annotation: Annotation, position: { top: number; left: number }) => void;
   navigationRequest?: { page: number; y?: number; viewportOffset?: number; nonce: number };
 }) {
   const root = useRef<HTMLDivElement>(null);
@@ -361,6 +381,7 @@ export function PDFDocumentView({
                   layout={pageNumber === page ? layout : null}
                   paragraphMode={paragraphMode}
                   onParagraph={onParagraph}
+                  onAnnotationClick={onAnnotationClick}
                   continuousPage
                   scrollRoot={scrollRoot}
                   zoomLevel={zoom}
@@ -384,6 +405,7 @@ export function PDFPage({
   layout,
   paragraphMode = false,
   onParagraph,
+  onAnnotationClick,
   continuousPage = false,
   scrollRoot,
   zoomLevel,
@@ -397,6 +419,7 @@ export function PDFPage({
   layout?: PDFLayout | null;
   paragraphMode?: boolean;
   onParagraph?: (paragraph: SelectedParagraph) => void;
+  onAnnotationClick?: (annotation: Annotation, position: { top: number; left: number }) => void;
   continuousPage?: boolean;
   scrollRoot?: HTMLElement | null;
   zoomLevel?: number;
@@ -589,12 +612,42 @@ export function PDFPage({
           }}
           onMouseLeave={() => setHoveredRegion(null)}
           onClick={(event) => {
-            if (!paragraphMode || !paragraphLayout || event.detail > 1) return;
+            if (event.detail > 1) return;
             const selection = window.getSelection();
             if (selection && !selection.isCollapsed && selection.rangeCount && event.currentTarget.contains(selection.getRangeAt(0).commonAncestorContainer)) return;
             const bounds = event.currentTarget.getBoundingClientRect();
             const x = (event.clientX - bounds.left) / bounds.width, y = (event.clientY - bounds.top) / bounds.height;
-            if (visualAt(paragraphLayout, x, y) !== null) return;
+            const highlighted = annotations.filter((item) => item.page === page && item.kind === 'highlight').findLast((item) =>
+              (item.locator?.rects ?? []).some((rect) => x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height),
+            );
+            if (highlighted) {
+              onAnnotationClick?.(highlighted, { top: event.clientY, left: event.clientX });
+              return;
+            }
+            if (!paragraphMode || !paragraphLayout) return;
+            const visualIndex = visualAt(paragraphLayout, x, y);
+            if (visualIndex !== null) {
+              const visual = paragraphLayout.visuals?.[visualIndex];
+              if (visual?.kind === 'formula') {
+                const rect = {
+                  x: visual.x / paragraphLayout.width,
+                  y: visual.y / paragraphLayout.height,
+                  width: visual.width / paragraphLayout.width,
+                  height: visual.height / paragraphLayout.height,
+                };
+                onSelect({
+                  annotation: {
+                    page,
+                    quote: visual.text.trim() || '公式',
+                    kind: 'highlight',
+                    locator: { kind: 'pdf', rects: [rect] },
+                  },
+                  top: event.clientY,
+                  left: event.clientX,
+                });
+              }
+              return;
+            }
             const index = paragraphAt(paragraphLayout, x, y);
             if (index === null) return;
             const block = paragraphLayout.blocks[index]!;
@@ -613,33 +666,33 @@ export function PDFPage({
           {paragraphMode && paragraphLayout && hoveredRegion !== null && (() => {
             const isVisual = hoveredRegion.kind === 'visual';
             const block = isVisual ? paragraphLayout.visuals?.[hoveredRegion.index] : paragraphLayout.blocks[hoveredRegion.index];
-            return block && <div className={`pdf-paragraph-hover${isVisual ? ' pdf-visual-hover' : ''}`} aria-hidden="true" style={{ left: `${block.x / paragraphLayout.width * 100}%`, top: `${block.y / paragraphLayout.height * 100}%`, width: `${block.width / paragraphLayout.width * 100}%`, height: `${block.height / paragraphLayout.height * 100}%` }}>{isVisual && <span>{paragraphLayout.visuals?.[hoveredRegion.index]?.kind === 'table' ? 'OCR 表格' : 'OCR 图片'}</span>}</div>;
+            return block && <div className={`pdf-paragraph-hover${isVisual ? ' pdf-visual-hover' : ''}`} aria-hidden="true" style={{ left: `${block.x / paragraphLayout.width * 100}%`, top: `${block.y / paragraphLayout.height * 100}%`, width: `${block.width / paragraphLayout.width * 100}%`, height: `${block.height / paragraphLayout.height * 100}%` }}>{isVisual && <span>{paragraphLayout.visuals?.[hoveredRegion.index]?.kind === 'table' ? 'OCR 表格' : paragraphLayout.visuals?.[hoveredRegion.index]?.kind === 'formula' ? 'OCR 公式 · 点击添加高亮' : 'OCR 图片'}</span>}</div>;
           })()}
           <div className="pdf-marks">
             {(() => {
               const pageAnnotations = annotations.filter((annotation) => annotation.page === page);
-              const highlights = new Map<string, string[]>();
-              for (const annotation of pageAnnotations.filter((item) => item.kind === 'highlight')) {
-                const paths = highlights.get(annotation.color) ?? [];
+              const highlights = pageAnnotations.filter((item) => item.kind === 'highlight');
+              return <>
+                {highlights.map((annotation) => {
+                  const paths: string[] = [];
                 for (const rect of annotation.locator?.rects ?? []) {
                   if (Number.isFinite(rect.x + rect.y + rect.width + rect.height) && rect.width > 0 && rect.height > 0) {
                     paths.push(`M${rect.x} ${rect.y}h${rect.width}v${rect.height}h-${rect.width}Z`);
                   }
                 }
-                highlights.set(annotation.color, paths);
-              }
-              return <>
-                {[...highlights].map(([color, paths]) => paths.length > 0 && (
+                  return paths.length > 0 && (
                   <svg
-                    key={`highlight-${color}`}
+                    key={`highlight-${annotation.id}`}
                     aria-hidden="true"
-                    className={`pdf-mark pdf-mark-highlight ann-highlight-${color}`}
+                    data-annotation-id={annotation.id}
+                    className={`pdf-mark pdf-mark-highlight ann-highlight-${annotation.color}${focusedId === annotation.id ? ' ann-focused' : ''}`}
                     viewBox="0 0 1 1"
                     preserveAspectRatio="none"
                   >
                     <path d={paths.join('')} />
                   </svg>
-                ))}
+                  );
+                })}
                 {pageAnnotations
                   .filter((annotation) => annotation.kind !== 'highlight')
                   .flatMap((a) => mergePDFMarkRects(a.locator?.rects ?? []).map((rect, index) => (

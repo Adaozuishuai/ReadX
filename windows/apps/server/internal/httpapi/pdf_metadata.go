@@ -193,6 +193,7 @@ func titleWords(value string) map[string]bool {
 }
 
 func (s *Server) saveRecognizedPDFMetadata(ctx context.Context, id, filenameTitle string, metadata recognizedPaperMetadata) error {
+	metadata.Title = normalizePaperTitle(metadata.Title)
 	if metadata.Title == "" && len(metadata.Authors) == 0 && metadata.DOI == "" && metadata.Venue == "" && metadata.Year == 0 {
 		return nil
 	}

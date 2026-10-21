@@ -687,6 +687,8 @@ func visualLayoutKind(kind string) (string, bool) {
 		return "table", true
 	case "image", "figure", "chart":
 		return "image", true
+	case "formula", "display_formula", "inline_formula":
+		return "formula", true
 	default:
 		return "", false
 	}

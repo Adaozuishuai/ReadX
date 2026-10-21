@@ -19,7 +19,7 @@ import { WorkspaceIcon, type WorkspaceIconName } from './WorkspaceIcon';
 type Layout = 'grid' | 'list' | 'table';
 type SortKey = 'title' | 'year' | 'status';
 
-const RELEASE_NOTE_TAGS = new Set(['p', 'br', 'hr', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'strong', 'b', 'em', 'i', 'code', 'pre', 'blockquote', 'a']);
+const RELEASE_NOTE_TAGS = new Set(['p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'div', 'span', 'ul', 'ol', 'li', 'strong', 'b', 'em', 'i', 'del', 's', 'code', 'pre', 'blockquote', 'a']);
 const RELEASE_NOTE_DROP_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'svg', 'math']);
 
 function releaseNoteNode(node: Node, key: string): ReactNode {
@@ -47,7 +47,16 @@ function releaseNoteNode(node: Node, key: string): ReactNode {
 }
 
 function ReleaseNotesContent({ value }: { value: string }) {
-  const source = value.replace(/\\(?=<\/?[a-z][^>]*>)/gi, '');
+  let source = value.replace(/\\(?=<\/?[a-z][^>]*>)/gi, '');
+  // electron-updater/GitHub metadata can hand us an HTML body with its angle
+  // brackets entity-escaped. Decode only when no real tags are present; the
+  // result still goes through the element allowlist below.
+  for (let pass = 0; pass < 2 && !/<\/?[a-z][^>]*>/i.test(source)
+    && /(?:&lt;|&#0*60;|&#x0*3c;)\s*\/?[a-z]/i.test(source); pass += 1) {
+    const decoder = document.createElement('textarea');
+    decoder.innerHTML = source;
+    source = decoder.value;
+  }
   const template = document.createElement('template');
   // Some release editors escape the angle brackets with a preceding backslash.
   template.innerHTML = source;
@@ -430,7 +439,7 @@ export function LibraryScreen({
         <div className="library-content">
           {arxivProgress ? <p role="status" className="mb-2 rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">{arxivProgress}</p> : null}
           {arxivSummary ? <p role="status" className="mb-2 rounded-md bg-surface-sunk px-3 py-2 text-xs text-ink-soft">{arxivSummary}</p> : null}
-          {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空仅移除书库条目和关联阅读数据，所有 PDF / EPUB 文件均保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
+          {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空会删除 library 文件夹中未被其他论文引用的导入副本，原始位置文件保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
           {phase.kind === 'ready' && view !== 'trash' ? (
             <div className="library-metrics" aria-label="当前列表概览">
               <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="file" /></span><strong>{documents.length}</strong><span>当前文献</span></div>

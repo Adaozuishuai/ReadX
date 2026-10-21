@@ -3,6 +3,7 @@ package httpapi
 import (
 	"database/sql"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,10 +39,11 @@ func (s *Server) handleAIStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type chatRequest struct {
-	Key      string `json:"key"`
-	Mode     string `json:"mode"`
-	Question string `json:"question"`
-	Scope    string `json:"scope"`
+	Key      string   `json:"key"`
+	Mode     string   `json:"mode"`
+	Question string   `json:"question"`
+	Scope    string   `json:"scope"`
+	Images   []string `json:"images,omitempty"`
 	History  []struct {
 		Role string `json:"role"`
 		Text string `json:"text"`
@@ -54,7 +56,7 @@ type chatRequest struct {
 // 把空材料交给模型，模型会凭记忆作答，等于绕过 evidence-first 硬约束。
 func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	var body chatRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	r.Body = http.MaxBytesReader(w, r.Body, 48<<20)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "请求体必须是 {key, mode, question, scope, history}")
 		return
@@ -67,6 +69,19 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if len(body.Images) > 4 {
+		writeError(w, http.StatusBadRequest, "每次最多附加 4 张图片")
+		return
+	}
+	images := make([][]byte, 0, len(body.Images))
+	for index, encoded := range body.Images {
+		image, decodeErr := base64.StdEncoding.DecodeString(encoded)
+		if decodeErr != nil || len(image) == 0 || len(image) > ai.MaxImageBytes {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("第 %d 张图片无效或超过 8 MiB", index+1))
+			return
+		}
+		images = append(images, image)
 	}
 
 	config, err := s.aiConfig()
@@ -113,6 +128,16 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	emit(map[string]any{"meta": map[string]any{"included": included, "total": total, "scope": body.Scope, "unit": unit, "provider": config.ProviderName(), "model": config.ModelName(), "reasoningEffort": config.ReasoningEffort}})
 
 	client := ai.NewClient(config)
+	if len(images) > 0 {
+		text, imageErr := client.GenerateWithImages(r.Context(), system, chatUserMessage(body), images, 0.2, ai.RequestTimeout)
+		if imageErr != nil {
+			emit(map[string]any{"error": imageErr.Error()})
+			return
+		}
+		emit(map[string]any{"delta": text})
+		emit(map[string]any{"done": true, "text": text})
+		return
+	}
 	text, streamErr := client.Stream(r.Context(), messages, 0.2, func(delta string) {
 		emit(map[string]any{"delta": delta})
 	})

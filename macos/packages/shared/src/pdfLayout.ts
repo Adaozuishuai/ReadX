@@ -14,7 +14,7 @@ export interface PDFTextBlock extends PDFTextBox {
   fontSize: number;
 }
 export interface PDFVisualBlock extends PDFTextBox {
-  kind: 'table' | 'image';
+  kind: 'table' | 'image' | 'formula';
   label?: string;
 }
 export interface PDFLayout {

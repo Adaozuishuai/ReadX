@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { streamChat } from '../api/client';
+import { api, streamChat } from '../api/client';
 
 export interface ChatTurn {
   id: string;
@@ -29,6 +29,7 @@ function load(key: string | null): { conversations: Conversation[]; active: stri
 
 export function useChat(key: string | null) {
   const [data, setData] = useState(() => load(key));
+  const [dataKey, setDataKey] = useState(key);
   const dataRef = useRef(data);
   const [busy, setBusy] = useState(false);
   const [storageError, setStorageError] = useState('');
@@ -41,16 +42,23 @@ export function useChat(key: string | null) {
     documentRef.current = key;
     ++epoch.current;
     controller.current?.abort(); controller.current = null;
-    commit(load(key)); setBusy(false); setStorageError(''); setDeleted(null);
+    commit(load(key)); setDataKey(key); setBusy(false); setStorageError(''); setDeleted(null);
     return () => { ++epoch.current; controller.current?.abort(); controller.current = null; };
   }, [key, commit]);
+  const hasConversationHistory = data.conversations.some((conversation) =>
+    conversation.turns.some((turn) => turn.role === 'user' && !!turn.text.trim()),
+  );
+  useEffect(() => {
+    if (!key || dataKey !== key) return;
+    void api.setStatus(key, hasConversationHistory ? 'reading' : 'queue').catch(() => {});
+  }, [key, dataKey, hasConversationHistory]);
   useEffect(() => {
     if (!key || documentRef.current !== key || busy) return;
     try { localStorage.setItem(storageKey(key), JSON.stringify(data)); setStorageError(''); }
     catch { setStorageError('本机历史保存失败；请及时复制需要保留的回答。'); }
   }, [data, busy, key]);
 
-  const send = useCallback(async (question: string, mode = '', regenerate = false) => {
+  const send = useCallback(async (question: string, mode = '', regenerate = false, images: string[] = []) => {
     if (!key || controller.current || !question.trim()) return;
     const snapshot = dataRef.current;
     const conversation = snapshot.conversations.find((c) => c.id === snapshot.active)!;
@@ -78,7 +86,7 @@ export function useChat(key: string | null) {
     let streaming = '';
     let finished = false;
     try {
-      await streamChat({ key, question, mode, history }, (chunk) => {
+      await streamChat({ key, question, mode, history, images: images.length ? images : undefined }, (chunk) => {
         if (epoch.current !== requestEpoch) return;
         if (chunk.meta) patch({ scope: { included: chunk.meta.included, total: chunk.meta.total, unit: chunk.meta.unit }, provider: chunk.meta.provider, model: chunk.meta.model, reasoningEffort: chunk.meta.reasoningEffort });
         if (chunk.delta) { streaming += chunk.delta; patch({ text: streaming }); }

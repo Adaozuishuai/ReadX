@@ -7,6 +7,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { createServer } from 'vite';
 import { v2Paths } from './go.mjs';
+import { runtimeEnvironment } from './platform-runtime.mjs';
 import { prepareServerRuntime } from './server-runtime.mjs';
 
 const port = Number(process.env.CBCT_VITE_PORT ?? 5183);
@@ -148,6 +149,7 @@ function waitForPort(targetPort, expectOpen, timeoutMs) {
 function startBackend() {
   backend = spawn(prepareServerRuntime(v2Paths.serverBin), ['--exit-on-stdin-eof', '--data-root', dataRoot], {
     cwd: v2Paths.root, stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true,
+    env: runtimeEnvironment(v2Paths.root),
   });
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('等待本地服务启动超时')), 30_000);

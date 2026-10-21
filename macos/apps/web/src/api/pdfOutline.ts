@@ -20,5 +20,5 @@ export function headingsFromPDFPage(page: PDFPageProxy, content: TextContent): P
       row.height = Math.max(row.height, height);
     } else rows.push({ text: item.str, x, y, width: item.width, height });
   }
-  return detectPaperHeadings(rows, page.pageNumber, viewport.height);
+  return detectPaperHeadings(rows.map((row) => ({ ...row, x: row.x / viewport.width })), page.pageNumber, viewport.height);
 }

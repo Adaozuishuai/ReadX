@@ -196,6 +196,7 @@ export async function streamChat(
     question: string;
     scope?: string;
     history?: Array<{ role: string; text: string }>;
+    images?: string[];
   },
   onChunk: (chunk: ChatChunk) => void,
   signal?: AbortSignal,
@@ -381,7 +382,7 @@ export interface LeeParagraph {
 
 export interface LeeVisualBlock {
   index: number;
-  kind: 'table' | 'image';
+  kind: 'table' | 'image' | 'formula';
   text: string;
   box: [number, number, number, number];
 }
@@ -405,6 +406,16 @@ export interface TranslatedPDFResponse {
   failedMath: number;
   bytes: number;
   download: string;
+}
+
+export interface TranslationPreview {
+  available: boolean;
+  page: number;
+  width?: number;
+  height?: number;
+  translatedBlocks?: number;
+  totalBlocks?: number;
+  blocks: { source: string; target: string; box: [number, number, number, number] }[];
 }
 
 export interface RenderStatus {
@@ -950,6 +961,16 @@ export const api = {
       `/v1/documents/${encodeURIComponent(key)}/pages/${page}/paragraphs`,
       { signal },
     ),
+  translationPreview: (key: string, page: number, signal?: AbortSignal) =>
+    request<TranslationPreview>(
+      `/v1/documents/${encodeURIComponent(key)}/pages/${page}/translation-preview`,
+      { signal },
+    ),
+  retranslate: (key: string, signal?: AbortSignal) =>
+    request<{ jobKey: string; status: string }>(
+      `/v1/documents/${encodeURIComponent(key)}/retranslate`,
+      { method: 'POST', signal },
+    ),
   section: (key: string, index: number, signal?: AbortSignal) =>
     request<EPUBSection>(
       `/v1/documents/${encodeURIComponent(key)}/sections/${index}`,
@@ -1190,7 +1211,7 @@ export const api = {
   documentsMeta: (signal?: AbortSignal) =>
     request<DocumentMetaResponse>('/v1/documents-meta', { signal }),
   emptyTrash: (keys: string[]) =>
-    request<{ deletedKeys: string[]; filesPreserved: boolean }>('/v1/trash/empty', {
+    request<{ deletedKeys: string[]; libraryCopiesRemoved: number; originalFilesPreserved: boolean }>('/v1/trash/empty', {
       method: 'POST',
       body: { keys },
     }),

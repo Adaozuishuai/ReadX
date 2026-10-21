@@ -196,6 +196,7 @@ export async function streamChat(
     question: string;
     scope?: string;
     history?: Array<{ role: string; text: string }>;
+    images?: string[];
   },
   onChunk: (chunk: ChatChunk) => void,
   signal?: AbortSignal,
@@ -381,7 +382,7 @@ export interface LeeParagraph {
 
 export interface LeeVisualBlock {
   index: number;
-  kind: 'table' | 'image';
+  kind: 'table' | 'image' | 'formula';
   text: string;
   box: [number, number, number, number];
 }

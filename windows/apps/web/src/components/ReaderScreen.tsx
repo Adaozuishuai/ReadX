@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary, PDFLayout } from '@cbct/shared';
 import { pageParagraphs, segmentParagraph, statusLabel } from '@cbct/shared';
-import { api, type EPUBSection } from '../api/client';
+import { api, type Annotation, type EPUBSection, type TranslationPreview } from '../api/client';
 import type { DocumentPhase } from '../hooks/useDocument';
 import { AssistantSidebar, type AssistantTab } from './AssistantPanels';
 import type { useAnnotations } from '../hooks/useAnnotations';
@@ -48,7 +48,7 @@ function leeLayout(paragraphs: LeeParagraphs): PDFLayout {
       width: Math.max(0, block.box[2] - block.box[0]),
       height: Math.max(0, block.box[3] - block.box[1]),
       kind: block.kind,
-      label: block.text || (block.kind === 'table' ? 'OCR 表格' : 'OCR 图片'),
+      label: block.text || (block.kind === 'table' ? 'OCR 表格' : block.kind === 'formula' ? 'OCR 公式' : 'OCR 图片'),
     })),
   };
 }
@@ -69,6 +69,8 @@ export function ReaderScreen({
   const documentKey = selected?.key ?? null;
   const pdf = usePDF(!epub ? documentKey : null);
   const translatedPDF = usePDF(!epub ? documentKey : null, true);
+  const [liveTranslationPreview, setLiveTranslationPreview] = useState<TranslationPreview | null>(null);
+  const [liveTranslationProgress, setLiveTranslationProgress] = useState('等待本页译文…');
   const [mode, setMode] = useState<ReadingMode>('source');
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 1000);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth >= 1200);
@@ -116,6 +118,8 @@ export function ReaderScreen({
   const [error, setError] = useState('');
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [selectedParagraph, setSelectedParagraph] = useState<SelectedParagraph | null>(null);
+  const [selectedNavigationIndex, setSelectedNavigationIndex] = useState<number | null>(null);
+  useEffect(() => setSelectedNavigationIndex(null), [documentKey]);
   const [paragraphQuestion, setParagraphQuestion] = useState<ParagraphQuestion | null>(null);
   const [note, setNote] = useState('');
   const [tags, setTags] = useState('');
@@ -137,6 +141,42 @@ export function ReaderScreen({
     ? sections.length
     : (pdf.document?.numPages ?? cachedPages.length);
   const current = Math.max(1, Math.min(page ?? 1, count || 1));
+  useEffect(() => {
+    setLiveTranslationPreview(null);
+    setLiveTranslationProgress('等待本页译文…');
+    if (epub || !documentKey || !pdf.document || translatedPDF.document) return;
+    const controller = new AbortController();
+    let cancelled = false;
+    void (async () => {
+      try {
+        while (!cancelled) {
+          const result = await api.translationPreview(documentKey, current, controller.signal);
+          if (cancelled) return;
+          setLiveTranslationPreview(result);
+          const total = result.totalBlocks ?? 0;
+          const translated = result.translatedBlocks ?? 0;
+          setLiveTranslationProgress(!result.available
+            ? '正在等待 LeePDF 完成本页识别…'
+            : total === 0
+              ? '本页没有可显示的译文'
+              : `本页译文 ${translated} / ${total} 段${translated < total ? '，完成内容已实时显示' : ''}`);
+          if (result.available && (total === 0 || translated >= total)) return;
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(resolve, 1500);
+            controller.signal.addEventListener('abort', () => { window.clearTimeout(timer); resolve(); }, { once: true });
+          });
+        }
+      } catch (cause) {
+        if (!cancelled && !controller.signal.aborted) {
+          setLiveTranslationProgress(`本页译文暂不可用：${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [documentKey, epub, current, pdf.document, translatedPDF.document]);
   const [navigationRequest, setNavigationRequest] = useState<{ page: number; y?: number; viewportOffset?: number; nonce: number }>(() => ({ page: page ?? 1, nonce: 0 }));
   const [translationNavigationRequest, setTranslationNavigationRequest] = useState<{ page: number; y?: number; viewportOffset?: number; nonce: number }>(() => ({ page: page ?? 1, nonce: 0 }));
   const navigatePage = useCallback((targetPage: number, y?: number) => {
@@ -157,6 +197,9 @@ export function ReaderScreen({
         depth: 0,
       }))
     : pdf.outline;
+  const activeNavigationIndex = selectedNavigationIndex !== null && navigation[selectedNavigationIndex]?.page === current
+    ? selectedNavigationIndex
+    : navigation.findIndex((item) => item.page === current);
   const paragraphs = useMemo(
     () =>
       epub && section
@@ -296,15 +339,41 @@ export function ReaderScreen({
     setError('');
   };
   const openParagraphTranslation = (paragraph: SelectedParagraph) => {
-    if (mode !== 'parallel') return;
     setPending(null);
     if (paragraph.kind === 'pdf') {
       setSelectedParagraph(null);
+      if (mode !== 'parallel') setMode('parallel');
       const targetPage = Math.min(paragraph.position, translatedPDF.document?.numPages ?? paragraph.position);
       navigateTranslationPage(targetPage, paragraph.targetY, paragraph.viewportOffset);
       return;
     }
+    if (mode !== 'parallel') return;
     setSelectedParagraph(paragraph);
+  };
+  const openHighlightedTextActions = (annotation: Annotation, position: { top: number; left: number }) => {
+    if (annotation.page == null) return;
+    const sourceLayout = annotation.page === current ? pdfLayout : null;
+    const quote = annotation.quote.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+    const index = sourceLayout?.blocks.findIndex((block) => {
+      const text = block.text.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+      return quote && (text.includes(quote) || quote.includes(text));
+    }) ?? -1;
+    const block = index >= 0 ? sourceLayout?.blocks[index] : undefined;
+    const rect = annotation.locator?.rects?.[0];
+    const targetY = block && sourceLayout ? block.y / sourceLayout.height : rect?.y;
+    const translationScroll = panes.current?.querySelectorAll<HTMLElement>('.publication-pane .pdf-document-scroll');
+    const translationBounds = (translationScroll?.[1] ?? translationScroll?.[0])?.getBoundingClientRect();
+    setPending(null);
+    setSelectedParagraph({
+      text: block?.text || annotation.quote || '公式',
+      position: annotation.page,
+      index: Math.max(0, index),
+      targetY,
+      viewportOffset: translationBounds ? position.top - translationBounds.top : undefined,
+      top: position.top,
+      left: position.left,
+      kind: 'pdf',
+    });
   };
   const create = async (kind: string) => {
     if (!pending || saving) return;
@@ -404,6 +473,7 @@ export function ReaderScreen({
           layout={pdfLayout}
           paragraphMode
           onParagraph={openParagraphTranslation}
+          onAnnotationClick={openHighlightedTextActions}
         />
       ) : (
         <div className="translation-document">
@@ -447,10 +517,18 @@ export function ReaderScreen({
           focusedId={focusedAnnotationId}
           onSelect={select}
           onText={() => undefined}
+          onAnnotationClick={openHighlightedTextActions}
         />
+      ) : liveTranslationPreview?.blocks.length ? (
+        <div className="translation-document live-translation-preview" aria-live="polite">
+          <p className="live-translation-status">第 {current} 页 · {liveTranslationProgress}</p>
+          {liveTranslationPreview.blocks.map((block, index) => (
+            <p className="live-translation-block" key={`${index}-${block.source.slice(0, 32)}`}>{block.target}</p>
+          ))}
+        </div>
       ) : (
         <div className="translation-document">
-          <p>{translatedPDF.error || '正在加载 LeePDF 译文 PDF…'}</p>
+          <p>{liveTranslationProgress || translatedPDF.error || '正在等待 LeePDF 逐页翻译…'}</p>
         </div>
       )}
     </div>
@@ -554,10 +632,11 @@ export function ReaderScreen({
             {navigation.length
               ? navigation.map((item, index) => (
                   <button
-                    className={`toc-item${item.page === current ? ' selected' : ''}`}
+                    className={`toc-item${index === activeNavigationIndex ? ' selected' : ''}`}
                     style={{ paddingLeft: 8 + item.depth * 12 }}
                     key={index}
                     onClick={() => {
+                      setSelectedNavigationIndex(index);
                       navigatePage(item.page, 'y' in item && typeof item.y === 'number' ? item.y : undefined);
                     }}
                   >
@@ -646,6 +725,7 @@ export function ReaderScreen({
         key={`${current}-${selectedParagraph.index}-${selectedParagraph.text}`}
         paragraph={selectedParagraph}
         onClose={() => setSelectedParagraph(null)}
+        onTranslate={() => openParagraphTranslation(selectedParagraph)}
         onAsk={() => {
           setRightOpen(true);
           setTab('chat');

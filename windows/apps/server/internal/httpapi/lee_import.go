@@ -23,10 +23,9 @@ import (
 	"cbctv2/server/internal/ocr"
 )
 
-// runLeePDFImport runs LeePDF's provider-case pipeline from the ReadX
-// import action. Lee owns OCR, document.v1 normalization, translation,
-// repair, and the first PDF render; ReadX only projects the returned contract
-// into its library and reader data model.
+// runLeePDFImport runs only LeePDF's OCR and document.v1 normalization stage.
+// ReadX stores the recognized PDF in the library immediately; translation and
+// rendering continue in a cancellable background task.
 func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []byte, metadata *recognizedPaperMetadata) (string, error) {
 	if metadata == nil {
 		return "", errors.New("导入元数据不可用")
@@ -131,7 +130,7 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 	spec := map[string]any{
 		"schema_version": "provider.stage.v1",
 		"stage":          "provider",
-		"job":            map[string]any{"job_id": jobID, "job_root": jobRoot, "workflow": "provider-case"},
+		"job":            map[string]any{"job_id": jobID, "job_root": jobRoot, "workflow": "ocr"},
 		"source":         map[string]any{"file_path": sourcePath},
 		"ocr": map[string]any{
 			"provider": "paddle", "credential_ref": "env:RETAIN_PADDLE_API_TOKEN",
@@ -269,25 +268,17 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 	if err != nil {
 		return "", err
 	}
-	translations, err := loadLeeTranslations(filepath.Join(jobRoot, "translated"))
-	if err != nil {
+	metadata.OCRPages = pages
+	if err := leeOutputToReadXMetadata(pages, nil, aiConfig, metadata); err != nil {
 		return "", err
 	}
-	s.jobStage(key, "ocr", "done", "Lee 已完成 OCR 与 document.v1 整理", len(pages), len(pages))
-	s.updateImportJob(key, func(job *DocumentJob) {
-		stage := job.stage("translate")
-		if stage == nil {
-			return
-		}
-		if stage.Total == 0 {
-			stage.Completed, stage.Total, stage.Unit = len(translations), len(translations), "段"
-		}
-		stage.ResultCount, stage.ResultUnit = len(translations), "段"
-		job.setStage("translate", "done", fmt.Sprintf("Lee 已完成全文翻译，生成 %d 段译文", len(translations)), -1, -1)
-	})
-	if err := leeOutputToReadXMetadata(pages, translations, aiConfig, metadata); err != nil {
-		return "", err
-	}
+	// OCR completes before translation starts; this is not a failed-translation
+	// warning because the document is now readable and the worker is queued.
+	metadata.Untranslated = 0
+	s.jobStage(key, "ocr", "done", "Lee 已完成 OCR 与 document.v1 整理，原文已可阅读", len(pages), len(pages))
+	translationUnits := countLeeTranslationUnits(pages)
+	s.jobStage(key, "translate", "pending", "已入库，阅读时后台逐页翻译", 0, translationUnits)
+	s.jobStage(key, "render", "pending", "等待全文翻译完成后排版", 0, len(pages))
 	// Lee 只负责 OCR/翻译/排版，不做题录识别；用 OCR 首页文本补回 ReadX 的
 	// 题名、作者、期刊、年份、DOI 与中文题名。识别失败不阻断已完成的翻译。
 	if strings.TrimSpace(metadata.Title) == "" && len(metadata.Pages) > 0 {
@@ -319,16 +310,24 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 			}
 		}
 	}
-	translatedPDF := filepath.Join(jobRoot, "rendered", "readx-translated.pdf")
-	if _, err := os.Stat(translatedPDF); err != nil {
-		return "", fmt.Errorf("Lee 未生成译文 PDF: %w", err)
+	s.updateImportJob(key, func(job *DocumentJob) { job.Pages = len(pages) })
+	return "", nil
+}
+
+func countLeeTranslationUnits(pages []ocr.Page) int {
+	total := 0
+	for pageIndex, page := range pages {
+		var before, after *ocr.Page
+		if pageIndex > 0 {
+			before = &pages[pageIndex-1]
+		}
+		if pageIndex+1 < len(pages) {
+			after = &pages[pageIndex+1]
+		}
+		items, _, _ := pageTranslationItems(page, before, after)
+		total += len(items)
 	}
-	s.updateImportJob(key, func(job *DocumentJob) {
-		job.setStage("render", "done", "Lee 已完成译文排版", len(pages), len(pages))
-		job.stage("render").Unit = "页"
-		job.Pages = len(pages)
-	})
-	return translatedPDF, nil
+	return total
 }
 
 type leePageTranslation struct {

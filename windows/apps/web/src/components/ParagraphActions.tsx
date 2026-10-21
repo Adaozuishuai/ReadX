@@ -9,10 +9,12 @@ export interface ParagraphQuestion {
 export function ParagraphActions({
   paragraph,
   onAsk,
+  onTranslate,
   onClose,
 }: {
   paragraph: SelectedParagraph;
   onAsk: () => void;
+  onTranslate: () => void;
   onClose: () => void;
 }) {
   return (
@@ -33,7 +35,8 @@ export function ParagraphActions({
       </header>
       <p className="paragraph-source">{paragraph.text}</p>
       <div className="paragraph-buttons">
-        <button onClick={onAsk}>就此段提问</button>
+        <button onClick={onAsk}>询问助教</button>
+        <button onClick={onTranslate}>翻译整段</button>
       </div>
     </section>
   );

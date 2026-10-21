@@ -332,7 +332,7 @@ app.whenReady().then(async () => {
     assert(savedPaperFiles.length > 0, 'must check a real imported copy');
     await click('清空回收站');
     await waitFor(`!!document.querySelector('dialog[open] #empty-trash-title')`);
-    assert(await window.webContents.executeJavaScript(`document.querySelector('dialog[open]').textContent.includes('所有 PDF / EPUB 文件均保留')`));
+    assert(await window.webContents.executeJavaScript(`document.querySelector('dialog[open]').textContent.includes('原始位置的 PDF / EPUB 文件保留')`));
     await new Promise(resolve => setTimeout(resolve, 100));
     fs.writeFileSync(path.join(workspace, 'empty-trash-confirm.png'), (await window.webContents.capturePage()).toPNG());
     await click('取消');

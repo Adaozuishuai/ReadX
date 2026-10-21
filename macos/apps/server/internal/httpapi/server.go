@@ -279,6 +279,10 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "status 只能是 queue / reading / done / archive")
 		return
 	}
+	if err := s.syncDerivedDocumentStatuses(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "刷新阅读状态失败: "+err.Error())
+		return
+	}
 	query := `SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at, format, translated_title
 		 FROM documents`
 	var where []string
@@ -320,6 +324,7 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "读取文档行失败: "+err.Error())
 			return
 		}
+		item.Title = normalizePaperTitle(item.Title)
 		if err := json.Unmarshal([]byte(authorsJSON), &item.Authors); err != nil || item.Authors == nil {
 			item.Authors = []string{}
 		}

@@ -19,7 +19,7 @@ import { WorkspaceIcon, type WorkspaceIconName } from './WorkspaceIcon';
 type Layout = 'grid' | 'list' | 'table';
 type SortKey = 'title' | 'year' | 'status';
 
-const RELEASE_NOTE_TAGS = new Set(['p', 'br', 'hr', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'strong', 'b', 'em', 'i', 'code', 'pre', 'blockquote', 'a']);
+const RELEASE_NOTE_TAGS = new Set(['p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'div', 'span', 'ul', 'ol', 'li', 'strong', 'b', 'em', 'i', 'del', 's', 'code', 'pre', 'blockquote', 'a']);
 const RELEASE_NOTE_DROP_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'svg', 'math']);
 
 function releaseNoteNode(node: Node, key: string): ReactNode {
@@ -47,7 +47,16 @@ function releaseNoteNode(node: Node, key: string): ReactNode {
 }
 
 function ReleaseNotesContent({ value }: { value: string }) {
-  const source = value.replace(/\\(?=<\/?[a-z][^>]*>)/gi, '');
+  let source = value.replace(/\\(?=<\/?[a-z][^>]*>)/gi, '');
+  // electron-updater/GitHub metadata can hand us an HTML body with its angle
+  // brackets entity-escaped. Decode only when no real tags are present; the
+  // result still goes through the element allowlist below.
+  for (let pass = 0; pass < 2 && !/<\/?[a-z][^>]*>/i.test(source)
+    && /(?:&lt;|&#0*60;|&#x0*3c;)\s*\/?[a-z]/i.test(source); pass += 1) {
+    const decoder = document.createElement('textarea');
+    decoder.innerHTML = source;
+    source = decoder.value;
+  }
   const template = document.createElement('template');
   // Some release editors escape the angle brackets with a preceding backslash.
   template.innerHTML = source;
@@ -645,10 +654,6 @@ function UpdateControl() {
 
   const run = async () => {
     if (!bridge) return;
-    if (status.state === 'unsupported' && status.message?.includes('Developer ID')) {
-      bridge.openLatestRelease();
-      return;
-    }
     if (status.state === 'available') {
       setConfirmingUpdate(false);
       setStatus({ ...status, state: 'downloading', percent: 0 });
@@ -668,7 +673,6 @@ function UpdateControl() {
         : status.state === 'downloading' ? `正在下载 · ${Math.round(status.percent ?? 0)}%`
           : status.state === 'downloaded' ? `重启并安装${status.version ? ` · v${status.version}` : ''}`
             : status.state === 'error' ? '检查更新失败 · 点击重试'
-              : status.state === 'unsupported' && status.message?.includes('Developer ID') ? '下载 macOS 更新'
               : status.state === 'unsupported' ? '桌面版更新'
                 : '检查更新';
   const detail = status.state === 'error' || status.state === 'unsupported' ? status.message : undefined;

@@ -687,6 +687,8 @@ func visualLayoutKind(kind string) (string, bool) {
 		return "table", true
 	case "image", "figure", "chart":
 		return "image", true
+	case "formula", "display_formula", "inline_formula":
+		return "formula", true
 	default:
 		return "", false
 	}
@@ -1146,6 +1148,10 @@ func firstTranslatableText(page ocr.Page) (string, bool) {
 
 // translatePageItems 复用段落翻译缓存：同一段原文只翻译一次，force 时重译。
 func (s *Server) translatePageItems(ctx context.Context, key string, items []translate.Item, force bool) ([]string, error) {
+	return s.translatePageItemsMode(ctx, key, items, force, false)
+}
+
+func (s *Server) translatePageItemsMode(ctx context.Context, key string, items []translate.Item, force, cachedOnly bool) ([]string, error) {
 	if err := attachTranslationTerms(ctx, s, items); err != nil {
 		return nil, err
 	}
@@ -1181,28 +1187,33 @@ func (s *Server) translatePageItems(ctx context.Context, key string, items []tra
 		missingItems = append(missingItems, items[index])
 	}
 	if len(missingItems) > 0 {
-		if configErr != nil {
-			return nil, configErr
-		}
-		if !config.Ready() {
-			return nil, errors.New("还没配置 AI 助教的 API Key：编辑 app/config.json 填入 Key，保存即生效。")
-		}
-		translationCtx, cancel := context.WithTimeout(ctx, translate.Budget(len(missingItems)))
-		result, err := translate.Translate(translationCtx, ai.NewClient(config), missingItems, translate.Options{BestEffort: true})
-		cancel()
-		if err != nil {
-			return nil, fmt.Errorf("翻译 OCR 段落失败: %w", err)
-		}
-		sources := make([]string, len(missingItems))
-		for index := range missingItems {
-			sources[index] = missingItems[index].Source
-		}
-		if err := s.saveTranslations(ctx, key, missingHashes, sources, result.Targets); err != nil {
-			return nil, err
-		}
-		for index, hash := range missingHashes {
-			if index < len(result.Targets) && strings.TrimSpace(result.Targets[index]) != "" {
-				cached[hash] = result.Targets[index]
+		if cachedOnly {
+			// Leave uncached targets empty; LeePDF's background importer will
+			// persist them and the next reader poll will pick them up.
+		} else {
+			if configErr != nil {
+				return nil, configErr
+			}
+			if !config.Ready() {
+				return nil, errors.New("还没配置 AI 助教的 API Key：编辑 app/config.json 填入 Key，保存即生效。")
+			}
+			translationCtx, cancel := context.WithTimeout(ctx, translate.Budget(len(missingItems)))
+			result, err := translate.Translate(translationCtx, ai.NewClient(config), missingItems, translate.Options{BestEffort: true})
+			cancel()
+			if err != nil {
+				return nil, fmt.Errorf("翻译 OCR 段落失败: %w", err)
+			}
+			sources := make([]string, len(missingItems))
+			for index := range missingItems {
+				sources[index] = missingItems[index].Source
+			}
+			if err := s.saveTranslations(ctx, key, missingHashes, sources, result.Targets); err != nil {
+				return nil, err
+			}
+			for index, hash := range missingHashes {
+				if index < len(result.Targets) && strings.TrimSpace(result.Targets[index]) != "" {
+					cached[hash] = result.Targets[index]
+				}
 			}
 		}
 	}

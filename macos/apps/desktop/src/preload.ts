@@ -21,7 +21,6 @@ const updateBridge: DesktopUpdateBridge = {
   check: () => ipcRenderer.invoke('readx-updates:check') as Promise<DesktopUpdateStatus>,
   download: () => ipcRenderer.invoke('readx-updates:download') as Promise<DesktopUpdateStatus>,
   install: () => { void ipcRenderer.invoke('readx-updates:install'); },
-  openLatestRelease: () => { void ipcRenderer.invoke('readx-updates:open-latest-release'); },
   onStatus: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, status: DesktopUpdateStatus) => callback(status);
     ipcRenderer.on('readx-updates:status', listener);

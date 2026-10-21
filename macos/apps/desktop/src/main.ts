@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { autoUpdater, type UpdateInfo } from 'electron-updater';
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -137,22 +137,12 @@ function setupUpdater(): void {
     state: 'error', currentVersion: app.getVersion(), message: error.message || '更新检查失败，请稍后重试。',
   }));
 
-  ipcMain.handle('readx-updates:open-latest-release', () => shell.openExternal('https://github.com/Leechion/ReadX/releases/latest'));
-
   ipcMain.handle('readx-updates:check', async (): Promise<DesktopUpdateStatus> => {
     if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform)) {
       return {
         state: 'unsupported', currentVersion: app.getVersion(),
         message: '请使用已发布的 Windows 或 macOS 安装版检查更新；开发版不会自动替换源码。',
       };
-    }
-    if (process.platform === 'darwin' && !hasDeveloperIdSignature()) {
-      const status: DesktopUpdateStatus = {
-        state: 'unsupported', currentVersion: app.getVersion(),
-        message: '此 macOS 版本未使用 Developer ID 签名，系统会拒绝应用内更新。请从 GitHub Releases 下载最新 DMG 并手动安装。',
-      };
-      publishUpdateStatus(status);
-      return status;
     }
     try {
       const result = await autoUpdater.checkForUpdates();
@@ -172,14 +162,6 @@ function setupUpdater(): void {
   ipcMain.handle('readx-updates:download', async (): Promise<DesktopUpdateStatus> => {
     if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform)) {
       return { state: 'unsupported', currentVersion: app.getVersion(), message: '请在已发布的桌面安装版中下载更新。' };
-    }
-    if (process.platform === 'darwin' && !hasDeveloperIdSignature()) {
-      const status: DesktopUpdateStatus = {
-        state: 'unsupported', currentVersion: app.getVersion(),
-        message: '此 macOS 版本未使用 Developer ID 签名，系统会拒绝应用内更新。请从 GitHub Releases 下载最新 DMG 并手动安装。',
-      };
-      publishUpdateStatus(status);
-      return status;
     }
     if (!availableUpdateVersion) {
       return { state: 'error', currentVersion: app.getVersion(), message: '请先检查是否有可用更新。' };
@@ -203,20 +185,6 @@ function setupUpdater(): void {
 function publishUpdateStatus(status: DesktopUpdateStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('readx-updates:status', status);
-}
-
-function hasDeveloperIdSignature(): boolean {
-  const appBundlePath = path.dirname(path.dirname(path.dirname(process.execPath)));
-  const verify = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=0', appBundlePath], {
-    encoding: 'utf8',
-  });
-  if (verify.status !== 0) return false;
-
-  const details = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=4', appBundlePath], { encoding: 'utf8' });
-  const output = `${details.stdout ?? ''}${details.stderr ?? ''}`;
-  return details.status === 0
-    && /^Authority=Developer ID Application:/m.test(output)
-    && /^TeamIdentifier=[A-Z0-9]{10}$/m.test(output);
 }
 
 function releaseNotesText(notes: UpdateInfo['releaseNotes']): string | undefined {

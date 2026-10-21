@@ -233,6 +233,38 @@ func (s *Server) handleStatusPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if body.Status == "archive" {
+		tx, err := s.handle.BeginTx(r.Context(), nil)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.ExecContext(r.Context(), `UPDATE documents SET status = ?, updated_at = ? WHERE id = ?`, body.Status, nowStamp(), key); err != nil {
+			writeError(w, http.StatusInternalServerError, "更新状态失败: "+err.Error())
+			return
+		}
+		if err := recordStatusOverride(r.Context(), tx, key, body.Status); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeError(w, http.StatusInternalServerError, "提交失败: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"key": key, "status": body.Status})
+		return
+	}
+	// queue/reading 来自助教对话记录的增删；done 只能由五重奏全部完成推导。
+	if body.Status != "queue" && body.Status != "reading" {
+		status, err := s.recalculateDocumentStatus(r.Context(), key)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "计算阅读状态失败: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"key": key, "status": status})
+		return
+	}
 	tx, err := s.handle.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -240,12 +272,7 @@ func (s *Server) handleStatusPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(r.Context(), `UPDATE documents SET status = ?, updated_at = ? WHERE id = ?`,
-		body.Status, nowStamp(), key); err != nil {
-		writeError(w, http.StatusInternalServerError, "更新状态失败: "+err.Error())
-		return
-	}
-	if err := recordStatusOverride(r.Context(), tx, key, body.Status); err != nil {
+	if err := setChatActivity(r.Context(), tx, key, body.Status == "reading"); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -253,7 +280,12 @@ func (s *Server) handleStatusPatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "提交失败: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"key": key, "status": body.Status})
+	status, err := s.recalculateDocumentStatus(r.Context(), key)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "计算阅读状态失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"key": key, "status": status})
 }
 
 func (s *Server) documentHasPDF(key string) bool {
@@ -264,6 +296,9 @@ func (s *Server) documentHasPDF(key string) bool {
 // ---- 数据访问 ----
 
 func (s *Server) loadDocument(ctx context.Context, key string) (DocumentSummary, error) {
+	if _, err := s.recalculateDocumentStatus(ctx, key); err != nil {
+		return DocumentSummary{}, err
+	}
 	var item DocumentSummary
 	var authorsJSON string
 	var year sql.NullInt64
@@ -275,6 +310,7 @@ func (s *Server) loadDocument(ctx context.Context, key string) (DocumentSummary,
 	if err != nil {
 		return DocumentSummary{}, err
 	}
+	item.Title = normalizePaperTitle(item.Title)
 	if err := json.Unmarshal([]byte(authorsJSON), &item.Authors); err != nil || item.Authors == nil {
 		item.Authors = []string{}
 	}

@@ -225,5 +225,9 @@ func (s *Server) saveReadingEntry(ctx context.Context, key, kind string, entry R
 		key, string(encoded), stamp); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_, err = s.recalculateDocumentStatus(ctx, key)
+	return err
 }
