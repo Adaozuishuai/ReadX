@@ -16,12 +16,9 @@
 
 ## ReadX 宣传视频
 
-<p align="center">
-  <a href="docs/media/ReadX.mp4"><img src="docs/images/promo/01-cover.jpg" alt="ReadX 宣传视频封面；点击打开 MP4" width="860"></a>
-</p>
+https://github.com/user-attachments/assets/1b377a2a-c36d-4e51-9923-feb28d1912d2
 
-<p align="center"><a href="docs/media/ReadX.mp4">▶ 打开或下载完整 MP4</a></p>
-
+<p align="center"><a href="docs/media/ReadX.mp4">下载原始高清 MP4</a></p>
 ## 中文
 
 ReadX 是一个面向科研阅读的桌面工作区。导入论文后，可以在同一处查看原文与译文、标注重点、向 AI 助教提问，并把阅读结果整理成结构化分析或演示文稿。论文文件与阅读资料优先保存在本机。
