@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
+	"cbctv2/server/internal/legacy"
 	"cbctv2/server/internal/safekey"
 )
 
-// Only database records are removed. Neither legacy files nor imported copies
-// are owned exclusively by a document record, so this handler never deletes files.
+// Permanently remove database records and imported copies owned by those records.
+// Files outside the managed library directory remain untouched.
 func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Keys []string `json:"keys"`
@@ -50,6 +54,10 @@ func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	libraryCopies := map[string]struct{}{}
+	leeJobDirs := map[string]struct{}{}
+	libraryDir := legacy.NewPaths(s.cfg.DataRoot).LibraryDir()
+	leeJobsRoot := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).DataDir(), "retain", "jobs")
 	var statusJSON string
 	statuses := map[string]json.RawMessage{}
 	err = tx.QueryRowContext(r.Context(), `SELECT value_json FROM app_state WHERE key = 'documents.status'`).Scan(&statusJSON)
@@ -63,6 +71,19 @@ func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, key := range keys {
+		if jobDir, ok := managedLeeJobDir(leeJobsRoot, key); ok {
+			leeJobDirs[jobDir] = struct{}{}
+		}
+		var pdfPath string
+		err = tx.QueryRowContext(r.Context(), `SELECT pdf_path FROM documents WHERE key = ?`, key).Scan(&pdfPath)
+		if err == nil {
+			if path, ok := managedLibraryFilePath(libraryDir, pdfPath); ok {
+				libraryCopies[path] = struct{}{}
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, 500, err.Error())
+			return
+		}
 		// Foreign keys cascade to pages, translations, notes and reading locations.
 		if _, err = tx.ExecContext(r.Context(), `DELETE FROM documents WHERE key = ?`, key); err != nil {
 			writeError(w, 500, err.Error())
@@ -73,6 +94,10 @@ func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err = tx.ExecContext(r.Context(), `DELETE FROM app_state WHERE key = ?`, translationQAKey(key)); err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		if _, err = tx.ExecContext(r.Context(), `DELETE FROM app_state WHERE key IN (?,?)`, jobStatePrefix+key, jobDocumentPrefix+key); err != nil {
 			writeError(w, 500, err.Error())
 			return
 		}
@@ -100,5 +125,64 @@ func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deletedKeys": keys, "filesPreserved": true})
+	removedCopies := 0
+	for _, key := range keys {
+		s.cancelImportJob(key)
+		s.jobsMu.Lock()
+		delete(s.importJobs, key)
+		s.jobsMu.Unlock()
+		_, _ = s.handle.ExecContext(r.Context(), `DELETE FROM app_state WHERE key IN (?,?)`, jobStatePrefix+key, jobDocumentPrefix+key)
+	}
+	for path := range libraryCopies {
+		if s.removeUnreferencedLibraryFile(r.Context(), path) {
+			removedCopies++
+		}
+	}
+	removedJobDirs := 0
+	for dir := range leeJobDirs {
+		if err := os.RemoveAll(dir); err == nil {
+			removedJobDirs++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deletedKeys": keys, "libraryCopiesRemoved": removedCopies, "leeJobCachesRemoved": removedJobDirs, "originalFilesPreserved": true,
+	})
+}
+
+func managedLeeJobDir(jobsRoot, key string) (string, bool) {
+	if safekey.Check(key) != nil {
+		return "", false
+	}
+	root, err := filepath.Abs(jobsRoot)
+	if err != nil {
+		return "", false
+	}
+	target, err := filepath.Abs(filepath.Join(root, key))
+	if err != nil {
+		return "", false
+	}
+	relative, err := filepath.Rel(root, target)
+	if err != nil || relative != key || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return target, true
+}
+
+func managedLibraryFilePath(libraryDir, target string) (string, bool) {
+	if strings.TrimSpace(target) == "" {
+		return "", false
+	}
+	libraryRoot, err := filepath.Abs(libraryDir)
+	if err != nil {
+		return "", false
+	}
+	filePath, err := filepath.Abs(target)
+	if err != nil {
+		return "", false
+	}
+	relative, err := filepath.Rel(libraryRoot, filePath)
+	if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filePath, true
 }

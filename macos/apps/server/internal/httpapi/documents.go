@@ -255,6 +255,7 @@ func (s *Server) handleStatusPatch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"key": key, "status": body.Status})
 		return
 	}
+	// queue/reading 来自助教对话记录的增删；done 只能由五重奏全部完成推导。
 	if body.Status != "queue" && body.Status != "reading" {
 		status, err := s.recalculateDocumentStatus(r.Context(), key)
 		if err != nil {
@@ -270,6 +271,7 @@ func (s *Server) handleStatusPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
+
 	if err := setChatActivity(r.Context(), tx, key, body.Status == "reading"); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

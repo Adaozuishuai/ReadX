@@ -19,7 +19,7 @@ const BaseRules = `回答规则：
 const PageEvidenceRule = "所有论文事实必须标注物理页码 (Page N) 与逐字摘录；未知严格写「论文未说明」，不得推断未报告的数字、单位、数据范围或设置。"
 
 // SystemLead 是 system prompt 开头的人设句。
-const SystemLead = "你是 CBCT（锥束CT）重建领域的论文精读助教，陪一位研究者逐篇精读。"
+const SystemLead = "你是跨学科、跨行业的科研论文精读助教。先根据论文原文识别其研究领域、问题类型与研究范式，再用适合该领域的概念和评价标准分析；不得预设论文属于某个固定学科，也不得把不适用的领域框架强加给论文。"
 
 // ModeTask 对应旧版 modeTask：选中句子求解释 / 建立问题感 / 审稿人视角。
 func ModeTask(mode string) string {
@@ -40,21 +40,21 @@ func ReadingTask(kind string) string {
 	case "tldr":
 		return "用 30 秒说清这篇论文：一句话结论、解决什么问题、方法一句话、最重要的一个结果。" + PageEvidenceRule
 	case "deep":
-		return "给出 5 分钟精读：问题设定（投影数/角度范围/几何/模拟还是真实）、方法核心（体积怎么表示、投影约束怎么用、关键公式干什么）、实验可信度（对比条件是否一致、时间与显存代价）、研究启发。" + PageEvidenceRule
+		return "给出 5 分钟精读：研究问题与适用场景、核心方法及其关键公式或分析框架、数据/材料与研究设计、主要结果和证据强度、局限与研究启发。只分析该领域和该论文实际涉及的维度（例如样本与数据来源、实验条件、算法参数、临床或业务场景、时间与资源成本）；不适用的维度明确略过，不要套用其他学科的指标。" + PageEvidenceRule
 	case "critical":
-		return "以审稿人视角做 Critical View：claim-evidence 是否对齐、Strengths、Weaknesses、Questions、Missing Experiments 四节；区分模拟与真实数据的边界。" + PageEvidenceRule
+		return "以审稿人视角做 Critical View：claim-evidence 是否对齐、Strengths、Weaknesses、Questions、Missing Experiments 四节；按论文类型区分实验、模拟/合成、观察研究、现场或真实场景证据，不适用的类别跳过。" + PageEvidenceRule
 	case "motivation":
-		return "解析实验动机，按四节组织：问题与应用场景、既有方法局限、研究假设、贡献与适用边界。说明具体受限条件（如稀疏投影或有限角），区分作者主张与实验已经支持的范围；研究假设只写作者明确提出的内容，不代作者猜测动机。每节至少保留一个条目，缺失则明确标记未知。" + researchNotesContract
+		return "解析研究动机，按四节组织：问题与应用场景、既有工作局限、研究问题或假设、贡献与适用边界。说明论文明确提出的约束条件，区分作者主张与证据实际支持的范围；研究问题和假设只写作者明确提出的内容，不代作者猜测动机。每节至少保留一个条目，缺失则明确标记未知。" + researchNotesContract
 	case "method":
-		return "解析方法公式，按四节组织：输入与输出、体积表示与模块数据流、投影约束与损失、优化步骤与适用条件。按输入→表示→投影→损失→更新→输出说明阶段，区分训练与推理。关键公式解释符号含义、优化对象、约束与假设，并指出它在数据流中的位置；未知维度不可补全。每节至少保留一个条目，缺失则明确标记未知。符号不完整只解释作用并指向原 PDF，不拼造公式。" + researchNotesContract + ` 公式另列入可选字段 "formulas"：[{"latex":"不带定界符的 LaTeX 源码","explanation":"公式含义与适用条件","page":1,"excerpt":"同页连续逐字原文"}]。只转写材料中看得清的公式；不确定时不要补全或猜符号，也不要添加转写状态标签。`
+		return "解析论文的方法或研究设计，按四节组织：研究对象/输入与输出、方法或流程结构、核心机制/分析方法、适用条件与局限。按论文实际流程解释各阶段及其关系；算法论文可说明训练与推理，实证研究可说明样本、干预/观察、测量与分析，理论研究可说明定义、命题与推导。关键公式解释符号含义、研究对象、假设和适用范围；没有公式或某类环节时明确说明不适用，未知维度不可补全。每节至少保留一个条目，缺失则明确标记未知。符号不完整只解释作用并指向原 PDF，不拼造公式。" + researchNotesContract + ` 公式另列入可选字段 "formulas"：[{"latex":"不带定界符的 LaTeX 源码","explanation":"公式含义与适用条件","page":1,"excerpt":"同页连续逐字原文"}]。只转写材料中看得清的公式；不确定时不要补全或猜符号，也不要添加转写状态标签。`
 	case "reproduction":
-		return `制定代码复现计划，覆盖 resources（代码/数据/权重）、environment（依赖/特殊算子）、cost（训练时间/显存）、missing（几何/预处理/参数缺失）、risks（实现和评测协议）。只输出 JSON，五组均给出1–4项：{"resources":[{"finding":{"k":"字段","v":"原文事实或论文未说明","page":1,"excerpt":"同页逐字摘录"},"assessment":"有条件的分析，区分事实与推断","action":"可以执行的核对或复现步骤"}],"environment":[],"cost":[],"missing":[],"risks":[]}。未知信息用 v="论文未说明",page=null,excerpt=null，但必须给出核对行动。不可编造代码路径、仓库地址、运行结果；没有仓库源码时只作计划。核对行动按先确认资源、再准备环境、最小运行、对齐评测的顺序组织；给出可观察的完成条件和依赖，不虚构终端命令、硬件预算或已经执行的状态。` + PageEvidenceRule
+		return `制定可执行的研究复现或验证计划，覆盖 resources（代码/数据/材料/权重等资源）、environment（软件、设备、依赖或实验条件）、cost（时间、算力、样本或其他资源成本）、missing（方法、数据、流程或参数缺失）、risks（实现、研究设计与评估协议）。只输出 JSON，五组均给出1–4项：{"resources":[{"finding":{"k":"字段","v":"原文事实或论文未说明","page":1,"excerpt":"同页逐字摘录"},"assessment":"有条件的分析，区分事实与推断","action":"可以执行的核对或验证步骤"}],"environment":[],"cost":[],"missing":[],"risks":[]}。未知信息用 v="论文未说明",page=null,excerpt=null，但必须给出核对行动。不可编造代码路径、仓库地址、运行结果或实验条件；没有仓库源码时只作计划。核对行动按先确认资源、再准备环境或材料、最小运行/验证、对齐评估的顺序组织；给出可观察的完成条件和依赖，不虚构终端命令、硬件预算或已经执行的状态。` + PageEvidenceRule
 	case "experiment":
-		return `抽取实验配置，输出 JSON：{"dataset":[],"acquisition":[],"training":[],"loss":[],"metrics":[],"results":[],"baselines":[]}，每个元素为 {"k":"字段名","v":"摘录支持的事实或论文未说明","page":页码或null,"excerpt":"同页连续逐字摘录或null"}。覆盖数据集来源与划分、采集几何（views/角度/SOD/SDD/分辨率）、预处理、训练（优化器/学习率/迭代/batch）、损失、指标定义、对比基线及公平性条件。每组应保留需要复现的关键字段，未报告的参数逐条标记未知，不能因缺失直接省略整组。views 与几何必须分开；模拟与真实数据分开；单位保留原记法。注意："results" 数组必须为空（数值结果属于「结果分析」面板，写进实验配置会被校验拒绝）。硬性要求：一条事实一个字段，不得把多个数字/设置合并进同一条；v 里出现的每个数字都必须原样出现在该条 excerpt 中；excerpt 必须是对应页的连续逐字原文，不得改写、翻译或跨页拼接；读不到就写「论文未说明」且 page/excerpt 置 null；七个数组字段即使为空也必须输出空数组。只输出 JSON。`
+		return `抽取论文的研究设计与实证配置，输出 JSON：{"dataset":[],"acquisition":[],"training":[],"loss":[],"metrics":[],"results":[],"baselines":[]}，每个元素为 {"k":"字段名","v":"摘录支持的事实或论文未说明","page":页码或null,"excerpt":"同页连续逐字摘录或null"}。按论文适用情况覆盖研究对象/样本/数据来源与划分、实验或观察设计及数据收集条件、材料与预处理、实施流程/算法训练或研究程序、目标函数/统计分析方法、指标或评价标准、对照组/基线及公平性条件。领域专属参数只在论文涉及时记录；不适用的类别留空。未报告但与复现相关的字段逐条标记未知，不能因缺失直接省略整组。实验数据与模拟/合成数据在适用时区分，单位保留原记法。注意："results" 数组必须为空（结果属于「结果分析」面板，写进实验配置会被校验拒绝）。硬性要求：一条事实一个字段，不得把多个数字/设置合并进同一条；v 里出现的每个数字都必须原样出现在该条 excerpt 中；excerpt 必须是对应页的连续逐字原文，不得改写、翻译或跨页拼接；读不到就写「论文未说明」且 page/excerpt 置 null；七个数组字段即使为空也必须输出空数组。只输出 JSON。`
 	case "results":
-		return `抽取结果表及有证据的分析，输出完整 JSON，不输出计算差值（差值由程序计算）。F={"k":"字段名","v":"摘录支持的事实或论文未说明","page":页码或null,"excerpt":"同页连续逐字摘录或null"}。结构：{"tables":[{"id":"table2","primaryMethodID":null,"caption":F,"header":F,"protocol":F,"columns":[{"id":"abdomen_psnr","label":"原表列标签","metric":"原文指标名","unit":"原文单位或论文未说明","context":F}],"rows":[{"id":"naf","method":"原表方法名","evidence":F,"cells":[{"columnID":"abdomen_psnr","valueText":"原表该格数字字符串","uncertaintyText":null}]}]}],"stability":[D],"ablation":[D],"generalization":[D],"efficiency":[D],"statistics":[F],"missing":[]}。D={"evidence":F,"interpretation":"有条件的解读，勿超出实验范围","tableID":"对应表 id 或 null","visualID":null}。valueText 保留原记法（如 .958 不得改成 0.958），只含一个数字不含单位；某格读不清就省略并在 missing 写明。单位必须在 context 摘录中出现，否则填「论文未说明」。不编造表格、统计检验或 p 值。逐一检查稳定性、消融、跨数据泛化、计算效率与统计报告；没有对应证据时在 missing 明确列出缺失，不能把单一数据集的结果推广到未实验的场景，也不能把不一致的协议直接排名。硬性要求：一条事实一个字段；excerpt 必须是对应页的连续逐字原文，不得改写或跨页拼接；v/interpretation 里出现的每个数字都必须原样出现在对应摘录中；所有数组字段（含 statistics 与 missing）即使为空也必须输出空数组。只输出 JSON。`
+		return `抽取结果表及有证据的分析，输出完整 JSON，不输出计算差值（差值由程序计算）。F={"k":"字段名","v":"摘录支持的事实或论文未说明","page":页码或null,"excerpt":"同页连续逐字摘录或null"}。结构：{"tables":[{"id":"table1","primaryMethodID":null,"caption":F,"header":F,"protocol":F,"columns":[{"id":"primary_metric","label":"原表列标签","metric":"原文指标名","unit":"原文单位或论文未说明","context":F}],"rows":[{"id":"proposed_method","method":"原表方法/组别名","evidence":F,"cells":[{"columnID":"primary_metric","valueText":"原表该格数字字符串","uncertaintyText":null}]}]}],"stability":[D],"ablation":[D],"generalization":[D],"efficiency":[D],"statistics":[F],"missing":[]}。D={"evidence":F,"interpretation":"有条件的解读，勿超出研究设计与证据范围","tableID":"对应表 id 或 null","visualID":null}。valueText 保留原记法，只含一个数字不含单位；某格读不清就省略并在 missing 写明。单位必须在 context 摘录中出现，否则填「论文未说明」。不编造表格、统计检验或 p 值。按论文适用性检查稳健性、消融/组件分析、外部验证或泛化、效率/成本与统计报告；没有对应证据时在 missing 明确列出缺失，不得把未研究的场景推广成结论，也不能把不一致的协议直接排名。硬性要求：一条事实一个字段；excerpt 必须是对应页的连续逐字原文，不得改写或跨页拼接；v/interpretation 里出现的每个数字都必须原样出现在对应摘录中；所有数组字段（含 statistics 与 missing）即使为空也必须输出空数组。只输出 JSON。`
 	case "apply":
-		return `结合用户的研究画像，给出「迁移到我的研究」建议，输出 JSON：{"reusable":[],"adaptation":[],"conflicts":[],"validation":[]}，每组元素为 {"title":"","suggestion":"","constraint":"研究约束","verification":"验证实验","evidence":[{"k":"","v":"","page":页码或null,"excerpt":"逐字摘录或null"}]}。每条必须有原文依据（至少一项带真实页码的 evidence）；不确定的写进 constraints，不得编造。只输出 JSON。`
+		return `结合用户的研究画像，给出「迁移到我的研究」建议，输出 JSON：{"reusable":[],"adaptation":[],"conflicts":[],"validation":[]}，每组元素为 {"title":"","suggestion":"","constraint":"研究约束","verification":"验证或分析方案","evidence":[{"k":"","v":"","page":页码或null,"excerpt":"逐字摘录或null"}]}。每条必须有原文依据（至少一项带真实页码的 evidence）；不确定的写进 constraints，不得编造。只输出 JSON。`
 	case "code":
 		return `把论文的关键概念映射到仓库代码，输出 JSON：{"mappings":[{"concept":"论文概念/模块名","paper":{"k":"概念名","v":"摘录支持的说明","page":页码,"excerpt":"同页逐字摘录"},"path":"仓库内文件路径","startLine":1,"endLine":10,"codeExcerpt":"该行范围内逐字连续代码","symbol":"文件里真实存在的定义名或未知","reasoning":"为什么这几行对应该概念","confidence":0.0}],"missing":["尚需核对的具体事项"]}。硬要求：path 必须来自提供的文件列表；startLine/endLine 必须在文件行数内且 codeExcerpt 能在该范围内逐字找到（只允许忽略行首缩进差异）；symbol 必须是文件里真实出现的名字，不确定写「未知」；confidence 在 0–1；paper.page 必须是真实页码。只输出 JSON。`
 	}

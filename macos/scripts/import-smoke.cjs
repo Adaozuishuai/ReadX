@@ -5,7 +5,9 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
-const workspace = path.join(root, '.tmp-smoke', `import-${process.pid}`);
+const updates = process.argv.includes('--updates');
+const workspace = path.join(root, '.tmp-smoke', `${updates ? 'updates' : 'import'}-${process.pid}`);
+const runner = updates ? 'runUpdateSmoke' : 'runImportSmoke';
 
 // CDP pipe keeps the browser isolated without opening a debugging port or adding dependencies.
 function connect(browser) {
@@ -76,7 +78,7 @@ async function main() {
     const { default: react } = await import('@vitejs/plugin-react');
     fs.writeFileSync(path.join(workspace, 'index.html'), `<!doctype html>
       <style>.shot-zone { position: relative; width: 600px; height: 340px; }</style>
-      <div id="root"></div><script type="module" src="/scripts/import-smoke.jsx"></script>`);
+      <div id="root"></div><script type="module" src="/scripts/${updates ? 'update' : 'import'}-smoke.jsx"></script>`);
     const metadataModule = path.join(root, 'apps/web/src/components/DocumentJobDialog.tsx').replace(/\\/g, '/');
     server = await createServer({
       root,
@@ -111,11 +113,11 @@ async function main() {
     const page = path.relative(root, path.join(workspace, 'index.html')).replace(/\\/g, '/');
     await cdp('Page.navigate', { url: `http://127.0.0.1:${server.httpServer.address().port}/${page}` }, sessionId);
     const deadline = Date.now() + 15000;
-    while (!(await evaluate('typeof window.runImportSmoke === "function"'))) {
+    while (!(await evaluate(`typeof window.${runner} === "function"`))) {
       if (Date.now() >= deadline) throw new Error(`Regression page did not load: ${await evaluate('document.body.innerText')}`);
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    const results = await evaluate('window.runImportSmoke()', true);
+    const results = await evaluate(`window.${runner}()`, true);
     for (const result of results) console.log(`PASS ${result}`);
   } catch (error) {
     if (browserErrors.trim()) console.error(browserErrors);

@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from retainpdf_translation.core.ocr.models import TextItem
@@ -28,7 +29,7 @@ def _atomic_write_json(path: Path, payload: object) -> None:
             json.dump(payload, f, ensure_ascii=False, indent=2)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        _replace_with_retry(tmp_path, path)
         _fsync_parent_dir(path)
     except Exception:
         try:
@@ -36,6 +37,19 @@ def _atomic_write_json(path: Path, payload: object) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+def _replace_with_retry(source: Path, destination: Path) -> None:
+    """Retry transient Windows file locks while preserving atomic replacement."""
+    attempts = 7 if os.name == "nt" else 1
+    for attempt in range(attempts):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError as exc:
+            if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32} or attempt + 1 == attempts:
+                raise
+            time.sleep(min(0.1 * (2**attempt), 1.0))
 
 
 def _fsync_parent_dir(path: Path) -> None:

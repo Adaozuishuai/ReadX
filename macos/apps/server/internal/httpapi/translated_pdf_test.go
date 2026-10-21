@@ -267,7 +267,13 @@ func TestImportRunsPaddleOCRAndStoresLayout(t *testing.T) {
 	if !found {
 		t.Fatalf("Lee 段落缺少正文块: %v", blocks)
 	}
-	// 2) OCR 段落的译文已随导入入库（按段落哈希）。
+	// Background translation is asynchronous; wait for its actual completion.
+	if stage := waitForTestJobStage(t, bundle, key, "translate"); stage["status"] != "done" {
+		t.Fatalf("后台翻译失败: %v", stage)
+	}
+	if stage := waitForTestJobStage(t, bundle, key, "memory"); stage["status"] != "done" {
+		t.Fatalf("论文记忆失败: %v", stage)
+	}
 	var rows int
 	if err := bundle.handle.QueryRow(`SELECT COUNT(*) FROM translations WHERE document_id = ?`, key).Scan(&rows); err != nil {
 		t.Fatal(err)

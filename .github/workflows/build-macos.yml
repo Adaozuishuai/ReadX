@@ -30,7 +30,7 @@ jobs:
         working-directory: macos
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm test && npm run build:release && npm run test:desktop && npm run test:packaged
+        run: npm test && npm run test:updates && npm run build:release && npm run test:desktop && npm run test:packaged
       - uses: actions/upload-artifact@v4
         with:
           name: ReadX-macOS

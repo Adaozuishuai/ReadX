@@ -20,6 +20,7 @@ const BRAND_IMAGE: Record<string, string> = {
 
 const BRAND_MONOGRAM: Record<string, { text: string; color: string }> = {
   deepseek: { text: 'DS', color: '#4D6BFE' },
+  workbuddy: { text: 'WB', color: '#0B63CE' },
   qwen: { text: '通', color: '#615CED' },
   glm: { text: 'GLM', color: '#3859FF' },
   volcengine: { text: '方', color: '#1664FF' },

@@ -46,7 +46,7 @@ function releaseNoteNode(node: Node, key: string): ReactNode {
   return createElement(tag, { key }, children);
 }
 
-function ReleaseNotesContent({ value }: { value: string }) {
+export function ReleaseNotesContent({ value }: { value: string }) {
   let source = value.replace(/\\(?=<\/?[a-z][^>]*>)/gi, '');
   // electron-updater/GitHub metadata can hand us an HTML body with its angle
   // brackets entity-escaped. Decode only when no real tags are present; the
@@ -623,19 +623,38 @@ export function LibraryScreen({
   );
 }
 
-function UpdateControl() {
+export function UpdateControl() {
   const [status, setStatus] = useState<DesktopUpdateStatus>(() => (
     window.__READX_DESKTOP_UPDATES__
       ? { state: 'idle' }
-      : { state: 'unsupported', message: '应用内更新仅在 Windows 桌面安装版中提供。' }
+      : { state: 'unsupported', message: '应用内更新仅在 Windows 或 macOS 桌面安装版中提供。' }
   ));
   const [confirmingUpdate, setConfirmingUpdate] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const dismissedVersion = useRef<string | null>(null);
   const bridge = window.__READX_DESKTOP_UPDATES__;
 
-  useEffect(() => bridge?.onStatus(setStatus), [bridge]);
   useEffect(() => {
+    if (!bridge) return;
+    let active = true;
+    let receivedStatus = false;
+    const unsubscribe = bridge.onStatus(next => {
+      receivedStatus = true;
+      if (active) setStatus(next);
+    });
+    // Subscribe first, so a slow initial snapshot cannot overwrite a new event.
+    void bridge.getStatus().then(next => {
+      if (active && !receivedStatus) setStatus(next);
+    }).catch(() => {
+      if (active && !receivedStatus) setStatus({ state: 'error', message: '无法读取更新状态，请重试或重新启动 ReadX。' });
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [bridge]);
+  useEffect(() => {
+    if (status.state !== 'available') {
+      setConfirmingUpdate(false);
+      return;
+    }
     if (status.state === 'available' && status.version && dismissedVersion.current !== status.version) {
       setConfirmingUpdate(true);
     }
@@ -654,28 +673,39 @@ function UpdateControl() {
 
   const run = async () => {
     if (!bridge) return;
-    if (status.state === 'available') {
-      setConfirmingUpdate(false);
-      setStatus({ ...status, state: 'downloading', percent: 0 });
-      setStatus(await bridge.download());
-    } else if (status.state === 'downloaded') {
-      bridge.install();
-    } else {
-      setStatus({ ...status, state: 'checking' });
-      setStatus(await bridge.check());
+    try {
+      if (status.state === 'available' || (status.state === 'error' && status.operation === 'download')) {
+        setConfirmingUpdate(false);
+        setStatus({ ...status, state: 'downloading', percent: 0 });
+        setStatus(await bridge.download());
+      } else if (status.state === 'downloaded' || (status.state === 'error' && status.operation === 'install')) {
+        setStatus(await bridge.install());
+      } else {
+        setStatus({ ...status, state: 'checking' });
+        setStatus(await bridge.check());
+      }
+    } catch {
+      setStatus({ ...status, state: 'error', operation: 'check', message: '无法完成更新操作，请重试或重新启动 ReadX。' });
     }
   };
 
   const busy = status.state === 'checking' || status.state === 'downloading';
   const label = status.state === 'checking' ? '正在检查更新…'
-    : status.state === 'current' ? `已是最新版本${status.currentVersion ? ` · v${status.currentVersion}` : ''}`
+    : status.state === 'current' ? (status.version === status.currentVersion
+      ? `已是最新版本 · v${status.version}`
+      : `当前版本 · v${status.currentVersion}`)
       : status.state === 'available' ? `下载更新 · v${status.version}`
         : status.state === 'downloading' ? `正在下载 · ${Math.round(status.percent ?? 0)}%`
           : status.state === 'downloaded' ? `重启并安装${status.version ? ` · v${status.version}` : ''}`
-            : status.state === 'error' ? '检查更新失败 · 点击重试'
-              : status.state === 'unsupported' ? '桌面版更新'
-                : '检查更新';
-  const detail = status.state === 'error' || status.state === 'unsupported' ? status.message : undefined;
+            : status.state === 'error' ? '更新失败 · 点击重试'
+              : status.state === 'unavailable' ? (status.version ? `最新发布 · v${status.version}` : '暂无此平台更新 · 点击重查')
+                : status.state === 'unsupported' ? '桌面版更新'
+                  : '检查更新';
+  const detail = status.state === 'unavailable'
+    ? `${status.currentVersion ? `当前版本 v${status.currentVersion}。` : ''}${status.message ?? ''}`
+    : status.state === 'current' && status.version !== status.currentVersion
+      ? `更新源最新版本 v${status.version}；当前版本 v${status.currentVersion}。`
+      : status.state === 'error' || status.state === 'unsupported' ? status.message : undefined;
   const disabled = !bridge || busy;
 
   return (

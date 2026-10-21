@@ -7,8 +7,8 @@ const STRUCTURED_LABELS: Record<string, string> = {
   sections: '内容', fields: '要点', k: '字段', v: '内容', page: '页码', excerpt: '原文依据', formulas: '公式',
   visuals: '相关图表', step: '所属步骤', analysis: '图表分析', tables: '结果表', caption: '表题', header: '表头', protocol: '实验协议',
   columns: '指标列', rows: '结果行', method: '方法', cells: '数值', valueText: '数值', uncertaintyText: '误差', label: '指标', metric: '指标名', unit: '单位',
-  stability: '稳定性', ablation: '消融实验', generalization: '泛化能力', efficiency: '效率', statistics: '统计报告', missing: '缺失与待核对',
-  resources: '代码、数据与权重', environment: '环境与依赖', cost: '训练成本', risks: '风险与评测协议', finding: '论文依据', assessment: '分析', action: '核对行动',
+  stability: '稳健性', ablation: '组件或分组分析', generalization: '外部验证与泛化', efficiency: '效率与成本', statistics: '统计报告', missing: '缺失与待核对',
+  resources: '代码、数据与材料', environment: '环境与依赖', cost: '资源成本', risks: '风险与评估协议', finding: '论文依据', assessment: '分析', action: '核对行动',
   interpretation: '结果解读', title: '标题', id: '编号', suggestedStep: '建议步骤',
 };
 
@@ -128,7 +128,7 @@ export function DetailedResultsBlock({ entry, onCite, renderVisuals }: { entry: 
     <ResultComparison key={entry.updatedAt || entry.value} table={table} />
   </section>)}
     {['stability', 'ablation', 'generalization', 'efficiency', 'statistics', 'missing'].map((group) => {
-      const labels: Record<string, string> = { stability: '稳定性', ablation: '消融实验', generalization: '泛化能力', efficiency: '效率', statistics: '统计报告', missing: '缺失与待核对' };
+      const labels: Record<string, string> = { stability: '稳健性', ablation: '组件或分组分析', generalization: '外部验证与泛化', efficiency: '效率与成本', statistics: '统计报告', missing: '缺失与待核对' };
       const rows = result[group];
       return <section key={group} className="reading-section"><h3>{labels[group]}</h3>{renderVisuals?.(labels[group]!)}{Array.isArray(rows) && rows.length ? rows.map((item, index) => typeof item === 'string' ? <p key={index}>{item}</p> : item && <div key={index}>{item.evidence ? <><EvidenceField field={item.evidence} onCite={onCite} /><p className="reproduction-assessment">有条件的解读：{typeof item.interpretation === 'string' ? item.interpretation : ''}</p></> : <EvidenceField field={item} onCite={onCite} />}</div>) : <p className="precision-muted">暂无内容</p>}</section>;
     })}
@@ -140,7 +140,7 @@ export function ReproductionNotesBlock({ entry, onCite, renderVisuals }: { entry
   const payload = parseJSONPayload(entry.value);
   if (!payload.ok) return <div className="whitespace-pre-wrap text-[13px] leading-relaxed"><MathText text={entry.value} /></div>;
   const analysis = payload.value as Record<string, unknown>;
-  const labels: Record<string, string> = { resources: '代码、数据与权重', environment: '环境与依赖', cost: '训练成本', missing: '实现缺失', risks: '风险与评测协议' };
+  const labels: Record<string, string> = { resources: '代码、数据与材料', environment: '环境与依赖', cost: '资源成本', missing: '实现缺失', risks: '风险与评估协议' };
   if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis) || Object.entries(labels).some(([group]) => analysis[group] != null && (!Array.isArray(analysis[group]) || (analysis[group] as unknown[]).some((item) => !item || typeof item !== 'object' || typeof (item as Record<string, unknown>).assessment !== 'string' || typeof (item as Record<string, unknown>).action !== 'string')))) return <StructuredJSONView value={analysis} onCite={onCite} />;
   return <div>{Object.entries(labels).map(([group, label]) => <section key={group} className="reading-section"><h3>{label}</h3>{Array.isArray(analysis[group]) && (analysis[group] as Record<string, unknown>[]).map((item, index) => <div key={index}>
     {item.finding != null && <StructuredJSONView value={item.finding} onCite={onCite} />}<p className="reproduction-assessment"><strong>分析与推断：</strong>{typeof item.assessment === 'string' ? item.assessment : '—'}</p><p className="reproduction-action"><strong>核对行动：</strong>{typeof item.action === 'string' ? item.action : '—'}</p>

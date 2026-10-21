@@ -25,10 +25,11 @@
     "test:import": "node scripts/import-smoke.cjs",
     "test:presentation": "node scripts/test-presentation.cjs",
     "build:go": "node scripts/build-server.mjs",
-    "test": "npm run test:go && npm run test -w @cbct/shared && npm run typecheck",
+    "test": "npm run test:go && npm run test -w @cbct/shared && npm run typecheck && npm run test -w @cbct/desktop",
     "dev": "node scripts/dev.mjs",
     "start": "node scripts/dev.mjs --built",
-    "shortcut": "node scripts/shortcut.mjs"
+    "shortcut": "node scripts/shortcut.mjs",
+    "test:updates": "node scripts/import-smoke.cjs --updates"
   },
   "allowScripts": {
     "electron@44.2.0": true,

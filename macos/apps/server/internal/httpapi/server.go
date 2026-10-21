@@ -33,6 +33,8 @@ const staticCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 type Server struct {
 	downloadPublication func(context.Context, string, int64, func(int64, int64)) ([]byte, string, error)
 	settingsMu          sync.Mutex
+	workBuddyLoginMu    sync.Mutex
+	workBuddyLogin      workBuddyLoginStatus
 	appStateMu          sync.Mutex
 	// graphMu 只保护「读缓存 → 调 180s 模型 → 写缓存」的短窗口：模型调用期间不持锁，
 	// 否则一次抽取会把图谱读写与其它 app_state 功能一起卡死。
@@ -43,11 +45,12 @@ type Server struct {
 	paperVisualLocks keyedLockTable
 	// jobsMu 保护导入任务表：任务更新频繁（逐页翻译/渲染），但临界区只有内存改字段，
 	// 落盘在锁外做，不能把 SQLite 写入拖进热点。
-	jobsMu     sync.Mutex
-	importJobs map[string]*jobRuntime
-	cfg        config.Config
-	handle     *sql.DB
-	startedAt  time.Time
+	jobsMu          sync.Mutex
+	jobPersistLocks keyedLockTable
+	importJobs      map[string]*jobRuntime
+	cfg             config.Config
+	handle          *sql.DB
+	startedAt       time.Time
 }
 
 func New(cfg config.Config, handle *sql.DB) *Server {
@@ -83,14 +86,19 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/documents/{key}/pages/{page}/translated-page", withAuth(s.handleTranslatedPage))
 	mux.Handle("GET /v1/documents/{key}/layout", withAuth(s.handleLayoutStatus))
 	mux.Handle("GET /v1/documents/{key}/pages/{page}/paragraphs", withAuth(s.handleDocumentParagraphs))
+	mux.Handle("GET /v1/documents/{key}/pages/{page}/translation-preview", withAuth(s.handleTranslationPreview))
 	mux.Handle("GET /v1/documents/{key}/translation-qa", withAuth(s.handleTranslationQA))
 	mux.Handle("GET /v1/documents/{key}/job", withAuth(s.handleDocumentJob))
+	mux.Handle("POST /v1/documents/{key}/retranslate", withAuth(s.handleRetranslate))
 	mux.Handle("POST /v1/documents/{key}/job/cancel", withAuth(s.handleCancelDocumentJob))
 	mux.Handle("GET /v1/ai/status", withAuth(s.handleAIStatus))
 	mux.Handle("GET /v1/ai/settings", withAuth(s.handleAISettings))
 	mux.Handle("PUT /v1/ai/settings", withAuth(s.handleAISettings))
 	mux.Handle("POST /v1/ai/test", withAuth(s.handleAIProbe))
 	mux.Handle("POST /v1/ai/models", withAuth(s.handleAIModels))
+	mux.Handle("POST /v1/ai/workbuddy/login", withAuth(s.handleWorkBuddyLogin))
+	mux.Handle("GET /v1/ai/workbuddy/login", withAuth(s.handleWorkBuddyLoginStatus))
+	mux.Handle("DELETE /v1/ai/workbuddy/login", withAuth(s.handleWorkBuddyLogout))
 	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
 	mux.Handle("POST /v1/ai/presentation-theme", withAuth(s.handleAIPresentationTheme))
 	mux.Handle("POST /v1/ai/presentation-plan", withAuth(s.handleAIPresentationPlan))
@@ -280,7 +288,7 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.syncDerivedDocumentStatuses(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "刷新阅读状态失败: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "刷新书库阅读状态失败: "+err.Error())
 		return
 	}
 	query := `SELECT id, key, title, authors, year, venue, doi, url, status, pdf_path, added_at, updated_at, format, translated_title

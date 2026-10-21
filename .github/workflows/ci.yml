@@ -70,6 +70,9 @@ jobs:
       - name: 测试与类型检查
         working-directory: windows
         run: npm test
+      - name: 更新界面回归
+        working-directory: windows
+        run: npm run test:updates
 
   macos:
     name: macOS · Go + web + Electron + PDF runtime
@@ -102,6 +105,9 @@ jobs:
       - name: Import component regression
         working-directory: macos
         run: npm run test:import
+      - name: Update component regression
+        working-directory: macos
+        run: npm run test:updates
       - name: Electron desktop regression
         working-directory: macos
         run: npm run test:desktop
@@ -111,5 +117,5 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           node scripts/prepare-release.mjs
-          npm exec --workspace=@cbct/desktop -- electron-builder --mac --dir --publish never
+          npm exec --workspace=@cbct/desktop -- electron-builder --mac zip --publish never
           npm run test:packaged

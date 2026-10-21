@@ -152,6 +152,10 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 				fail(err)
 				return
 			}
+			if translationUnits > 0 && len(metadata.Translations) == 0 {
+				fail(errors.New("未生成可用译文，原文已保留，可重新翻译"))
+				return
+			}
 			if err := s.persistLeeTranslationSegments(ctx, documentKey, metadata.Translations); err != nil {
 				fail(err)
 				return

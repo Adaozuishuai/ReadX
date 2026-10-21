@@ -60,6 +60,7 @@ npm test
 npm run build
 npm run check:runtime
 npm run test:import
+npm run test:updates
 npm run test:desktop
 ```
 
@@ -72,8 +73,14 @@ Go 测试含模拟 OCR / 模型与真实 Python / PDF 渲染集成；自动注�
 ```sh
 npm run build:release
 npm run test:packaged
+# 可选联网验证：真实更新源、并发 IPC 检查与版本号
+node scripts/packaged-smoke.mjs --check-updates
 ```
 
 产物位于 `release/`：当前架构的 ReadX.app、DMG 和更新用 ZIP。包内包含 Go、React、Python 及依赖、Typst、RetainPDF、Node 渲染依赖和字体。普通用户不需要开发工具，OCR 与云端模型仍需联网。
 
 本机未签名构建不代表通过 Gatekeeper 或公证。仓库的 `build-macos.yml` 在 macOS runner 上构建 DMG、ZIP、blockmap 和 `latest-mac.yml`，并在推送 `macos-vX.Y.Z` 标签后上传到同版本的 GitHub Release；Windows 安装包由 `vX.Y.Z` 标签对应的 Release workflow 构建。自动更新是否可用还取决于 macOS 对未签名应用的安全策略；首次启动或更新若被系统拦截，请从 Release 下载 DMG 手动安装。
+
+打包测试使用独立书库与 Electron 配置目录，不操作日常书库。CI 使用完整 ZIP 打包，拒绝缺少 `app-update.yml` 的应用目录。
+
+本机构建不会创建线上更新。更新源缺少 macOS 更新清单时会尝试读取最新公开发布版本，并提示该平台暂不可更新；不能据此判断当前版本已是最新。更新测试还覆盖并发、重试、窗口重开、超时、安装前置条件，以及 Mac 下载完成后等待原生更新器校验的顺序。

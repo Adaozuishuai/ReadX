@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary, PDFLayout } from '@cbct/shared';
 import { pageParagraphs, segmentParagraph, statusLabel } from '@cbct/shared';
-import { api, type Annotation, type EPUBSection } from '../api/client';
+import { api, type Annotation, type EPUBSection, type TranslationPreview } from '../api/client';
 import type { DocumentPhase } from '../hooks/useDocument';
 import { AssistantSidebar, type AssistantTab } from './AssistantPanels';
 import type { useAnnotations } from '../hooks/useAnnotations';
@@ -69,6 +69,8 @@ export function ReaderScreen({
   const documentKey = selected?.key ?? null;
   const pdf = usePDF(!epub ? documentKey : null);
   const translatedPDF = usePDF(!epub ? documentKey : null, true);
+  const [liveTranslationPreview, setLiveTranslationPreview] = useState<TranslationPreview | null>(null);
+  const [liveTranslationProgress, setLiveTranslationProgress] = useState('等待本页译文…');
   const [mode, setMode] = useState<ReadingMode>('source');
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 1000);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth >= 1200);
@@ -139,6 +141,42 @@ export function ReaderScreen({
     ? sections.length
     : (pdf.document?.numPages ?? cachedPages.length);
   const current = Math.max(1, Math.min(page ?? 1, count || 1));
+  useEffect(() => {
+    setLiveTranslationPreview(null);
+    setLiveTranslationProgress('等待本页译文…');
+    if (epub || !documentKey || !pdf.document || translatedPDF.document) return;
+    const controller = new AbortController();
+    let cancelled = false;
+    void (async () => {
+      try {
+        while (!cancelled) {
+          const result = await api.translationPreview(documentKey, current, controller.signal);
+          if (cancelled) return;
+          setLiveTranslationPreview(result);
+          const total = result.totalBlocks ?? 0;
+          const translated = result.translatedBlocks ?? 0;
+          setLiveTranslationProgress(!result.available
+            ? '正在等待 LeePDF 完成本页识别…'
+            : total === 0
+              ? '本页没有可显示的译文'
+              : `本页译文 ${translated} / ${total} 段${translated < total ? '，完成内容已实时显示' : ''}`);
+          if (result.available && (total === 0 || translated >= total)) return;
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(resolve, 1500);
+            controller.signal.addEventListener('abort', () => { window.clearTimeout(timer); resolve(); }, { once: true });
+          });
+        }
+      } catch (cause) {
+        if (!cancelled && !controller.signal.aborted) {
+          setLiveTranslationProgress(`本页译文暂不可用：${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [documentKey, epub, current, pdf.document, translatedPDF.document]);
   const [navigationRequest, setNavigationRequest] = useState<{ page: number; y?: number; viewportOffset?: number; nonce: number }>(() => ({ page: page ?? 1, nonce: 0 }));
   const [translationNavigationRequest, setTranslationNavigationRequest] = useState<{ page: number; y?: number; viewportOffset?: number; nonce: number }>(() => ({ page: page ?? 1, nonce: 0 }));
   const navigatePage = useCallback((targetPage: number, y?: number) => {
@@ -481,9 +519,16 @@ export function ReaderScreen({
           onText={() => undefined}
           onAnnotationClick={openHighlightedTextActions}
         />
+      ) : liveTranslationPreview?.blocks.length ? (
+        <div className="translation-document live-translation-preview" aria-live="polite">
+          <p className="live-translation-status">第 {current} 页 · {liveTranslationProgress}</p>
+          {liveTranslationPreview.blocks.map((block, index) => (
+            <p className="live-translation-block" key={`${index}-${block.source.slice(0, 32)}`}>{block.target}</p>
+          ))}
+        </div>
       ) : (
         <div className="translation-document">
-          <p>{translatedPDF.error || '正在加载 LeePDF 译文 PDF…'}</p>
+          <p>{liveTranslationProgress || translatedPDF.error || '正在等待 LeePDF 逐页翻译…'}</p>
         </div>
       )}
     </div>

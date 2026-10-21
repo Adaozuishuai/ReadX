@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -64,9 +65,11 @@ type chatChunk struct {
 
 // Client 是 OpenAI 兼容接口的最小客户端。
 type Client struct {
-	command cliCommandFactory
-	cfg     Config
-	http    *http.Client
+	command       cliCommandFactory
+	cfg           Config
+	http          *http.Client
+	authMu        sync.Mutex
+	workBuddyAuth WorkBuddyCredential
 }
 
 type transportError struct{ err error }
@@ -85,7 +88,7 @@ func (e *upstreamStatusError) Error() string { return e.message }
 func NewClient(cfg Config) *Client {
 	// Request deadlines are applied per operation. A fixed http.Client timeout
 	// would silently cap longer operations such as results analysis.
-	return &Client{cfg: cfg, http: &http.Client{}}
+	return &Client{cfg: cfg, http: &http.Client{}, workBuddyAuth: cfg.WorkBuddyAuth}
 }
 
 func (c *Client) post(ctx context.Context, payload chatRequest, timeout time.Duration) (*http.Response, error) {
@@ -111,13 +114,41 @@ func (c *Client) postRaw(ctx context.Context, payload any, timeout time.Duration
 		return nil, err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	if c.cfg.ProviderName() == "workbuddy" {
+		c.authMu.Lock()
+		cfg := c.cfg
+		cfg.WorkBuddyAuth = c.workBuddyAuth
+		credential, refreshErr := refreshWorkBuddyIfNeeded(ctx, cfg)
+		if refreshErr == nil {
+			c.workBuddyAuth = credential
+			setWorkBuddyBaseHeaders(request, credential.AccessToken)
+			request.Header.Set("Accept", "text/event-stream")
+			request.Header.Set("X-Product-Code", workBuddyProductCode)
+			request.Header.Set("X-Agent-Purpose", "conversation")
+			request.Header.Set("X-IDE-Name", workBuddyProductName)
+			request.Header.Set("X-IDE-Type", workBuddyProductName)
+			request.Header.Set("X-IDE-Version", workBuddyClientVersion)
+			request.Header.Set("X-Product", workBuddyProductName)
+		}
+		c.authMu.Unlock()
+		if refreshErr != nil {
+			return nil, refreshErr
+		}
+	} else {
+		request.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	}
 	response, err := c.http.Do(request)
 	if err != nil {
 		return nil, requestFailure(err, ctx, timeout)
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, statusFailure(response, c.cfg.APIKey)
+		secret := c.cfg.APIKey
+		if c.cfg.ProviderName() == "workbuddy" {
+			c.authMu.Lock()
+			secret = c.workBuddyAuth.AccessToken
+			c.authMu.Unlock()
+		}
+		return nil, statusFailure(response, secret)
 	}
 	return response, nil
 }

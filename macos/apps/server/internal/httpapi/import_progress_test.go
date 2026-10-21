@@ -122,12 +122,12 @@ func TestImportProgressStreamsDuringLeeProcessing(t *testing.T) {
 	}
 }
 
-func TestImportProgressFailureDoesNotReportCompletedTranslations(t *testing.T) {
+func TestImportProgressDoesNotClaimBackgroundTranslationCompleted(t *testing.T) {
 	front, handle, cfg := newTestServer(t, nil)
 	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
 		if len(sources) == 0 {
-			return `{"title":"Real paper title"}`, 200
+			return `{"title":"Real paper title","translatedTitle":"真实论文标题"}`, 200
 		}
 		return `{"items":[]}`, 200
 	})
@@ -138,7 +138,7 @@ func TestImportProgressFailureDoesNotReportCompletedTranslations(t *testing.T) {
 	}
 	defer res.Body.Close()
 	scanner := bufio.NewScanner(res.Body)
-	failed := false
+	key := ""
 	for scanner.Scan() {
 		if !strings.HasPrefix(scanner.Text(), "data:") {
 			continue
@@ -150,23 +150,33 @@ func TestImportProgressFailureDoesNotReportCompletedTranslations(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data:")), &event); err != nil {
 			t.Fatal(err)
 		}
-		if p := event.Progress; p != nil {
-			if p.Stage == "translation" && p.Completed != 0 {
-				t.Fatal("invalid translation was counted as completed")
-			}
-			if p.Stage == "saving" || p.Stage == "done" {
-				t.Fatal("failed translation was saved")
-			}
+		if p := event.Progress; p != nil && p.Stage == "translation" && p.Completed != 0 {
+			t.Fatal("invalid translation was counted as completed")
 		}
-		if len(event.Results) == 1 && event.Results[0].Error != "" {
-			failed = true
+		if len(event.Results) == 1 {
+			if event.Results[0].Error != "" || event.Results[0].Document == nil {
+				t.Fatalf("source import failed: %+v", event.Results)
+			}
+			key = event.Results[0].Document.Key
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	var count int
-	if err := handle.QueryRow(`SELECT COUNT(*) FROM documents`).Scan(&count); err != nil || count != 0 || !failed {
-		t.Fatalf("failure not surfaced atomically: %d %v", count, err)
+	if key == "" {
+		t.Fatal("source import did not return its document")
+	}
+	if stage := waitForTestJobStage(t, bundle, key, "translate"); stage["status"] != "failed" {
+		t.Fatalf("invalid translation reported success: %v", stage)
+	}
+	var documents, translations int
+	if err := handle.QueryRow(`SELECT COUNT(*) FROM documents`).Scan(&documents); err != nil {
+		t.Fatal(err)
+	}
+	if err := handle.QueryRow(`SELECT COUNT(*) FROM translations`).Scan(&translations); err != nil {
+		t.Fatal(err)
+	}
+	if documents != 1 || translations != 0 {
+		t.Fatalf("source must survive without invalid translations: documents=%d translations=%d", documents, translations)
 	}
 }

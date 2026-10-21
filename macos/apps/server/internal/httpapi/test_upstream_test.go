@@ -8,9 +8,38 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"cbctv2/server/internal/legacy"
 )
+
+// Translation now runs after import commits. Assert its terminal stage instead
+// of racing the worker or treating an imported source as a translated document.
+func waitForTestJobStage(t *testing.T, bundle *httptestServerBundle, key, stageKey string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var last map[string]any
+	for time.Now().Before(deadline) {
+		res, payload := post(t, bundle, http.MethodGet, "/v1/documents/"+key+"/job", "")
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("job unavailable: %d %v", res.StatusCode, payload)
+		}
+		job, _ := payload["job"].(map[string]any)
+		stages, _ := job["stages"].([]any)
+		for _, raw := range stages {
+			stage, _ := raw.(map[string]any)
+			if stage["key"] == stageKey {
+				last = stage
+				if stage["status"] == "done" || stage["status"] == "failed" || stage["status"] == "cancelled" {
+					return stage
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("job stage %s did not finish: %v", stageKey, last)
+	return nil
+}
 
 // fakeUpstream 是测试用的 OpenAI 兼容端点：翻译请求从 items[].source_text 取段落，
 // 其余（题录识别等）交给 reply 处理。与具体业务测试解耦，放在这里供各测试复用。
@@ -37,17 +66,27 @@ func fakeUpstream(t *testing.T, reply func(sources []string) (string, int)) *htt
 		// 翻译请求的 user 是 JSON（task + items）；从 items[].source_text 抠出段落。
 		// 兼容旧版 "[i] 段落" 行（测试夹具与调试脚本仍可能这么发）。
 		sources := []string{}
+		plainTranslation := false
+		// Lee's direct-Typst path requests one plain-text translation instead of
+		// the Go batch JSON protocol. Keep the fake aligned with both callers.
+		if start := strings.Index(user, "【当前原文开始】"); start >= 0 {
+			text := user[start+len("【当前原文开始】"):]
+			if end := strings.Index(text, "【当前原文结束】"); end >= 0 {
+				sources = append(sources, strings.TrimSpace(text[:end]))
+				plainTranslation = true
+			}
+		}
 		var batch struct {
 			Items []struct {
 				Source string `json:"source_text"`
 			} `json:"items"`
 		}
 		decoder := json.NewDecoder(strings.NewReader(user))
-		if err := decoder.Decode(&batch); err == nil && len(batch.Items) > 0 {
+		if err := decoder.Decode(&batch); !plainTranslation && err == nil && len(batch.Items) > 0 {
 			for _, item := range batch.Items {
 				sources = append(sources, item.Source)
 			}
-		} else {
+		} else if !plainTranslation {
 			for _, line := range strings.Split(user, "\n") {
 				line = strings.TrimSpace(line)
 				if strings.HasPrefix(line, "[") {
@@ -58,6 +97,19 @@ func fakeUpstream(t *testing.T, reply func(sources []string) (string, int)) *htt
 			}
 		}
 		content, status := reply(sources)
+		if plainTranslation && status == http.StatusOK {
+			var translated struct {
+				Items []struct {
+					Text string `json:"t"`
+				} `json:"items"`
+			}
+			if err := json.Unmarshal([]byte(content), &translated); err == nil {
+				content = ""
+				if len(translated.Items) > 0 {
+					content = translated.Items[0].Text
+				}
+			}
+		}
 		if status != http.StatusOK {
 			http.Error(w, content, status)
 			return

@@ -22,6 +22,8 @@ type Config struct {
 	CodexFastMode          bool   `json:"codexFastMode,omitempty"`
 	TranslationPreparation string `json:"translationPreparation,omitempty"`
 	tempRoot               string
+	workBuddyAuthPath      string
+	WorkBuddyAuth          WorkBuddyCredential `json:"-"`
 }
 
 func (c Config) ProviderName() string {
@@ -54,11 +56,21 @@ func LoadConfig(path string) (Config, error) {
 	// Keep request scratch files beside application data, where the local server
 	// has write access even if Windows denies access to the global temp folder.
 	cfg.tempRoot = filepath.Join(filepath.Dir(path), "data", "v2", "tmp")
+	cfg.workBuddyAuthPath = filepath.Join(filepath.Dir(path), "workbuddy-auth.json")
+	// A damaged WorkBuddy sidecar should require re-login without taking other
+	// providers (OpenAI, Codex, etc.) offline.
+	cfg.WorkBuddyAuth, _ = LoadWorkBuddyCredential(cfg.workBuddyAuthPath)
 	return cfg, nil
 }
 
 // Endpoint 校验并返回 chat/completions 的完整地址。
 func (c Config) Endpoint() (string, error) {
+	if c.ProviderName() == "workbuddy" {
+		if !c.Ready() {
+			return "", fmt.Errorf("请先登录 WorkBuddy")
+		}
+		return workBuddyEndpoint + "/v2/chat/completions", nil
+	}
 	if !c.Ready() {
 		return "", fmt.Errorf("还没配置 AI 助教的 API Key：编辑 app/config.json 填入 Key，保存即生效。")
 	}
@@ -91,6 +103,9 @@ func (c Config) PublicBaseURL() string {
 
 // Ready 判断是否真的可用（有 key、有地址、不是占位符）。
 func (c Config) Ready() bool {
+	if c.ProviderName() == "workbuddy" {
+		return strings.TrimSpace(c.WorkBuddyAuth.AccessToken) != ""
+	}
 	if c.IsCLI() {
 		return CLIAvailable(c.ProviderName())
 	}
@@ -106,6 +121,9 @@ func (c Config) ModelName() string {
 		return c.Model
 	}
 	if c.Model == "" {
+		if c.ProviderName() == "workbuddy" {
+			return "default-model"
+		}
 		if c.ProviderName() == "anthropic" {
 			return "claude-sonnet-4-5"
 		}
@@ -127,6 +145,9 @@ type Redacted struct {
 func (c Config) Redact() Redacted {
 	if !c.Ready() {
 		message := "请在 AI 设置中配置地址、模型和 Key"
+		if c.ProviderName() == "workbuddy" {
+			message = "请先在 AI 助手设置中登录 WorkBuddy"
+		}
 		if c.IsCLI() {
 			message = "未找到 " + c.ProviderName() + " CLI，请先安装并在终端登录"
 			if c.ProviderName() == "codex" {

@@ -358,6 +358,25 @@ func (s *Server) saveMeta(ctx context.Context, key string, meta DocumentMeta) er
 	return err
 }
 
+// restoreDocumentFromTrash makes re-importing a soft-deleted document restore the
+// existing library entry instead of creating a new OCR/translation run.
+func (s *Server) restoreDocumentFromTrash(ctx context.Context, key string) (DocumentSummary, error) {
+	s.appStateMu.Lock()
+	defer s.appStateMu.Unlock()
+	meta, err := s.loadMeta(ctx, key)
+	if err != nil {
+		return DocumentSummary{}, err
+	}
+	if meta.Deleted {
+		meta.Deleted = false
+		meta.Updated = nowStamp()
+		if err := s.saveMeta(ctx, key, meta); err != nil {
+			return DocumentSummary{}, err
+		}
+	}
+	return s.loadDocument(ctx, key)
+}
+
 func sortStringsLocal(items []string) {
 	for i := 1; i < len(items); i++ {
 		for j := i; j > 0 && strings.Compare(items[j], items[j-1]) < 0; j-- {

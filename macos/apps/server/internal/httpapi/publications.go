@@ -51,6 +51,7 @@ type recognizedPaperMetadata struct {
 	TranslatedTitle string
 	Pages           []publicationPageHint
 	Translations    []translateSegment
+	OCRPages        []ocr.Page
 	// LayoutPages 是导入时 OCR 识别出的段落坐标：阅读器据此按原版式渲染译文页。
 	LayoutPages       []layoutPage
 	Untranslated      int
@@ -80,11 +81,13 @@ func (s *Server) importPublication(ctx context.Context, name, source string, dat
 	sum := sha256.Sum256(data)
 	key := "doc-" + hex.EncodeToString(sum[:16])
 	if existing, err := s.loadDocument(ctx, key); err == nil {
+		existing, err = s.restoreDocumentFromTrash(ctx, key)
+		if err != nil {
+			return result, err
+		}
 		result.Document = &existing
 		result.Existing = true
-		if len(metadata) == 0 {
-			return result, nil
-		}
+		return result, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
@@ -236,6 +239,20 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 					}
 					sum := sha256.Sum256(data)
 					jobKey := "doc-" + hex.EncodeToString(sum[:16])
+					if _, lookupErr := s.loadDocument(ctx, jobKey); lookupErr == nil {
+						doc, restoreErr := s.restoreDocumentFromTrash(ctx, jobKey)
+						if restoreErr != nil {
+							result.Error = restoreErr.Error()
+							return
+						}
+						result.Document = &doc
+						result.Existing = true
+						update("saving", "已恢复书库中的论文，复用原有处理结果", 1, 1)
+						return
+					} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+						result.Error = lookupErr.Error()
+						return
+					}
 					jobCtx, jobCancel := context.WithCancel(ctx)
 					defer jobCancel()
 					s.beginImportJob(jobKey, file.Filename, len(hint.Pages), jobCancel)
@@ -284,8 +301,7 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 							result.Error = "OCR 没有保存可供排版的段落"
 							s.finishImportJob(jobKey, "failed", result.Error)
 						} else {
-							s.jobStage(jobKey, "render", "done", "Lee 已生成译文 PDF", len(metadata.LayoutPages), len(metadata.LayoutPages))
-							s.finishImportJob(jobKey, "done", "")
+							// OCR 入库后后台翻译/排版仍在运行；由后台 worker 收尾任务。
 						}
 					}
 				} else {
@@ -344,11 +360,24 @@ func (s *Server) runLocalPDFImport(
 		progress("ocr", "Lee 正在识别并处理论文", 0, 0)
 	}
 	contentHash := sha256.Sum256(pdf)
-	translatedPath, err := s.runLeePDFImport(ctx, "doc-"+hex.EncodeToString(contentHash[:16]), name, pdf, metadata)
+	jobKey := "doc-" + hex.EncodeToString(contentHash[:16])
+	if _, lookupErr := s.loadDocument(ctx, jobKey); lookupErr == nil {
+		doc, restoreErr := s.restoreDocumentFromTrash(ctx, jobKey)
+		if restoreErr != nil {
+			return importResult{Name: name}, restoreErr
+		}
+		result := importResult{Name: name, Document: &doc, Existing: true}
+		if progress != nil {
+			progress("saving", "已恢复书库中的论文，复用原有处理结果", 1, 1)
+		}
+		return result, nil
+	} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+		return importResult{Name: name}, lookupErr
+	}
+	_, err := s.runLeePDFImport(ctx, jobKey, name, pdf, metadata)
 	if err != nil {
 		return importResult{Name: name}, err
 	}
-	metadata.LeeTranslatedPath = translatedPath
 	if err := ctx.Err(); err != nil {
 		return importResult{Name: name}, err
 	}
@@ -357,22 +386,23 @@ func (s *Server) runLocalPDFImport(
 		return result, err
 	}
 	if result.Document != nil {
-		if err := s.adoptLeeTranslatedPDF(result.Document.Key, translatedPath, len(metadata.LayoutPages)); err != nil {
-			return result, err
-		}
-		// The translated PDF is already in the library. Start the optional shared
-		// reading memory in the background so it cannot delay the import response.
-		jobKey := "doc-" + hex.EncodeToString(contentHash[:16])
 		s.linkImportJobDocument(jobKey, result.Document.Key)
-		s.jobStage(jobKey, "memory", "running", "译文已入库，正在后台准备论文记忆", 0, 1)
+		s.jobStage(jobKey, "memory", "running", "论文原文已入库，正在后台准备论文记忆", 0, 1)
 		memoryCtx, cancelMemory := context.WithTimeout(context.Background(), 6*time.Hour)
 		go func() {
 			defer cancelMemory()
 			_ = s.preparePaperMemoryDuringImport(memoryCtx, result.Document.Key, jobKey, nil)
 		}()
+		backgroundCtx, cancelBackground := context.WithTimeout(context.Background(), 24*time.Hour)
+		s.setJobCancel(jobKey, cancelBackground)
+		pages := append([]ocr.Page(nil), metadata.OCRPages...)
+		go func() {
+			defer cancelBackground()
+			s.runLeeTranslationInBackground(backgroundCtx, jobKey, result.Document.Key, name, pages, false)
+		}()
 	}
 	if progress != nil {
-		progress("saving", "Lee 处理结果已保存", 1, 1)
+		progress("saving", "原文与 OCR 段落已入库，可立即阅读；全文翻译在后台继续", 1, 1)
 	}
 	return result, nil
 }
@@ -689,7 +719,7 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 	s.beginImportJob(key, name, 0, jobCancel)
 	metadata := recognizedPaperMetadata{Title: document.Title}
 	emit(map[string]any{"progress": map[string]any{"stage": "ocr", "message": "Lee 正在识别并处理论文", "completed": 0, "total": 0}})
-	translatedPath, err := s.runLeePDFImport(jobCtx, key, name, data, &metadata)
+	_, err = s.runLeePDFImport(jobCtx, key, name, data, &metadata)
 	if err != nil {
 		s.finishImportJob(key, importFailureStatus(jobCtx, err), err.Error())
 		emit(map[string]any{"error": "论文 OCR 与翻译失败: " + err.Error()})
@@ -767,19 +797,20 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 		emit(map[string]any{"error": "提交论文 OCR 译文失败: " + err.Error()})
 		return
 	}
-	if err := s.adoptLeeTranslatedPDF(key, translatedPath, len(metadata.LayoutPages)); err != nil {
-		s.finishImportJob(key, "failed", err.Error())
-		emit(map[string]any{"error": "PDF 已关联，但保存 Lee 译文 PDF 失败: " + err.Error()})
-		return
-	}
-	s.jobStage(key, "render", "done", "Lee 已生成译文 PDF", len(metadata.LayoutPages), len(metadata.LayoutPages))
-	s.jobStage(key, "memory", "running", "译文已入库，正在后台准备论文记忆", 0, 1)
+	s.linkImportJobDocument(key, key)
+	s.jobStage(key, "memory", "running", "论文原文已入库，正在后台准备论文记忆", 0, 1)
 	memoryCtx, cancelMemory := context.WithTimeout(context.Background(), 6*time.Hour)
 	go func() {
 		defer cancelMemory()
 		_ = s.preparePaperMemoryDuringImport(memoryCtx, key, key, nil)
 	}()
-	s.finishImportJob(key, "done", "")
+	backgroundCtx, cancelBackground := context.WithTimeout(context.Background(), 24*time.Hour)
+	s.setJobCancel(key, cancelBackground)
+	ocrPages := append([]ocr.Page(nil), metadata.OCRPages...)
+	go func() {
+		defer cancelBackground()
+		s.runLeeTranslationInBackground(backgroundCtx, key, key, name, ocrPages, false)
+	}()
 	updated, err := s.loadDocument(r.Context(), key)
 	if err != nil {
 		emit(map[string]any{"error": "PDF 已关联，但刷新书目信息失败: " + err.Error()})
@@ -788,14 +819,22 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 	emit(map[string]any{"result": map[string]any{"document": updated, "name": document.Title, "existing": false}})
 }
 
-// removeUnreferencedLibraryFile 只在没有任何 documents 行引用该路径时删除文件。
+// removeUnreferencedLibraryFile 只清理由 ReadX library 目录管理、且不再被 documents 引用的普通文件。
 // 用于「文件已写入但关联失败」的清理：若并发请求已经把它写进另一条行，文件归对方所有。
-func (s *Server) removeUnreferencedLibraryFile(ctx context.Context, target string) {
+func (s *Server) removeUnreferencedLibraryFile(ctx context.Context, target string) bool {
+	target, ok := managedLibraryFilePath(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), target)
+	if !ok {
+		return false
+	}
 	var refs int
 	if err := s.handle.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE pdf_path = ?`, target).Scan(&refs); err != nil || refs > 0 {
-		return
+		return false
 	}
-	_ = os.Remove(target)
+	info, err := os.Lstat(target)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return os.Remove(target) == nil
 }
 
 func (s *Server) handlePublicationURL(w http.ResponseWriter, r *http.Request) {

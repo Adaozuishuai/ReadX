@@ -161,6 +161,7 @@ def _suggestion_for(*, failure_code: str, failure_category: str, provider: str) 
         "upstream_bad_request": "检查请求参数、输入文件和上游接口约束，修正后再重试。",
         "placeholder_unstable": "检查公式占位符保护链和当前批次输入，必要时缩小批次或切换保守模式。",
         "translation_protocol_shell": "检查翻译提示词与模型返回；该错误通常表示模型输出了 JSON/协议外壳而不是纯译文。",
+        "file_write_failed": "检查任务目录中的目标文件是否被其他进程或安全软件占用，解除占用后重试。",
         "typst_dependency_download_failed": "检查 Typst 依赖源网络连通性，必要时预热依赖或重试。",
         "render_failed": "检查渲染输入、字体和 Typst 编译日志，修正渲染问题后重试。",
         "json_decode_failed": "检查 OCR 原始结果是否完整有效，必要时重新拉取或重新生成。",
@@ -268,12 +269,15 @@ def classify_exception(exc: BaseException, *, default_stage: str, provider: str 
     elif any(token in lowered for token in ("failed to download package", "packages.typst.org", "downloading @preview/")):
         error_type = "typst_dependency_download_failed"
         summary = "Typst 渲染依赖下载失败"
+    elif isinstance(exc, PermissionError):
+        error_type = "file_write_failed"
+        summary = "任务文件写入被系统拒绝"
+        retryable = True
     elif any(
         token in lowered
         for token in (
             "typst runtime failed to start",
             "winerror 193",
-            "winerror 5",
         )
     ):
         error_type = "typst_runtime_failed"
