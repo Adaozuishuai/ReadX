@@ -151,7 +151,7 @@ func (c Config) Redact() Redacted {
 		if c.IsCLI() {
 			message = "未找到 " + c.ProviderName() + " CLI，请先安装并在终端登录"
 			if c.ProviderName() == "codex" {
-				message = "未找到 Codex Desktop 或 CLI，请先安装并登录 Codex"
+				message = "未找到 Codex CLI。请安装 Codex/ChatGPT，或将 codex 加入 PATH；也可设置 CBCT_CODEX_PATH"
 			}
 		}
 		return Redacted{Provider: c.ProviderName(), Configured: false, Error: message}

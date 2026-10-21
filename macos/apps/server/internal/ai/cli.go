@@ -23,11 +23,8 @@ func resolveCLI(name string) (executable, source string, err error) {
 		}
 		if runtime.GOOS == "darwin" {
 			home, _ := os.UserHomeDir()
-			for _, appRoot := range []string{"/Applications", filepath.Join(home, "Applications")} {
-				candidate := filepath.Join(appRoot, "Codex.app", "Contents", "Resources", "codex")
-				if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
-					return candidate, "desktop", nil
-				}
+			if candidate, ok := findCodexCandidate(macCodexCandidates(home)); ok {
+				return candidate.path, candidate.source, nil
 			}
 		}
 		if runtime.GOOS == "windows" {
@@ -55,11 +52,45 @@ func resolveCLI(name string) (executable, source string, err error) {
 	executable, err = exec.LookPath(name)
 	if err != nil {
 		if name == "codex" {
-			return "", "", fmt.Errorf("未找到 Codex Desktop 或 CLI，请先安装并登录 Codex")
+			return "", "", fmt.Errorf("未找到 Codex CLI。请安装 Codex/ChatGPT，或将 codex 加入 PATH；也可设置 CBCT_CODEX_PATH")
 		}
 		return "", "", fmt.Errorf("未找到 %s CLI，请先安装并在终端登录", name)
 	}
 	return executable, "cli", nil
+}
+
+type codexCandidate struct {
+	path   string
+	source string
+}
+
+func findCodexCandidate(candidates []codexCandidate) (codexCandidate, bool) {
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate.path); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate, true
+		}
+	}
+	return codexCandidate{}, false
+}
+
+func macCodexCandidates(home string) []codexCandidate {
+	var candidates []codexCandidate
+	for _, appRoot := range []string{"/Applications", filepath.Join(home, "Applications")} {
+		candidates = append(candidates,
+			codexCandidate{filepath.Join(appRoot, "Codex.app", "Contents", "Resources", "codex"), "desktop"},
+			codexCandidate{filepath.Join(appRoot, "ChatGPT.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"), "desktop"},
+		)
+	}
+	// Desktop apps do not inherit shell startup files, so resolve common
+	// package-manager locations explicitly before falling back to PATH.
+	candidates = append(candidates,
+		codexCandidate{filepath.Join(home, ".local", "bin", "codex"), "cli"},
+		codexCandidate{filepath.Join(home, ".npm-global", "bin", "codex"), "cli"},
+		codexCandidate{filepath.Join(home, "Library", "pnpm", "codex"), "cli"},
+		codexCandidate{"/opt/homebrew/bin/codex", "cli"},
+		codexCandidate{"/usr/local/bin/codex", "cli"},
+	)
+	return candidates
 }
 
 func CLIAvailable(name string) bool {
