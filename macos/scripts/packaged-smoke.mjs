@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-import { spawn } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
@@ -19,11 +19,13 @@ const listener = net.createServer();
 await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
 const port = listener.address().port;
 await new Promise(resolve => listener.close(resolve));
-const child = spawn(path.join(appPath, 'Contents', 'MacOS', 'ReadX'), [
-  `--remote-debugging-port=${port}`, `--user-data-dir=${path.join(workspace, 'electron')}`,
-], { env: { ...process.env, CBCT_DATA_ROOT: workspace }, stdio: 'ignore' });
-let launchError;
-child.once('error', error => { launchError = error; });
+const userDataDir = path.join(workspace, 'electron');
+const launched = spawnSync('/usr/bin/open', [
+  '-n', appPath,
+  '--env', `CBCT_DATA_ROOT=${workspace}`,
+  '--args', `--remote-debugging-port=${port}`, `--user-data-dir=${userDataDir}`,
+], { encoding: 'utf8' });
+if (launched.error || launched.status !== 0) throw new Error(launched.stderr || launched.error?.message || 'Failed to launch packaged app.');
 let ws;
 let id = 0;
 const pending = new Map();
@@ -38,8 +40,6 @@ function cdp(method, params, timeoutMs = 15000) {
 try {
   let target;
   for (let i = 0; i < 60; i++) {
-    if (launchError) throw launchError;
-    if (child.exitCode !== null) throw new Error(`Packaged app exited: ${child.exitCode}`);
     try {
       const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) })).json();
       target = pages.find(page => page.type === 'page' && page.url.startsWith('http://127.0.0.1:'));
@@ -111,12 +111,8 @@ try {
   }
   for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('Packaged test closed')); }
   pending.clear();
-  if (child.exitCode === null) {
-    child.kill('SIGTERM');
-    await new Promise(resolve => {
-      const timer = setTimeout(resolve, 3000);
-      child.once('exit', () => { clearTimeout(timer); resolve(); });
-    });
-    if (child.exitCode === null) child.kill('SIGKILL');
+  const matches = spawnSync('/usr/bin/pgrep', ['-f', `--user-data-dir=${userDataDir}`], { encoding: 'utf8' });
+  for (const pid of (matches.stdout || '').trim().split(/\s+/).filter(Boolean)) {
+    if (/^\d+$/.test(pid)) process.kill(Number(pid), 'SIGTERM');
   }
 }
