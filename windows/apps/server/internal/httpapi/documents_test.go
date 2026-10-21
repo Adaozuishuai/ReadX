@@ -126,6 +126,10 @@ func TestDocumentListFilters(t *testing.T) {
 	if _, payload := post(t, bundle, http.MethodPost, "/v1/import", ""); payload["documentsAdded"] != float64(2) {
 		t.Fatal("前置导入失败")
 	}
+	if _, err := bundle.handle.Exec(`INSERT INTO readings(document_id, value_json, updated_at) VALUES(?,?,?)`,
+		"intratomo-2021", `{"motivation":{"value":"one section"}}`, "now"); err != nil {
+		t.Fatalf("写入精读进度失败: %v", err)
+	}
 
 	all := decode(t, get(t, bundle.frontend, "/v1/documents", bundle.token))
 	if all["total"] != float64(2) {
@@ -265,20 +269,20 @@ func TestPageUploadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestStatusPatchSurvivesReimport(t *testing.T) {
+func TestArchiveStatusSurvivesReimport(t *testing.T) {
 	bundle, _ := newImportServer(t)
 	post(t, bundle, http.MethodPost, "/v1/import", "")
 
-	res, payload := post(t, bundle, http.MethodPatch, "/v1/documents/2209.14540/status", `{"status":"done"}`)
-	if res.StatusCode != http.StatusOK || payload["status"] != "done" {
+	res, payload := post(t, bundle, http.MethodPatch, "/v1/documents/2209.14540/status", `{"status":"archive"}`)
+	if res.StatusCode != http.StatusOK || payload["status"] != "archive" {
 		t.Fatalf("改状态应成功，实际 %d %v", res.StatusCode, payload)
 	}
 	if _, payload := post(t, bundle, http.MethodPost, "/v1/import", ""); payload["documentsUpdated"] == float64(0) {
 		_ = payload // 元数据未变时可能整批 unchanged，这里只关心状态是否被冲掉
 	}
 	detail := decode(t, get(t, bundle.frontend, "/v1/documents/2209.14540", bundle.token))
-	if status := detail["document"].(map[string]any)["status"]; status != "done" {
-		t.Fatalf("重跑导入不得冲掉用户手改状态，实际 %v", status)
+	if status := detail["document"].(map[string]any)["status"]; status != "archive" {
+		t.Fatalf("重跑导入不得冲掉归档状态，实际 %v", status)
 	}
 	if res, _ := post(t, bundle, http.MethodPatch, "/v1/documents/2209.14540/status", `{"status":"bogus"}`); res.StatusCode != http.StatusBadRequest {
 		t.Fatalf("非法状态应 400，实际 %d", res.StatusCode)

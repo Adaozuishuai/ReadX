@@ -39,10 +39,10 @@ func (s *Server) handleAIStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type chatRequest struct {
-	Key      string `json:"key"`
-	Mode     string `json:"mode"`
-	Question string `json:"question"`
-	Scope    string `json:"scope"`
+	Key      string   `json:"key"`
+	Mode     string   `json:"mode"`
+	Question string   `json:"question"`
+	Scope    string   `json:"scope"`
 	Images   []string `json:"images,omitempty"`
 	History  []struct {
 		Role string `json:"role"`

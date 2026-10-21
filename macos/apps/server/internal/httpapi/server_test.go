@@ -217,6 +217,14 @@ func TestDocumentsOrderFieldsAndAuthorFallback(t *testing.T) {
 			t.Fatalf("插入 %s 失败: %v", row.id, err)
 		}
 	}
+	for id, state := range map[string]string{
+		"d-reading": `{"motivation":{"value":"one section"}}`,
+		"d-done":    `{"motivation":{"value":"1"},"method":{"value":"2"},"experiment":{"value":"3"},"results":{"value":"4"},"reproduction":{"value":"5"}}`,
+	} {
+		if _, err := handle.Exec(`INSERT INTO readings(document_id, value_json, updated_at) VALUES(?,?,?)`, id, state, "now"); err != nil {
+			t.Fatalf("插入 %s 精读状态失败: %v", id, err)
+		}
+	}
 
 	payload := decode(t, do(t, frontend, http.MethodGet, "/v1/documents", testToken))
 	list := payload["documents"].([]any)
