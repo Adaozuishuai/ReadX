@@ -74,7 +74,7 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 		translationProtocol = "anthropic"
 	}
 	var bridge *leeAICompatBridge
-	if aiConfig.IsCLI() {
+	if aiConfig.IsCLI() || aiConfig.ProviderName() == "workbuddy" {
 		bridge, err = newLeeAICompatBridge(ai.NewClient(aiConfig))
 		if err != nil {
 			return "", fmt.Errorf("连接 ReadX AI 助手失败: %w", err)
