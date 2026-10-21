@@ -24,7 +24,7 @@
     "test:import": "node scripts/import-smoke.cjs",
     "test:presentation": "node scripts/test-presentation.cjs",
     "build:go": "node scripts/build-server.mjs",
-    "test": "npm run test:go && npm run test -w @cbct/shared && npm run typecheck",
+    "test": "npm run test:go && npm run test -w @cbct/shared && npm run typecheck && npm run test -w @cbct/desktop",
     "dev": "node scripts/dev.mjs",
     "start": "node scripts/dev.mjs --built",
     "setup:runtime": "node scripts/setup-retain-runtime.mjs",
@@ -32,7 +32,8 @@
     "sync:core": "node ../scripts/sync-platforms.mjs",
     "check:parity": "node ../scripts/sync-platforms.mjs --check",
     "test:desktop": "node scripts/run-desktop-smoke.mjs",
-    "test:packaged": "node scripts/packaged-smoke.mjs"
+    "test:packaged": "node scripts/packaged-smoke.mjs",
+    "test:updates": "node scripts/import-smoke.cjs --updates"
   },
   "allowScripts": {
     "electron@44.2.0": true,

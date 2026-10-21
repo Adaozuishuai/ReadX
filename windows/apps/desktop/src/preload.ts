@@ -18,9 +18,10 @@ if (token) {
 }
 
 const updateBridge: DesktopUpdateBridge = {
+  getStatus: () => ipcRenderer.invoke('readx-updates:status') as Promise<DesktopUpdateStatus>,
   check: () => ipcRenderer.invoke('readx-updates:check') as Promise<DesktopUpdateStatus>,
   download: () => ipcRenderer.invoke('readx-updates:download') as Promise<DesktopUpdateStatus>,
-  install: () => { void ipcRenderer.invoke('readx-updates:install'); },
+  install: () => ipcRenderer.invoke('readx-updates:install') as Promise<DesktopUpdateStatus>,
   onStatus: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, status: DesktopUpdateStatus) => callback(status);
     ipcRenderer.on('readx-updates:status', listener);

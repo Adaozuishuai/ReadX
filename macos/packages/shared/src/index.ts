@@ -153,18 +153,20 @@ declare global {
 }
 
 export interface DesktopUpdateStatus {
-  state: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'downloaded' | 'error' | 'unsupported';
+  state: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'downloaded' | 'error' | 'unsupported' | 'unavailable';
   currentVersion?: string;
   version?: string;
   releaseNotes?: string;
   percent?: number;
   message?: string;
+  operation?: 'check' | 'download' | 'install';
 }
 
 export interface DesktopUpdateBridge {
+  getStatus(): Promise<DesktopUpdateStatus>;
   check(): Promise<DesktopUpdateStatus>;
   download(): Promise<DesktopUpdateStatus>;
-  install(): void;
+  install(): Promise<DesktopUpdateStatus>;
   onStatus(callback: (status: DesktopUpdateStatus) => void): () => void;
 }
 

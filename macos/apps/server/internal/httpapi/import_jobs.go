@@ -64,6 +64,13 @@ type jobRuntime struct {
 	cancel context.CancelFunc
 }
 
+func cloneDocumentJob(job *DocumentJob) DocumentJob {
+	copy := *job
+	copy.Stages = append([]JobStage(nil), job.Stages...)
+	copy.Runs = append([]JobRun(nil), job.Runs...)
+	return copy
+}
+
 func newDocumentJob(key, name string, pages int) *DocumentJob {
 	stamp := nowStamp()
 	return &DocumentJob{
@@ -124,9 +131,10 @@ func (s *Server) beginImportJob(key, name string, pages int, cancel context.Canc
 		}
 	}
 	s.importJobs[key] = &jobRuntime{job: job, cancel: cancel}
+	snapshot := cloneDocumentJob(job)
 	s.jobsMu.Unlock()
-	s.persistImportJob(job)
-	return job
+	s.persistImportJob(&snapshot)
+	return &snapshot
 }
 
 // updateImportJob 在锁内改任务，再在锁外落盘，避免持锁做数据库 IO。
@@ -139,7 +147,7 @@ func (s *Server) updateImportJob(key string, mutate func(*DocumentJob)) {
 	}
 	mutate(runtime.job)
 	runtime.job.UpdatedAt = nowStamp()
-	snapshot := *runtime.job
+	snapshot := cloneDocumentJob(runtime.job)
 	s.jobsMu.Unlock()
 	s.persistImportJob(&snapshot)
 }
@@ -180,6 +188,16 @@ func importFailureStatus(ctx context.Context, err error) string {
 }
 
 func (s *Server) persistImportJob(job *DocumentJob) {
+	// Serialize each job's writes and snapshot the latest state after acquiring
+	// the gate. An older caller must not overwrite newer progress on disk.
+	unlock, _ := s.jobPersistLocks.lock(context.Background(), job.Key)
+	defer unlock()
+	s.jobsMu.Lock()
+	if runtime := s.importJobs[job.Key]; runtime != nil && runtime.job != nil {
+		snapshot := cloneDocumentJob(runtime.job)
+		job = &snapshot
+	}
+	s.jobsMu.Unlock()
 	encoded, err := json.Marshal(job)
 	if err != nil {
 		return
@@ -193,7 +211,7 @@ func (s *Server) persistImportJob(job *DocumentJob) {
 func (s *Server) loadImportJob(ctx context.Context, key string) (*DocumentJob, bool) {
 	s.jobsMu.Lock()
 	if runtime := s.importJobs[key]; runtime != nil && runtime.job != nil {
-		copy := *runtime.job
+		copy := cloneDocumentJob(runtime.job)
 		s.jobsMu.Unlock()
 		return &copy, true
 	}

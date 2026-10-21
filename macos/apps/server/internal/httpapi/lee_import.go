@@ -373,6 +373,9 @@ func loadLeeTranslations(dir string) ([]leePageTranslation, error) {
 func leeOutputToReadXMetadata(pages []ocr.Page, translated []leePageTranslation, cfg ai.Config, metadata *recognizedPaperMetadata) error {
 	targets := map[string][]string{}
 	for _, item := range translated {
+		if strings.TrimSpace(item.Target) == "" {
+			continue
+		}
 		key := fmt.Sprintf("%d\x00%s", item.PageIndex, item.Source)
 		targets[key] = append(targets[key], item.Target)
 	}

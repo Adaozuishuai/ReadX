@@ -1,5 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
-import { autoUpdater, type UpdateInfo } from 'electron-updater';
+import { app, BrowserWindow, dialog, ipcMain, net, shell } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -7,6 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { BootstrapInfo, DesktopUpdateStatus, ReadyInfo } from '@cbct/shared';
+import { UpdateController } from './update-controller';
+import { checkForUpdateStatus, LATEST_RELEASE_URL } from './update-check';
+import { downloadVerifiedUpdate } from './update-download';
 
 /**
  * Electron 壳只做三件事：拉起 Go server、等就绪、把本地 token 交给渲染进程。
@@ -18,8 +21,6 @@ import type { BootstrapInfo, DesktopUpdateStatus, ReadyInfo } from '@cbct/shared
 const READY_PREFIX = 'CBCT_V2_READY ';
 const READY_TIMEOUT_MS = 30_000;
 const SHUTDOWN_GRACE_MS = 4_000;
-let availableUpdateVersion: string | undefined;
-let downloadedUpdateReady = false;
 
 interface ServerHandle {
   info: ReadyInfo;
@@ -116,84 +117,35 @@ function setupUpdater(): void {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
+  autoUpdater.allowDowngrade = false;
 
-  autoUpdater.on('checking-for-update', () => publishUpdateStatus({ state: 'checking', currentVersion: app.getVersion() }));
-  autoUpdater.on('update-available', (info) => {
-    availableUpdateVersion = info.version;
-    publishUpdateStatus({
-      state: 'available', currentVersion: app.getVersion(), version: info.version,
-      releaseNotes: releaseNotesText(info.releaseNotes),
-    });
+  const updates = new UpdateController({
+    currentVersion: app.getVersion(),
+    supported: app.isPackaged && ['win32', 'darwin'].includes(process.platform),
+    check: () => checkForUpdateStatus(app.getVersion(), () => autoUpdater.checkForUpdates(), async () => {
+      const response = await net.fetch(LATEST_RELEASE_URL, {
+        headers: { Accept: 'application/vnd.github+json' },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`Release metadata HTTP ${response.status}`);
+      return response.json();
+    }),
+    download: () => downloadVerifiedUpdate(autoUpdater),
+    install: () => autoUpdater.quitAndInstall(true, true),
+    publish: publishUpdateStatus,
   });
-  autoUpdater.on('update-not-available', () => publishUpdateStatus({ state: 'current', currentVersion: app.getVersion() }));
-  autoUpdater.on('download-progress', (progress) => publishUpdateStatus({
-    state: 'downloading', currentVersion: app.getVersion(), percent: Math.max(0, Math.min(100, progress.percent)),
-  }));
-  autoUpdater.on('update-downloaded', (info) => {
-    downloadedUpdateReady = true;
-    publishUpdateStatus({ state: 'downloaded', currentVersion: app.getVersion(), version: info.version });
-  });
-  autoUpdater.on('error', (error) => publishUpdateStatus({
-    state: 'error', currentVersion: app.getVersion(), message: error.message || '更新检查失败，请稍后重试。',
-  }));
+  autoUpdater.on('download-progress', progress => updates.onProgress(progress.percent));
+  autoUpdater.on('error', error => updates.onError(error));
 
-  ipcMain.handle('readx-updates:check', async (): Promise<DesktopUpdateStatus> => {
-    if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform)) {
-      return {
-        state: 'unsupported', currentVersion: app.getVersion(),
-        message: '请使用已发布的 Windows 或 macOS 安装版检查更新；开发版不会自动替换源码。',
-      };
-    }
-    try {
-      const result = await autoUpdater.checkForUpdates();
-      return result?.isUpdateAvailable
-        ? {
-          state: 'available', currentVersion: app.getVersion(), version: result.updateInfo.version,
-          releaseNotes: releaseNotesText(result.updateInfo.releaseNotes),
-        }
-        : { state: 'current', currentVersion: app.getVersion() };
-    } catch (error) {
-      const status: DesktopUpdateStatus = { state: 'error', currentVersion: app.getVersion(), message: describe(error) };
-      publishUpdateStatus(status);
-      return status;
-    }
-  });
-
-  ipcMain.handle('readx-updates:download', async (): Promise<DesktopUpdateStatus> => {
-    if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform)) {
-      return { state: 'unsupported', currentVersion: app.getVersion(), message: '请在已发布的桌面安装版中下载更新。' };
-    }
-    if (!availableUpdateVersion) {
-      return { state: 'error', currentVersion: app.getVersion(), message: '请先检查是否有可用更新。' };
-    }
-    try {
-      await autoUpdater.downloadUpdate();
-      return { state: 'downloaded', currentVersion: app.getVersion(), version: availableUpdateVersion };
-    } catch (error) {
-      const status: DesktopUpdateStatus = { state: 'error', currentVersion: app.getVersion(), message: describe(error) };
-      publishUpdateStatus(status);
-      return status;
-    }
-  });
-
-  ipcMain.handle('readx-updates:install', () => {
-    if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform) || !downloadedUpdateReady) return;
-    autoUpdater.quitAndInstall(true, true);
-  });
+  ipcMain.handle('readx-updates:status', () => updates.getStatus());
+  ipcMain.handle('readx-updates:check', () => updates.check());
+  ipcMain.handle('readx-updates:download', () => updates.download());
+  ipcMain.handle('readx-updates:install', () => updates.install());
 }
 
 function publishUpdateStatus(status: DesktopUpdateStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('readx-updates:status', status);
-}
-
-function releaseNotesText(notes: UpdateInfo['releaseNotes']): string | undefined {
-  if (typeof notes === 'string') return notes.trim() || undefined;
-  if (!Array.isArray(notes)) return undefined;
-  return notes
-    .map(({ version, note }) => (note?.trim() ? `v${version}\n${note.trim()}` : ''))
-    .filter(Boolean)
-    .join('\n\n') || undefined;
 }
 
 async function startServer(previous?: ReadyInfo): Promise<ServerHandle> {

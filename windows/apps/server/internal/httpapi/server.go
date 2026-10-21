@@ -45,11 +45,12 @@ type Server struct {
 	paperVisualLocks keyedLockTable
 	// jobsMu 保护导入任务表：任务更新频繁（逐页翻译/渲染），但临界区只有内存改字段，
 	// 落盘在锁外做，不能把 SQLite 写入拖进热点。
-	jobsMu     sync.Mutex
-	importJobs map[string]*jobRuntime
-	cfg        config.Config
-	handle     *sql.DB
-	startedAt  time.Time
+	jobsMu          sync.Mutex
+	jobPersistLocks keyedLockTable
+	importJobs      map[string]*jobRuntime
+	cfg             config.Config
+	handle          *sql.DB
+	startedAt       time.Time
 }
 
 func New(cfg config.Config, handle *sql.DB) *Server {

@@ -7,25 +7,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
-func TestFullTranslationIsCommittedWithImportAndRestoredWithoutModel(t *testing.T) {
+func TestFullTranslationIsSavedAfterBackgroundImport(t *testing.T) {
 	front, handle, cfg := newTestServer(t, nil)
 	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}
-	calls := 0
+	var calls atomic.Int64
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
-		calls++
-		// The import now saves its paper memory after inserting the document,
-		// so later assistant calls are allowed to observe the committed row.
-		// Keep the original invariant for the initial Lee translation request.
-		if calls == 1 && len(sources) > 0 {
+		calls.Add(1)
+		// Background translation starts only after the source has committed.
+		if len(sources) > 0 {
 			var count int
 			if err := handle.QueryRow(`SELECT count(*) FROM documents`).Scan(&count); err != nil {
 				t.Error(err)
 			}
-			if count != 0 {
-				t.Error("entry created before Lee translation")
+			if count != 1 {
+				t.Error("source must be committed before background translation")
 			}
 		}
 		if len(sources) == 0 {
@@ -46,16 +45,25 @@ func TestFullTranslationIsCommittedWithImportAndRestoredWithoutModel(t *testing.
 		t.Fatal(result)
 	}
 	key := result["document"].(map[string]any)["key"].(string)
-	// 导入已改为 OCR-only：模型调用应包含题录识别 + OCR 段落翻译，且译文随文档入库。
-	if calls < 1 {
-		t.Fatalf("模型调用次数异常: %d", calls)
+	if stage := waitForTestJobStage(t, bundle, key, "translate"); stage["status"] != "done" {
+		t.Fatalf("background translation failed: %v", stage)
+	}
+	if calls.Load() < 1 {
+		t.Fatalf("模型调用次数异常: %d", calls.Load())
 	}
 	var translated int
 	if err := handle.QueryRow(`SELECT count(*) FROM translations WHERE document_id=?`, key).Scan(&translated); err != nil {
 		t.Fatal(err)
 	}
 	if translated == 0 {
-		t.Fatal("OCR 段落的译文没有随导入入库")
+		t.Fatal("后台完成后没有保存 OCR 段落译文")
+	}
+	var source, target string
+	if err := handle.QueryRow(`SELECT source,target FROM translations WHERE document_id=? LIMIT 1`, key).Scan(&source, &target); err != nil {
+		t.Fatal(err)
+	}
+	if target != "译文："+source {
+		t.Fatalf("模型协议或元数据被当作译文保存: source=%q target=%q", source, target)
 	}
 	var pageCount int
 	if err := handle.QueryRow(`SELECT count(*) FROM document_pages WHERE document_id=?`, key).Scan(&pageCount); err != nil {
@@ -100,7 +108,7 @@ func TestKnownMetadataHintsSurviveModelGaps(t *testing.T) {
 	}
 }
 
-func TestLeeTranslationIsSavedWithPaperImport(t *testing.T) {
+func TestLeeTranslationFailurePreservesImportedSource(t *testing.T) {
 	front, handle, cfg := newTestServer(t, nil)
 	bundle := &httptestServerBundle{front, cfg.Token, cfg, handle}
 	upstream := fakeUpstream(t, func(sources []string) (string, int) {
@@ -125,14 +133,17 @@ func TestLeeTranslationIsSavedWithPaperImport(t *testing.T) {
 	}
 	var pageCount, translationCount int
 	key := result["document"].(map[string]any)["key"].(string)
+	if stage := waitForTestJobStage(t, bundle, key, "translate"); stage["status"] != "failed" {
+		t.Fatalf("invalid translation must report failure: %v", stage)
+	}
 	if err := handle.QueryRow(`SELECT count(*) FROM document_pages WHERE document_id=?`, key).Scan(&pageCount); err != nil {
 		t.Fatal(err)
 	}
 	if err := handle.QueryRow(`SELECT count(*) FROM translations WHERE document_id=?`, key).Scan(&translationCount); err != nil {
 		t.Fatal(err)
 	}
-	if pageCount == 0 || translationCount == 0 {
-		t.Fatalf("Lee 的 OCR 原文与译文应随论文入库：pages=%d translations=%d", pageCount, translationCount)
+	if pageCount == 0 || translationCount != 0 {
+		t.Fatalf("翻译失败必须保留原文且不保存无效译文：pages=%d translations=%d", pageCount, translationCount)
 	}
 }
 
