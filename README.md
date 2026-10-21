@@ -1,130 +1,97 @@
 <p align="center">
-  <img src="windows/apps/web/public/icon-512.png" alt="ReadX app icon" width="112" height="112">
+  <img src="windows/apps/web/public/icon-512.png" alt="ReadX icon" width="88" height="88">
 </p>
 
 <h1 align="center">ReadX</h1>
-<p align="center"><strong>Research papers, read with context.</strong><br>把论文读懂，也把图表、译文与研究思路连起来。</p>
-<p align="center">
-  <a href="docs/media/ReadX-宣传片-绿色版.mp4"><img src="docs/media/ReadX-宣传片-绿色版-封面.png" alt="ReadX 产品介绍视频封面，点击播放" width="720"></a><br>
-  <a href="docs/media/ReadX-宣传片-绿色版.mp4">▶ 观看 / 下载 ReadX 产品介绍视频（MP4）</a>
-</p>
+
+<p align="center"><strong>把论文读懂，把研究过程连起来。</strong><br>本地优先的论文阅读、翻译与研究工作区 · Windows / macOS</p>
 
 <p align="center">
-  <a href="https://github.com/Leechion/ReadX/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Leechion/ReadX?display_name=tag&style=flat-square&color=276653"></a>
-  <a href="https://github.com/Leechion/ReadX/actions/workflows/release-windows.yml"><img alt="Windows release" src="https://img.shields.io/github/actions/workflow/status/Leechion/ReadX/release-windows.yml?branch=main&label=Windows%20release&style=flat-square"></a>
-  <a href="https://github.com/Leechion/ReadX/actions/workflows/build-macos.yml"><img alt="macOS release" src="https://img.shields.io/github/actions/workflow/status/Leechion/ReadX/build-macos.yml?branch=main&label=macOS%20release&style=flat-square"></a>
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-276653?style=flat-square">
-  <img alt="Stack" src="https://img.shields.io/badge/React%20%2B%20Go%20%2B%20Electron-Research%20Workspace-496f61?style=flat-square">
+  <a href="https://github.com/Leechion/ReadX/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Leechion/ReadX?style=flat-square&color=2f6f59"></a>
+  <a href="https://github.com/Leechion/ReadX/actions/workflows/release-windows.yml"><img alt="Windows build" src="https://img.shields.io/github/actions/workflow/status/Leechion/ReadX/release-windows.yml?branch=main&label=Windows&style=flat-square"></a>
+  <a href="https://github.com/Leechion/ReadX/actions/workflows/build-macos.yml"><img alt="macOS build" src="https://img.shields.io/github/actions/workflow/status/Leechion/ReadX/build-macos.yml?branch=main&label=macOS&style=flat-square"></a>
 </p>
+
+<p align="center"><a href="#中文">简体中文</a> · <a href="#english">English</a> · <a href="windows/README.md">使用与开发文档</a></p>
+
+## ReadX 宣传视频
 
 <p align="center">
-  <a href="#中文">简体中文</a> · <a href="#english">English</a> · <a href="windows/README.md">开发与详细使用说明</a>
+  <a href="docs/media/ReadX.mp4"><img src="docs/images/promo/01-cover.jpg" alt="ReadX 宣传视频封面；点击打开 MP4" width="860"></a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/Leechion/ReadX/releases/latest"><strong>下载 Windows / macOS 版</strong></a>
-</p>
+<p align="center"><a href="docs/media/ReadX.mp4">▶ 打开或下载完整 MP4</a></p>
 
----
+## 中文
 
-<a id="中文"></a>
+ReadX 是一个面向科研阅读的桌面工作区。导入论文后，可以在同一处查看原文与译文、标注重点、向 AI 助教提问，并把阅读结果整理成结构化分析或演示文稿。论文文件与阅读资料优先保存在本机。
 
-## 从导入到理解，一处完成
+### 界面预览
 
-ReadX 是面向科研论文的本地阅读工作区。导入 PDF 后，ReadX 识别页面与段落、翻译并保留原有排版；阅读时可在原文和译文间对照，再用 AI 助教和精读五重奏梳理论文的方法、实验与结果。
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/promo/02-library.jpg" alt="文献库" width="100%"><p align="center">文献库</p></td>
+    <td width="50%"><img src="docs/images/promo/03-import.jpg" alt="导入论文" width="100%"><p align="center">导入论文</p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/promo/04-processing.jpg" alt="论文处理进度" width="100%"><p align="center">处理进度</p></td>
+    <td><img src="docs/images/promo/05-bilingual-reading.jpg" alt="原文与译文对照阅读" width="100%"><p align="center">双语阅读</p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/promo/06-highlights.jpg" alt="论文高亮与批注" width="100%"><p align="center">高亮与批注</p></td>
+    <td><img src="docs/images/promo/07-ai-assistant.jpg" alt="AI 助教" width="100%"><p align="center">AI 助教</p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/promo/08-deep-reading.jpg" alt="精读五重奏" width="100%"><p align="center">精读五重奏</p></td>
+    <td><img src="docs/images/promo/09-ppt-studio.jpg" alt="论文演示稿工作区" width="100%"><p align="center">PPT 工作区</p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/promo/10-ai-settings.jpg" alt="AI 助手设置" width="100%"><p align="center">AI 助手设置</p></td>
+    <td><img src="docs/images/promo/01-cover.jpg" alt="ReadX 宣传图封面" width="100%"><p align="center">ReadX</p></td>
+  </tr>
+</table>
 
-<p align="center">
-  <img src="docs/images/readx-workflow.svg" alt="ReadX 从论文导入、OCR 和翻译，到双语阅读、精读与导出的工作流程" width="100%">
-</p>
+### 功能
 
-### 主要功能
+- **论文书库**：导入 PDF 与 EPUB，按阅读状态、标签和书架整理论文，并恢复阅读位置。
+- **逐页翻译与双语阅读**：处理后的译文可逐页查看；原文、译文并排显示，保留论文页面结构。
+- **段落、图表与公式**：识别目录和页面内容；选中段落或公式可高亮、翻译整段或交给 AI 助教解释。
+- **论文上下文问答**：助教围绕当前论文回答问题，支持将相关页面内容和图片纳入理解。
+- **精读五重奏**：分别分析实验动机、方法公式、实验配置、结果分析与代码复现；各部分独立生成和保存。
+- **论文演示稿**：从书库选择论文，在独立 PPT 工作区生成演示稿并实时预览；支持自定义模板和内置主题。
+- **本地优先**：论文、阅读位置、批注和精读资料保存在本机。连接云端模型时，提交给模型的内容会发送到所选服务。
 
-| 阅读与理解 | 研究与整理 |
-| --- | --- |
-| **PDF / EPUB 阅读**：目录导航、阅读位置恢复、选区批注；PDF 支持原文、译文和双语对照。 | **精读五重奏**：实验动机、方法公式、实验配置、结果分析、代码复现分别分析、分别保存。 |
-| **保留版式的翻译**：识别段落和版面结构，译文按原页位置呈现；可重新翻译书库中的论文。 | **图表融入分析**：识别并裁切论文中的图表，在分析相应章节时把相关图表直接放入正文。 |
-| **AI 助教**：围绕当前论文提问；对话按论文保存在本机。 | **模型可选**：配置兼容 API，或连接已登录的 Codex Desktop；可选择可用模型和推理强度。 |
-| **译文 PDF**：生成保留原页面布局的译文 PDF，便于阅读与分享。 | **本地优先**：论文文件、阅读进度、批注和精读记录保存在本机。 |
+### 下载与开始使用
 
-## 精读五重奏
+从[最新 Release](https://github.com/Leechion/ReadX/releases/latest)下载 Windows 或 macOS 安装包。启动后，在 **AI 助手设置**中选择模型服务并配置连接；Codex Desktop 用户可先登录 Codex，再从 ReadX 中连接。
 
-五个部分可以单独生成，并行处理；分析会复用导入时整理的论文上下文。图表与对应章节一起进入分析正文，公式和结果表格保留为可读格式。完成后可导出 Markdown；也可从顶部导航进入独立 PPT 工作区，选择书库论文生成 16:9 演示稿，先通读全文，再按重点解读、对比、方法流程、图文证据、数据聚焦和核心观点六种版式编排。相关原图等比嵌入正文页，预览与导出共用页面布局；宽表和长内容自动分页，完整小节写入讲者备注。中英文使用微软雅黑，数字使用 Times New Roman。
+详细的安装、AI 配置、数据存放位置和故障排查说明见 [Windows 使用文档](windows/README.md)；macOS 构建说明见 [macOS 文档](macos/README.md)。
 
-<p align="center">
-  <img src="docs/images/readx-quintet.svg" alt="精读五重奏的五个分析部分" width="100%">
-</p>
+### 隐私说明
 
-## 下载与开始
-
-在 [最新 Release](https://github.com/Leechion/ReadX/releases/latest) 下载对应系统的软件包：Windows 下载 `ReadX-Setup-*.exe`，macOS 下载名称中架构与设备相符的 `ReadX-*.dmg`。macOS 首次打开未签名版本时，按系统提示在“隐私与安全性”中确认打开。
-
-首次使用请在 **AI 设置**中配置翻译和问答所用的服务。若使用 Codex Desktop，先在 Codex 中登录，再在 ReadX 的 AI 设置中选择 Codex。不同服务的配置方式见[详细指南](windows/README.md#ai-接入)。
-
-> v0.1.3 首次加入应用内检查更新。已安装 v0.1.2 或更早版本的用户，请先从 Release 页面安装一次 v0.1.3；后续版本可以从应用内检查和安装。
-
-## 更新内容 · v0.1.6
-
-- 新增独立 PPT 工作区，可从书库选择论文，上传并保存自定义模板，查看逐页实时预览；内置主题作为默认样式使用，不出现在模板库列表中。
-- 生成前先阅读论文全文并调用本地 `baoyu-slide-deck` skill 规划内容；新增六种学术版式，原图按比例嵌入，宽表与长内容自动分页，来源写入讲者备注。
-- 五重奏章节可并行单独生成并复用导入时整理的论文记忆；相关图表直接编入对应章节正文。
-- 增强图表识别校验，可在原文页面定位图表区域；修正 PDF 批注高亮、下划线与选区边界。
-- 改进阅读器的连续滚动、原文与译文同步定位，以及导入任务状态恢复和后台论文记忆处理。
-- 同步 Windows 与 macOS 的功能和界面。
-
-更多细节见 [v0.1.6 Release](https://github.com/Leechion/ReadX/releases/tag/v0.1.6)。
-
-## 数据与隐私
-
-ReadX 的论文、阅读位置、批注和精读内容保存在本机。使用云端模型时，相关论文文本或提问内容会发送给你在 AI 设置中选择的服务；请在使用前查看该服务的隐私政策。API Key 保存在本机配置中，请勿将密钥提交到仓库。
-
-## 开发者
-
-Windows 开发环境需要 Node.js 22.8+ 和 Go 1.27+：
-
-```powershell
-cd windows
-npm ci
-npm run dev
-```
-
-生产构建：
-
-```powershell
-npm run build
-```
-
-macOS 已同步核心源码并提供本机开发及打包入口，见 [`macos/README.md`](macos/README.md)。源码一致性规则见 [`docs/architecture.md`](docs/architecture.md)。
-
-完整的 Windows 功能、AI 接入、数据位置和构建说明见 [`windows/README.md`](windows/README.md)。
-
-## 鸣谢
-
-感谢开源文档处理、OCR、PDF 渲染和论文元数据项目的维护者。第三方组件及许可信息随仓库相应目录提供。
-
----
-
-<a id="english"></a>
+ReadX 将论文及阅读资料保存在本机。使用 AI 翻译或问答时，相关文本或图片会发送给你选择的模型服务。API 密钥保存在本机配置中，请勿提交到仓库。
 
 ## English
 
-ReadX is a local-first research reading workspace. Import a PDF, read the source alongside its translation, ask an AI tutor questions about the paper, and build a structured understanding with the five-part deep-reading workflow.
+ReadX is a desktop workspace for research reading. Import papers, compare source text with translations, annotate passages, ask an AI assistant about the paper, and turn reading notes into structured analysis or a presentation. Your papers and reading data stay on your computer by default.
 
-### What you can do
+### Features
 
-- Read PDF and EPUB papers with table-of-contents navigation, saved reading position, and annotations.
-- Translate PDFs while preserving page layout, then compare source and translation side by side.
-- Ask questions in a paper-specific AI chat and choose from the models available to your configured provider or signed-in Codex Desktop.
-- Analyze motivation, methods and equations, experimental setup, results, and reproduction as five independent sections.
-- Bring figures and tables into the relevant analysis section, and export translated PDFs or reading notes.
-- Keep papers, notes, annotations, and reading progress on your computer.
+- Organize PDF and EPUB papers in a searchable library with reading status, shelves, and saved positions.
+- Read translated pages alongside the original while preserving the paper layout.
+- Highlight passages and equations, translate selected text, and inspect figures and tables in context.
+- Ask paper-aware questions, including questions about page content and images.
+- Generate five independent deep-reading sections: motivation, methods and equations, experimental setup, results, and code reproduction.
+- Create and preview editable research presentations from papers in your library, using built-in or custom templates.
+- Keep papers, annotations, reading progress, and notes on your computer by default.
 
 ### Download
 
-Download the Windows installer from [the latest GitHub Release](https://github.com/Leechion/ReadX/releases/latest). Configure an AI provider in **AI Settings** before using translation or AI features. See the [Windows guide](windows/README.md) for setup details.
+Download the latest Windows or macOS installer from [GitHub Releases](https://github.com/Leechion/ReadX/releases/latest). Configure an AI provider in **AI Assistant Settings** before using translation or AI features. See the [Windows guide](windows/README.md) for setup details.
 
 ### Build from source
 
-Requires Node.js 22.8+ and Go 1.27+.
+Windows development requires Node.js 22.8+ and Go 1.27+:
 
 ```powershell
 cd windows
@@ -132,6 +99,8 @@ npm ci
 npm run dev
 ```
 
+For macOS development and packaging, see [`macos/README.md`](macos/README.md).
+
 ---
 
-<p align="center"><sub>ReadX · Research Workspace · Windows and macOS</sub></p>
+<p align="center"><sub>ReadX · Research Reading Workspace · Windows and macOS</sub></p>
