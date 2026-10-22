@@ -110,7 +110,7 @@ $nodePackage = Join-Path $resourceRoot 'package.json'
 }
 '@ | Set-Content -LiteralPath $nodePackage -Encoding utf8
 $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
-& $npm install --prefix $resourceRoot --omit=dev --no-audit --no-fund
+& $npm install --prefix $resourceRoot --omit=dev --no-audit --no-fund --ignore-scripts
 if ($LASTEXITCODE -ne 0) { throw 'Installing bundled Node.js rendering dependencies failed.' }
 
 Write-Host "Release runtime prepared: $resourceRoot"
