@@ -1171,6 +1171,29 @@ func (s *Server) translatePageItemsMode(ctx context.Context, key string, items [
 		if err != nil {
 			return nil, err
 		}
+		// 指纹没命中的段落，退回「同一篇论文 + 逐字相同的原文」再找一次：
+		// 旧版式丢了续接字段后指纹永远对不上，这个兜底让库里已有的译文能立刻显示出来。
+		missing := false
+		for _, hash := range hashes {
+			if _, hit := cached[hash]; !hit {
+				missing = true
+				break
+			}
+		}
+		if missing {
+			bySource, sourceErr := s.translationsBySource(ctx, key)
+			if sourceErr != nil {
+				return nil, sourceErr
+			}
+			for index, hash := range hashes {
+				if _, hit := cached[hash]; hit {
+					continue
+				}
+				if target, ok := bySource[strings.TrimSpace(items[index].Source)]; ok && strings.TrimSpace(target) != "" {
+					cached[hash] = target
+				}
+			}
+		}
 	}
 	missingHashes := make([]string, 0, len(items))
 	missingItems := make([]translate.Item, 0, len(items))

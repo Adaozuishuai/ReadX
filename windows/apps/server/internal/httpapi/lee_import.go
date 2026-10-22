@@ -396,6 +396,10 @@ func leeOutputToReadXMetadata(pages []ocr.Page, translated []leePageTranslation,
 		}
 		items, owners, _ := pageTranslationItems(page, before, after)
 		for _, block := range page.Blocks {
+			// 版式是 OCR 页的持久化形态：**凡是从页重建 item / 渲染要用到的字段都必须存下来**。
+			// 漏掉续接字段的代价特别大——译文缓存的指纹包含续接签名与上下文，
+			// 读取端拿落库版式重建时算出的指纹就和写入端不同，后台明明已入库的译文永远查不中
+			// （现象：阅读器一直显示「本页译文 0 / N 段」）。
 			layout.Blocks = append(layout.Blocks, layoutBlock{
 				Kind: block.Kind, SourceOrder: block.SourceOrder, HasSourceOrder: block.HasSourceOrder,
 				ProviderBlockID: block.ProviderBlockID, RawGroupID: block.RawGroupID, RawGlobalGroupID: block.RawGlobalGroupID,
@@ -407,9 +411,15 @@ func leeOutputToReadXMetadata(pages []ocr.Page, translated []leePageTranslation,
 				CrossColumnMergeSuspected: block.CrossColumnMergeSuspected, ReadingOrderUnreliable: block.ReadingOrderUnreliable,
 				StructureUnreliable: block.StructureUnreliable, TextMissingButBBoxPresent: block.TextMissingButBBoxPresent,
 				PeerBlockAbsorbedText: block.PeerBlockAbsorbedText, SuspectedPeerBlockID: block.SuspectedPeerBlockID,
-				ContinuationGroup: block.ContinuationGroup, ProviderContinuationRole: block.ProviderContinuationRole,
-				ProviderContinuationScope: block.ProviderContinuationScope, ProviderContinuationOrder: block.ProviderContinuationOrder,
-				ProviderContinuationScore: block.ProviderContinuationScore, LeeMetadata: block.LeeMetadata, LeeContent: block.LeeContent,
+				LayoutMode: block.LayoutMode, LayoutSplitX: block.LayoutSplitX, LayoutZone: block.LayoutZone,
+				LayoutZoneRank: block.LayoutZoneRank, LayoutZoneSize: block.LayoutZoneSize, BoundaryRole: block.BoundaryRole,
+				ContinuationGroup: block.ContinuationGroup, ContinuationSignature: block.ContinuationSignature,
+				ContinuationDecision: block.ContinuationDecision, ContinuationPrevious: block.ContinuationPrevious,
+				ContinuationNext: block.ContinuationNext,
+				ProviderContinuationRole: block.ProviderContinuationRole, ProviderContinuationScope: block.ProviderContinuationScope,
+				ProviderContinuationOrder: block.ProviderContinuationOrder, ProviderContinuationScore: block.ProviderContinuationScore,
+				ProviderContinuationSkip: block.ProviderContinuationSkip,
+				LeeMetadata:              block.LeeMetadata, LeeContent: block.LeeContent,
 			})
 			if block.Translatable && strings.TrimSpace(block.Text) != "" {
 				segments = append(segments, block.Text)

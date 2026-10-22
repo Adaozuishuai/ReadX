@@ -122,6 +122,39 @@ func (s *Server) cachedTranslations(ctx context.Context, key string, hashes []st
 	return out, nil
 }
 
+// translationsBySource 按「同一篇论文 + 逐字相同的原文」取已落库的译文。
+//
+// 指纹（translationCacheHash）里含续接上下文与版式线索。旧版本保存版式时漏掉了这些字段，
+// 于是读取端再也算不出写入端那个指纹——库里明明躺着译文，阅读器却一直显示「本页译文 0 / N 段」。
+// 版式字段已修，但**已经存进库的版式改不回来**，所以这里给一个兜底：
+// 原文逐字相同就当作同一段，把它的译文用上。
+//
+// 取舍：指纹失配只说明"版式线索变了"，不说明译文错了；同一篇论文里逐字相同的段落，
+// 显示既有译文远比显示空白、再花一次额度重译诚实。force（用户主动重新翻译）时不走这条兜底。
+func (s *Server) translationsBySource(ctx context.Context, key string) (map[string]string, error) {
+	out := map[string]string{}
+	rows, err := s.handle.QueryContext(ctx,
+		`SELECT source, target FROM translations WHERE document_id = ? AND trim(target) <> ''`, key)
+	if err != nil {
+		return nil, fmt.Errorf("读取译文失败: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var source, target string
+		if err := rows.Scan(&source, &target); err != nil {
+			return nil, fmt.Errorf("解析译文失败: %w", err)
+		}
+		trimmed := strings.TrimSpace(source)
+		if trimmed == "" {
+			continue
+		}
+		if existing, ok := out[trimmed]; !ok || strings.TrimSpace(existing) == "" {
+			out[trimmed] = target
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *Server) saveTranslations(ctx context.Context, key string, hashes, sources, targets []string) error {
 	if len(hashes) != len(sources) || len(hashes) != len(targets) {
 		return fmt.Errorf("译文数组长度不匹配")
