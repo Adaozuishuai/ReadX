@@ -121,12 +121,19 @@ async function main() {
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
       return result.result.value;
     };
-    const deadline = Date.now() + 15000;
-    while (!(await evaluate(`typeof window.${runner} === "function"`))) {
-      if (Date.now() >= deadline) throw new Error(`Regression page did not load: ${await evaluate('document.body.innerText')}`);
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    const results = await evaluate(`window.${runner}()`, true);
+    const results = await evaluate(`new Promise((resolve, reject) => {
+      const deadline = Date.now() + 15000;
+      const run = () => {
+        if (typeof window.${runner} === 'function') {
+          Promise.resolve().then(() => window.${runner}()).then(resolve, reject);
+        } else if (Date.now() >= deadline) {
+          reject(new Error('Regression page did not load: ' + document.body.innerText));
+        } else {
+          setTimeout(run, 50);
+        }
+      };
+      run();
+    })`, true);
     for (const result of results) console.log(`PASS ${result}`);
   } catch (error) {
     if (browserErrors.trim()) console.error(browserErrors);
