@@ -20,13 +20,13 @@ import (
 
 // stageStats 是一个阶段的耗时汇总（毫秒）。
 type stageStats struct {
-	Key        string `json:"key"`
-	Label      string `json:"label"`
-	Runs       int    `json:"runs"`
-	TotalMs    int64  `json:"totalMs"`
-	MedianMs   int64  `json:"medianMs"`
-	MaxMs      int64  `json:"maxMs"`
-	PerPageMs  *int64 `json:"perPageMs,omitempty"`
+	Key       string `json:"key"`
+	Label     string `json:"label"`
+	Runs      int    `json:"runs"`
+	TotalMs   int64  `json:"totalMs"`
+	MedianMs  int64  `json:"medianMs"`
+	MaxMs     int64  `json:"maxMs"`
+	PerPageMs *int64 `json:"perPageMs,omitempty"`
 }
 
 type namedCount struct {
@@ -204,14 +204,14 @@ func (s *Server) readingStats(ctx context.Context) (map[string]any, error) {
 	}
 
 	return map[string]any{
-		"located":           located,
-		"activeWeek":        activeWeek,
-		"activeMonth":       activeMonth,
-		"annotations":       annotations,
-		"annotationsMonth":  annotationsMonth,
-		"readingNotes":      readingNotes,
-		"indexedDocuments":  indexedDocuments,
-		"indexedPages":      indexedPages,
+		"located":          located,
+		"activeWeek":       activeWeek,
+		"activeMonth":      activeMonth,
+		"annotations":      annotations,
+		"annotationsMonth": annotationsMonth,
+		"readingNotes":     readingNotes,
+		"indexedDocuments": indexedDocuments,
+		"indexedPages":     indexedPages,
 	}, nil
 }
 
@@ -411,7 +411,7 @@ func (s *Server) distributionStats(ctx context.Context) (map[string]any, error) 
 		}
 	}
 	return map[string]any{
-		"years":  years,
+		"years":   years,
 		"shelves": topCounts(shelfCount, 12),
 		"tags":    topCounts(tagCount, 12),
 	}, nil

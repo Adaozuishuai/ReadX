@@ -28,15 +28,15 @@ const (
 
 // Work 是一篇论文渲染书目所需的全部字段（其余字段一律不参与输出）。
 type Work struct {
-	Key       string
-	Title     string
-	Authors   []string
-	Year      int
-	Venue     string
-	DOI       string
-	URL       string
-	ArxivID   string
-	Keywords  []string
+	Key      string
+	Title    string
+	Authors  []string
+	Year     int
+	Venue    string
+	DOI      string
+	URL      string
+	ArxivID  string
+	Keywords []string
 }
 
 // Classification 是条目类型的判定结果与依据（依据会写进导出文件的注释并在界面披露）。

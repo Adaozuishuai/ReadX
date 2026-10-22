@@ -27,15 +27,15 @@ const (
 )
 
 type searchHit struct {
-	Key      string `json:"key"`
-	Title    string `json:"title"`
-	Year     int    `json:"year"`
-	Status   string `json:"status"`
-	Page     int    `json:"page"`
-	Count    int    `json:"count"`
-	Before   string `json:"before"`
-	Match    string `json:"match"`
-	After    string `json:"after"`
+	Key    string `json:"key"`
+	Title  string `json:"title"`
+	Year   int    `json:"year"`
+	Status string `json:"status"`
+	Page   int    `json:"page"`
+	Count  int    `json:"count"`
+	Before string `json:"before"`
+	Match  string `json:"match"`
+	After  string `json:"after"`
 }
 
 // handleSearch 返回命中页与覆盖度。
@@ -311,7 +311,7 @@ func searchSnippet(text, query string) (before, match, after string, count int) 
 	if end < len(runes) {
 		after = string(runes[first+len(needle):end]) + "…"
 	} else {
-		after = string(runes[first+len(needle):end])
+		after = string(runes[first+len(needle) : end])
 	}
 	return before, string(runes[first : first+len(needle)]), after, count
 }

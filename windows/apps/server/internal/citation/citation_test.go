@@ -88,14 +88,14 @@ func TestCiteKeyFallsBackToDocumentKey(t *testing.T) {
 
 func TestBibTeXEscapesAndDiscloses(t *testing.T) {
 	out := BibTeX([]Work{{
-		Key:     "k1",
-		Title:   "R&D costs: 50% of x_1 #2",
-		Authors: []string{"Ada Lovelace", "Ruyi Zha"},
-		Year:    2022,
-		Venue:   "ECCV 2022",
-		DOI:     "10.1000/xyz",
-		URL:     "https://example.org/paper",
-		ArxivID: "2209.14540",
+		Key:      "k1",
+		Title:    "R&D costs: 50% of x_1 #2",
+		Authors:  []string{"Ada Lovelace", "Ruyi Zha"},
+		Year:     2022,
+		Venue:    "ECCV 2022",
+		DOI:      "10.1000/xyz",
+		URL:      "https://example.org/paper",
+		ArxivID:  "2209.14540",
 		Keywords: []string{"CBCT", "sparse view"},
 	}}, time.Unix(0, 0))
 	for _, want := range []string{
