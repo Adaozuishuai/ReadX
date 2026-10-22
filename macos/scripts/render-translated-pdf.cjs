@@ -33,6 +33,7 @@ function parseArgs(argv) {
   }
   for (const [key, value] of Object.entries(options)) {
     if (["page", "extract", "assemble"].includes(key)) continue;
+    if (key === "pagesManifest" && options.assemble !== "1") continue;
     if (options.assemble === "1" && ["engine", "input", "fonts", "report"].includes(key)) continue;
     if (!value) throw new UsageError(`missing --${key}`);
   }
