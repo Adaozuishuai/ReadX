@@ -2,48 +2,22 @@ package httpapi
 
 import "testing"
 
-func TestDailyVenuePrioritizesTargetJournalsAndConferences(t *testing.T) {
+func TestDailyVenueAcceptsAnyNamedSource(t *testing.T) {
 	cases := []struct {
 		venue string
 		label string
-		tier  int
 		ok    bool
 	}{
-		{"Medical Image Computing and Computer Assisted Intervention (MICCAI)", "MICCAI", 0, true},
-		{"IEEE Transactions on Medical Imaging", "TMI", 0, true},
-		{"Medical Image Analysis", "Medical Image Analysis", 0, true},
-		{"IEEE International Symposium on Biomedical Imaging", "ISBI", 1, true},
-		{"CVPR Workshops", "", 0, false},
-		{"arXiv preprint", "", 0, false},
+		{"Medical Image Computing and Computer Assisted Intervention (MICCAI)", "Medical Image Computing and Computer Assisted Intervention (MICCAI)", true},
+		{"ACL", "ACL", true},
+		{"arXiv (Cornell University)", "arXiv (Cornell University)", true},
+		{"", "", false},
 	}
 	for _, tc := range cases {
-		label, tier, ok := dailyVenue(tc.venue)
-		if label != tc.label || tier != tc.tier || ok != tc.ok {
-			t.Errorf("dailyVenue(%q) = (%q, %d, %v), want (%q, %d, %v)", tc.venue, label, tier, ok, tc.label, tc.tier, tc.ok)
+		label, _, ok := dailyVenue(tc.venue)
+		if label != tc.label || ok != tc.ok {
+			t.Errorf("dailyVenue(%q) = (%q, %v), want (%q, %v)", tc.venue, label, ok, tc.label, tc.ok)
 		}
-	}
-}
-
-// 每个 OpenAlex source 的名称都必须能被 dailyVenue 认出来（LNCS 例外：它的会议名
-// 只能从 Crossref 的 container-title 补），否则筛选会静默丢掉整个 venue。
-func TestDailyVenueSourcesMatchVenueRules(t *testing.T) {
-	seen := map[string]bool{}
-	lncs := 0
-	for _, source := range dailyVenueSources {
-		if seen[source.id] {
-			t.Errorf("source %s 重复出现", source.id)
-		}
-		seen[source.id] = true
-		if source.id == dailyLNCSourceID {
-			lncs++
-			continue
-		}
-		if _, _, ok := dailyVenue(source.label); !ok {
-			t.Errorf("source 名称 %q 无法匹配任何 venue 规则", source.label)
-		}
-	}
-	if lncs != 1 {
-		t.Errorf("LNCS source 出现 %d 次，want 1", lncs)
 	}
 }
 
@@ -63,7 +37,7 @@ func TestOpenAlexAbstractRestoresWordOrder(t *testing.T) {
 	}
 }
 
-func TestDailyPaperFromWorkNeedsCrossrefForLNCS(t *testing.T) {
+func TestDailyPaperFromWorkUsesCrossrefVenueForLNCS(t *testing.T) {
 	work := openAlexWork{
 		ID:    "https://openalex.org/W1",
 		DOI:   "https://doi.org/10.1007/978-3-032-38179-8_16",
@@ -74,15 +48,16 @@ func TestDailyPaperFromWorkNeedsCrossrefForLNCS(t *testing.T) {
 			Name: "Lecture notes in computer science",
 		}},
 	}
-	if _, ok := dailyPaperFromWork(work, nil); ok {
-		t.Fatalf("LNCS 论文在缺少 Crossref container-title 时不应被收录")
+	paper, ok := dailyPaperFromWork(work, nil)
+	if !ok || paper.Venue != "Lecture notes in computer science" {
+		t.Fatalf("缺少 Crossref 时也应收录通用来源，paper=%+v ok=%v", paper, ok)
 	}
-	paper, ok := dailyPaperFromWork(work, []string{"Lecture Notes in Computer Science", "Medical Image Computing and Computer Assisted Intervention – MICCAI 2026"})
+	paper, ok = dailyPaperFromWork(work, []string{"Lecture Notes in Computer Science", "Medical Image Computing and Computer Assisted Intervention – MICCAI 2026"})
 	if !ok {
-		t.Fatalf("LNCS 论文应能靠 container-title 匹配到 MICCAI")
+		t.Fatalf("LNCS 论文应能靠 container-title 展示具体会议")
 	}
-	if paper.Venue != "MICCAI" || paper.VenueTier != 0 {
-		t.Errorf("venue = (%q, %d), want (MICCAI, 0)", paper.Venue, paper.VenueTier)
+	if paper.Venue != "Medical Image Computing and Computer Assisted Intervention – MICCAI 2026" {
+		t.Errorf("venue = %q, want Crossref container-title", paper.Venue)
 	}
 	if paper.ID != "10.1007/978-3-032-38179-8_16" || paper.URL != "https://doi.org/10.1007/978-3-032-38179-8_16" {
 		t.Errorf("id/url 未归一化：id=%q url=%q", paper.ID, paper.URL)
@@ -111,8 +86,8 @@ func TestDailyPaperFromWorkKeepsJournalVenueAndAbstract(t *testing.T) {
 	if !ok {
 		t.Fatalf("TMI 论文应被收录")
 	}
-	if paper.Venue != "TMI" || paper.VenueTier != 0 {
-		t.Errorf("venue = (%q, %d), want (TMI, 0)", paper.Venue, paper.VenueTier)
+	if paper.Venue != "IEEE Transactions on Medical Imaging" {
+		t.Errorf("venue = %q, want generic source name", paper.Venue)
 	}
 	if len(paper.Authors) != 1 || paper.Authors[0] != "Ada Lovelace" {
 		t.Errorf("authors = %v, want [Ada Lovelace]", paper.Authors)
@@ -125,7 +100,7 @@ func TestDailyPaperFromWorkKeepsJournalVenueAndAbstract(t *testing.T) {
 	}
 }
 
-func TestDailyPaperFromWorkDropsUnlistedVenues(t *testing.T) {
+func TestDailyPaperFromWorkAllowsUnlistedVenues(t *testing.T) {
 	work := openAlexWork{
 		ID:    "https://openalex.org/W3",
 		Title: "Some preprint",
@@ -134,7 +109,7 @@ func TestDailyPaperFromWorkDropsUnlistedVenues(t *testing.T) {
 			Name: "arXiv (Cornell University)",
 		}},
 	}
-	if _, ok := dailyPaperFromWork(work, []string{"arXiv (Cornell University)"}); ok {
-		t.Fatalf("非目标 venue 不应被收录")
+	if paper, ok := dailyPaperFromWork(work, []string{"arXiv (Cornell University)"}); !ok || paper.Venue != "arXiv (Cornell University)" {
+		t.Fatalf("用户可在规则中自行筛选任意来源，paper=%+v ok=%v", paper, ok)
 	}
 }

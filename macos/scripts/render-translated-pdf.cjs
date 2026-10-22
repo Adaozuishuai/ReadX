@@ -20,7 +20,7 @@ const path = require("node:path");
 class UsageError extends Error {}
 
 function parseArgs(argv) {
-  const options = { engine: "", input: "", source: "", output: "", fonts: "", report: "", page: "", extract: "" };
+  const options = { engine: "", input: "", source: "", output: "", fonts: "", report: "", page: "", extract: "", assemble: "", pagesManifest: "" };
   for (let index = 0; index < argv.length; index += 1) {
     const name = argv[index];
     if (!name.startsWith("--")) throw new UsageError(`unknown argument ${name}`);
@@ -29,13 +29,38 @@ function parseArgs(argv) {
     if (index + 1 >= argv.length) throw new UsageError(`${name} needs a value`);
     const value = argv[++index];
     // --page 是页码（1 起），--extract 是开关：两者保留原值，其余按路径解析。
-    options[key] = key === "page" || key === "extract" ? value : path.resolve(value);
+    options[key] = key === "page" || key === "extract" || key === "assemble" ? value : path.resolve(value);
   }
   for (const [key, value] of Object.entries(options)) {
-    if (key === "page" || key === "extract") continue;
+    if (["page", "extract", "assemble"].includes(key)) continue;
+    if (options.assemble === "1" && ["engine", "input", "fonts", "report"].includes(key)) continue;
     if (!value) throw new UsageError(`missing --${key}`);
   }
   return options;
+}
+
+async function assemblePages(sourcePath, manifestPath, outputPath) {
+  const { PDFDocument } = require("pdf-lib");
+  const source = await PDFDocument.load(fs.readFileSync(sourcePath));
+  const sourcePages = source.getPages();
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  if (!Array.isArray(manifest.pages) || manifest.pages.length !== sourcePages.length) {
+    throw new Error(`待组装页数 ${manifest.pages?.length ?? 0} 与原 PDF 页数 ${sourcePages.length} 不一致`);
+  }
+  const output = await PDFDocument.create();
+  for (let index = 0; index < sourcePages.length; index += 1) {
+    const renderedPath = manifest.pages[index];
+    if (typeof renderedPath === "string" && renderedPath) {
+      const rendered = await PDFDocument.load(fs.readFileSync(renderedPath));
+      if (rendered.getPageCount() !== 1) throw new Error(`第 ${index + 1} 页渲染文件不是单页 PDF`);
+      const [copied] = await output.copyPages(rendered, [0]);
+      output.addPage(copied);
+    } else {
+      const [copied] = await output.copyPages(source, [index]);
+      output.addPage(copied);
+    }
+  }
+  fs.writeFileSync(outputPath, await output.save());
 }
 
 // 没有可翻译的正文（公式/表格/图片页）：原样抽出一页，不跑排版引擎。
@@ -116,6 +141,11 @@ function loadEngine(engineDir) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.assemble === "1") {
+    await assemblePages(options.source, options.pagesManifest, options.output);
+    process.stdout.write(JSON.stringify({ ok: true, pages: JSON.parse(fs.readFileSync(options.pagesManifest, "utf8")).pages.length }) + "\n");
+    return;
+  }
   if (options.extract === "1") {
     // 没有正文可翻译：只抽出原页，报告按 0 块交付，调用方据此显示“保留原页”。
     await copySinglePage(options.source, Number(options.page || 0), options.output);

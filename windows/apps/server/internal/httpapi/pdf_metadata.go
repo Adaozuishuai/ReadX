@@ -3,6 +3,7 @@ package httpapi
 import (
 	"cbctv2/server/internal/ai"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -210,7 +211,7 @@ func (s *Server) saveRecognizedPDFMetadata(ctx context.Context, id, filenameTitl
 		authors = CASE WHEN authors IS NULL OR authors = '' OR authors = '[]' THEN ? ELSE authors END,
 		doi = CASE WHEN doi IS NULL OR doi = '' THEN ? ELSE doi END,
 		venue = CASE WHEN venue IS NULL OR venue = '' THEN ? ELSE venue END,
-		year = CASE WHEN year IS NULL THEN ? ELSE year END,
+		year = CASE WHEN year IS NULL OR year <= 0 THEN ? ELSE year END,
         translated_title = COALESCE(NULLIF(?, ''), translated_title),
 		updated_at = ? WHERE id = ?`,
 		filenameTitle, metadata.Title, string(authors), metadata.DOI, metadata.Venue, year, metadata.TranslatedTitle, nowStamp(), id)
@@ -253,4 +254,131 @@ func (s *Server) recognizePDFMetadata(ctx context.Context, filename string, hint
 		}
 	}
 	return recognized, nil
+}
+
+func fillMissingPaperMetadata(target *recognizedPaperMetadata, source recognizedPaperMetadata) {
+	if strings.TrimSpace(target.Title) == "" {
+		target.Title = source.Title
+	}
+	if strings.TrimSpace(target.TranslatedTitle) == "" {
+		target.TranslatedTitle = source.TranslatedTitle
+	}
+	if len(target.Authors) == 0 {
+		target.Authors = source.Authors
+	}
+	if strings.TrimSpace(target.DOI) == "" {
+		target.DOI = normalizePublicationDOI(source.DOI)
+	}
+	if strings.TrimSpace(target.Venue) == "" {
+		target.Venue = strings.TrimSpace(source.Venue)
+	}
+	if target.Year <= 0 && source.Year >= 1500 && source.Year <= 2100 {
+		target.Year = source.Year
+	}
+}
+
+// All PDF import paths reach this step after OCR, even when the title was
+// supplied by a download card. Search records supply facts; the configured AI
+// assistant identifies the matching paper before missing fields are filled.
+func (s *Server) completeImportedPDFMetadata(ctx context.Context, filename string, metadata *recognizedPaperMetadata) error {
+	firstPage := ""
+	if len(metadata.Pages) > 0 {
+		firstPage = metadata.Pages[0].Text
+		text := []rune(firstPage)
+		firstPage = string(text[:min(len(text), 20000)])
+	}
+	if firstPage != "" && (metadata.Title == "" || metadata.TranslatedTitle == "" || metadata.Venue == "" || metadata.Year <= 0 || metadata.DOI == "" || len(metadata.Authors) == 0) {
+		hint := publicationMetadataHint{FirstPage: firstPage, Title: metadata.Title, DOI: metadata.DOI}
+		if len(metadata.Authors) > 0 {
+			hint.Author = metadata.Authors[0]
+		}
+		if recognized, err := s.recognizePDFMetadata(ctx, filename, hint); err == nil {
+			fillMissingPaperMetadata(metadata, recognized)
+		}
+	}
+	config, err := s.aiConfig()
+	if err != nil {
+		return err
+	}
+	if !config.Ready() {
+		return fmt.Errorf("AI 助手尚未配置，无法联网核对题录")
+	}
+	searchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	return completePaperMetadataFromSearch(searchCtx, ai.NewClient(config), metadata, firstPage, lookupPapers)
+}
+
+// Reimporting an existing PDF can repair its missing publication fields while
+// reusing the saved source text and all previous OCR/translation results.
+func (s *Server) completeExistingPDFMetadata(ctx context.Context, filename string, document DocumentSummary) (DocumentSummary, string, error) {
+	if strings.TrimSpace(document.Venue) != "" && document.Year != nil && *document.Year > 0 {
+		return document, "", nil
+	}
+	metadata := recognizedPaperMetadata{Title: document.Title, TranslatedTitle: document.TranslatedTitle, Authors: document.Authors, DOI: document.DOI, Venue: document.Venue}
+	if document.Year != nil {
+		metadata.Year = *document.Year
+	}
+	var firstPage string
+	err := s.handle.QueryRowContext(ctx, `SELECT text FROM document_pages WHERE document_id=? ORDER BY page LIMIT 1`, document.ID).Scan(&firstPage)
+	if err != nil && err != sql.ErrNoRows {
+		return document, "", err
+	}
+	if firstPage != "" {
+		metadata.Pages = []publicationPageHint{{Page: 1, Text: firstPage}}
+	}
+	warning := ""
+	if err := s.completeImportedPDFMetadata(ctx, filename, &metadata); err != nil {
+		warning = "出版信息联网核对未完成：" + err.Error() + "；已保留原文与已有题录"
+	}
+	if err := s.saveRecognizedPDFMetadata(ctx, document.ID, strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)), metadata); err != nil {
+		return document, warning, err
+	}
+	updated, err := s.loadDocument(ctx, document.Key)
+	return updated, warning, err
+}
+
+func completePaperMetadataFromSearch(ctx context.Context, client *ai.Client, metadata *recognizedPaperMetadata, firstPage string, lookup func(context.Context, string) ([]paperCandidate, error)) error {
+	query := normalizePublicationDOI(metadata.DOI)
+	if query == "" {
+		query = strings.TrimSpace(metadata.Title)
+	}
+	if query == "" {
+		return fmt.Errorf("未识别到可检索的论文标题或 DOI")
+	}
+	candidates, err := lookup(ctx, query)
+	if (err != nil || len(candidates) == 0) && metadata.Title != "" && query != metadata.Title && ctx.Err() == nil {
+		candidates, err = lookup(ctx, metadata.Title)
+	}
+	if err != nil {
+		return fmt.Errorf("联网检索出版信息失败：%w", err)
+	}
+	if len(candidates) == 0 {
+		return fmt.Errorf("联网未找到这篇论文的可核实题录")
+	}
+	known := ai.PaperMetadata{Title: metadata.Title, Authors: metadata.Authors, DOI: metadata.DOI, Venue: metadata.Venue, Year: metadata.Year}
+	choices := make([]ai.PaperMetadata, len(candidates))
+	for i, candidate := range candidates {
+		choices[i] = ai.PaperMetadata{Title: candidate.Title, Authors: candidate.Authors, DOI: candidate.DOI, Venue: candidate.Venue, Year: candidate.Year}
+	}
+	index, err := ai.MatchPaperMetadata(ctx, client, known, firstPage, choices)
+	if err != nil {
+		return err
+	}
+	if index < 0 {
+		return fmt.Errorf("AI 助手未能确认搜索结果与原文为同一篇论文")
+	}
+	match := candidates[index]
+	knownDOI, matchDOI := normalizePublicationDOI(metadata.DOI), normalizePublicationDOI(match.DOI)
+	if knownDOI != "" && matchDOI != "" {
+		if !strings.EqualFold(knownDOI, matchDOI) {
+			return fmt.Errorf("搜索结果的 DOI 与原文不一致，保留已有题录")
+		}
+	} else if titleSimilarity(metadata.Title, match.Title) < 0.65 {
+		return fmt.Errorf("搜索结果与论文标题不符，保留已有题录")
+	}
+	fillMissingPaperMetadata(metadata, recognizedPaperMetadata{Title: match.Title, Authors: match.Authors, DOI: match.DOI, Venue: match.Venue, Year: match.Year})
+	if strings.TrimSpace(metadata.Venue) == "" || metadata.Year <= 0 {
+		return fmt.Errorf("已核对联网题录，但出版来源或年份仍未收录")
+	}
+	return nil
 }

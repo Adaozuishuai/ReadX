@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
-import { api, type DailyRecommendation } from '../api/client';
+import { api, type DailyRecommendation, type DailyRecommendationRules } from '../api/client';
 
 const CACHE_KEY = 'cbct-v2-daily-recommendations';
-type DailyCache = { day: string; fetchedAt: string; papers: DailyRecommendation[] };
+const RULES_KEY = 'readx-daily-recommendation-rules';
+type RuleDraft = Omit<DailyRecommendationRules, 'keywords' | 'exclude' | 'venues'> & { keywords: string; exclude: string; venues: string };
+type DailyCache = { day: string; rulesKey: string; fetchedAt: string; papers: DailyRecommendation[] };
 
 function dayKey() {
   return new Date().toLocaleDateString('en-CA');
@@ -13,18 +15,57 @@ function normalizedTitle(value: string) {
   return value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 }
 
-function readCache(): DailyCache | null {
+function splitLines(value: string) {
+  return value.split(/[\n\r;]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeRules(value: RuleDraft | DailyRecommendationRules): DailyRecommendationRules {
+  const asLines = (input: string | string[]) => Array.isArray(input) ? input.map((item) => item.trim()).filter(Boolean) : splitLines(input);
+  return {
+    field: value.field.trim(),
+    keywords: asLines(value.keywords),
+    exclude: asLines(value.exclude),
+    venues: asLines(value.venues),
+    years: [1, 2, 3, 5].includes(value.years) ? value.years : 2,
+  };
+}
+
+function rulesKey(value: DailyRecommendationRules) {
+  return JSON.stringify({ ...value, field: value.field.toLowerCase(), keywords: value.keywords.map((item) => item.toLowerCase()), exclude: value.exclude.map((item) => item.toLowerCase()), venues: value.venues.map((item) => item.toLowerCase()) });
+}
+
+function hasSearchRules(value: DailyRecommendationRules) {
+  return Boolean(value.field || value.keywords.length);
+}
+
+function draftFromRules(value: DailyRecommendationRules): RuleDraft {
+  return { ...value, keywords: value.keywords.join('\n'), exclude: value.exclude.join('\n'), venues: value.venues.join('\n') };
+}
+
+function readRules(): DailyRecommendationRules {
+  try {
+    const value = JSON.parse(localStorage.getItem(RULES_KEY) ?? 'null') as RuleDraft | DailyRecommendationRules | null;
+    return value ? normalizeRules(value) : { field: '', keywords: [], exclude: [], venues: [], years: 2 };
+  } catch {
+    return { field: '', keywords: [], exclude: [], venues: [], years: 2 };
+  }
+}
+
+function readCache(rules: DailyRecommendationRules): DailyCache | null {
   try {
     const value = JSON.parse(localStorage.getItem(CACHE_KEY) ?? 'null') as DailyCache | null;
-    return value?.day === dayKey() && Array.isArray(value.papers) ? value : null;
+    return value?.day === dayKey() && value.rulesKey === rulesKey(rules) && Array.isArray(value.papers) ? value : null;
   } catch {
     return null;
   }
 }
 
 export function DailyRecommendations({ documents, onReload, embedded = false }: { documents: DocumentSummary[]; onReload: () => void; embedded?: boolean }) {
-  const [papers, setPapers] = useState<DailyRecommendation[]>(() => readCache()?.papers ?? []);
-  const [fetchedAt, setFetchedAt] = useState(() => readCache()?.fetchedAt ?? '');
+  const [rules, setRules] = useState(readRules);
+  const [draft, setDraft] = useState(() => draftFromRules(readRules()));
+  const [rulesOpen, setRulesOpen] = useState(() => !hasSearchRules(readRules()));
+  const [papers, setPapers] = useState<DailyRecommendation[]>(() => readCache(readRules())?.papers ?? []);
+  const [fetchedAt, setFetchedAt] = useState(() => readCache(readRules())?.fetchedAt ?? '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [importing, setImporting] = useState('');
@@ -32,9 +73,14 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
   const loaded = useRef(false);
   const controller = useRef<AbortController | null>(null);
 
-  const load = async (force = false) => {
+  const configured = hasSearchRules(rules);
+  const load = async (force = false, activeRules = rules) => {
     if (loading) return;
-    const cached = readCache();
+    if (!hasSearchRules(activeRules)) {
+      setError('请先设置研究领域或检索词');
+      return;
+    }
+    const cached = readCache(activeRules);
     if (!force && cached) {
       setPapers(cached.papers);
       setFetchedAt(cached.fetchedAt);
@@ -43,10 +89,10 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
     setLoading(true);
     setError('');
     try {
-      const result = await api.dailyRecommendations();
+      const result = await api.dailyRecommendations(activeRules);
       setPapers(result.papers);
       setFetchedAt(result.fetchedAt);
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ day: dayKey(), ...result } satisfies DailyCache)); } catch { /* Private browsing may disable storage. */ }
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ day: dayKey(), rulesKey: rulesKey(activeRules), ...result } satisfies DailyCache)); } catch { /* Private browsing may disable storage. */ }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -57,7 +103,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
   useEffect(() => {
     if (loaded.current) return;
     loaded.current = true;
-    if (!readCache()) void load();
+    if (configured && !readCache(rules)) void load();
   }, []);
 
   useEffect(() => () => {
@@ -72,6 +118,23 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
     const dois = new Set(documents.map((doc) => doc.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//, '')));
     return papers.filter((paper) => !titles.has(normalizedTitle(paper.title)) && (!paper.doi || !dois.has(paper.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//, '')))).slice(0, 5);
   }, [documents, papers]);
+
+  const saveRules = () => {
+    const next = normalizeRules(draft);
+    setRules(next);
+    setDraft(draftFromRules(next));
+    setRulesOpen(false);
+    setPapers([]);
+    setFetchedAt('');
+    setError('');
+    try { localStorage.setItem(RULES_KEY, JSON.stringify(next)); } catch { /* Private browsing may disable storage. */ }
+    if (!hasSearchRules(next)) {
+      setError('请填写研究领域或至少一个检索词');
+      setRulesOpen(true);
+      return;
+    }
+    void load(true, next);
+  };
 
   /** 推荐论文下载后走 ReadX 的本地 OCR、翻译与排版流程。 */
   const importPaper = async (paper: DailyRecommendation) => {
@@ -94,6 +157,9 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       const hint = {
         title: paper.title,
         author: paper.authors.join(', '),
+        authors: paper.authors,
+        venue: paper.venue,
+        year: paper.year,
         doi: paper.doi,
         arxiv: paper.arxiv ?? '',
         firstPage: '',
@@ -129,14 +195,38 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
       <div className="flex flex-wrap items-center gap-2">
         <div>
           {!embedded ? <h2 className="text-sm font-semibold text-ink">每日论文推荐</h2> : null}
-          <p className="mt-0.5 text-[11px] text-ink-faint">优先展示 MICCAI、CVPR、ICCV、ECCV、NeurIPS、ICLR、AAAI、TMI 与 Medical Image Analysis</p>
+          <p className="mt-0.5 text-[11px] text-ink-faint">{configured ? `按「${rules.field || rules.keywords[0]}」推荐近 ${rules.years} 年论文${rules.venues.length ? ` · ${rules.venues.join('、')}` : ' · 不限会议与期刊'}` : '设置你的研究领域和检索规则，跨会议与期刊发现相关论文'}</p>
         </div>
         {fetchedAt ? <span className="text-[10px] text-ink-faint">更新于 {fetchedAt.slice(0, 16).replace('T', ' ')}</span> : null}
-        <button type="button" onClick={() => void load(true)} disabled={loading} className="ml-auto rounded-md border border-line px-2.5 py-1 text-[11px] text-ink-soft hover:text-ink disabled:opacity-50">{loading ? '正在检索…' : '刷新推荐'}</button>
+        <button type="button" onClick={() => { setDraft(draftFromRules(rules)); setRulesOpen((value) => !value); }} className="ml-auto rounded-md border border-line px-2.5 py-1 text-[11px] text-ink-soft hover:text-ink">推荐规则</button>
+        {configured ? <button type="button" onClick={() => void load(true)} disabled={loading} className="rounded-md border border-line px-2.5 py-1 text-[11px] text-ink-soft hover:text-ink disabled:opacity-50">{loading ? '正在检索…' : '刷新推荐'}</button> : null}
       </div>
-      {loading && !papers.length ? <p role="status" className="mt-3 text-xs text-ink-soft">正在检索顶刊顶会论文…</p> : null}
+      {rulesOpen ? (
+        <div className="mt-3 grid gap-2 rounded-lg border border-line bg-surface-sunk/40 p-3">
+          <label className="grid gap-1 text-[11px] text-ink-soft">研究领域
+            <input value={draft.field} onChange={(event) => setDraft((value) => ({ ...value, field: event.target.value }))} placeholder="例如：计算机视觉、分子生物学、教育心理学" className="rounded-md border border-line bg-surface px-2.5 py-2 text-xs text-ink" />
+          </label>
+          <label className="grid gap-1 text-[11px] text-ink-soft">检索词（每行一个，任一命中即可）
+            <textarea value={draft.keywords} onChange={(event) => setDraft((value) => ({ ...value, keywords: event.target.value }))} rows={3} placeholder={'例如：\nobject detection\nvision-language model\nmedical image segmentation'} className="resize-y rounded-md border border-line bg-surface px-2.5 py-2 text-xs text-ink" />
+          </label>
+          <label className="grid gap-1 text-[11px] text-ink-soft">排除词（可选，每行一个）
+            <textarea value={draft.exclude} onChange={(event) => setDraft((value) => ({ ...value, exclude: event.target.value }))} rows={2} placeholder="例如：survey、editorial" className="resize-y rounded-md border border-line bg-surface px-2.5 py-2 text-xs text-ink" />
+          </label>
+          <label className="grid gap-1 text-[11px] text-ink-soft">限定会议 / 期刊（可选；留空则不限来源）
+            <textarea value={draft.venues} onChange={(event) => setDraft((value) => ({ ...value, venues: event.target.value }))} rows={2} placeholder={'例如：\nACL\nNature Machine Intelligence'} className="resize-y rounded-md border border-line bg-surface px-2.5 py-2 text-xs text-ink" />
+          </label>
+          <label className="flex items-center justify-between gap-2 text-[11px] text-ink-soft">检索时间范围
+            <select value={draft.years} onChange={(event) => setDraft((value) => ({ ...value, years: Number(event.target.value) }))} className="rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-ink">
+              {[1, 2, 3, 5].map((year) => <option key={year} value={year}>近 {year} 年</option>)}
+            </select>
+          </label>
+          <button type="button" onClick={saveRules} disabled={loading} className="rounded-md bg-accent px-3 py-2 text-xs font-medium text-surface disabled:opacity-50">保存规则并检索</button>
+        </div>
+      ) : null}
+      {loading && !papers.length ? <p role="status" className="mt-3 text-xs text-ink-soft">正在按自定义规则检索论文…</p> : null}
       {error ? <p role="status" className="mt-3 text-xs text-bad">{error}</p> : null}
-      {!loading && !error && visible.length === 0 ? <p className="mt-3 text-xs text-ink-soft">今天暂无未入库的匹配论文。可以刷新重新检索。</p> : null}
+      {!configured && !rulesOpen ? <p className="mt-3 text-xs text-ink-soft">先设置研究领域和检索词，再查看匹配论文。</p> : null}
+      {!loading && configured && !error && visible.length === 0 ? <p className="mt-3 text-xs text-ink-soft">当前规则下没有未入库的匹配论文。可以调整规则或刷新检索。</p> : null}
       {progress ? <p role="status" className="mt-2 text-xs text-accent">{progress}</p> : null}
       <div className={`mt-2 grid gap-2${embedded ? '' : ' xl:grid-cols-2'}`}>
         {visible.map((paper) => (
@@ -148,7 +238,7 @@ export function DailyRecommendations({ documents, onReload, embedded = false }: 
                 <p className="mt-0.5 text-[11px] text-ink-faint">{paper.venue}{paper.year ? ` · ${paper.year}` : ''}</p>
                 {paper.abstract ? <p className="mt-1 line-clamp-3 text-[11px] leading-relaxed text-ink-soft">{paper.abstract}</p> : null}
               </div>
-              <span className="shrink-0 rounded-pill bg-accent-soft px-2 py-0.5 text-[10px] text-accent">{paper.venueTier === 0 ? '顶刊/顶会' : '领域会议'}</span>
+              <span className="shrink-0 rounded-pill bg-accent-soft px-2 py-0.5 text-[10px] text-accent">领域匹配</span>
             </div>
             <div className="mt-2 flex gap-2">
               {paper.pdfUrl ? (

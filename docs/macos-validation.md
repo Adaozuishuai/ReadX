@@ -8,7 +8,7 @@
 - `npm ci`：使用与 Windows 相同的锁文件安装依赖。
 - `npm test`：Go 全套测试、39 个 shared 测试、shared / web / desktop 类型检查通过。
 - `npm run build`：共享包、生产 React 页面、Electron 与原生 Go 后端构建通过。
-- `npm run check:runtime`：Python 模块、RetainPDF 入口、Typst、Node 排版依赖及字体检查通过。
+- `npm run check:runtime`：Python 模块、Lee 入口、Typst、Node 排版依赖及字体检查通过。
 - `npm run test:import`：六组真实 Chromium 交互回归通过；网络与模型为模拟输入。
 - `npm run test:desktop`：真实 Electron 主进程、preload、Go、SQLite、PDF 阅读、位置保存、SIGKILL 后自动恢复、Dock 重开及正常退出通过。使用合成 PDF 和隔离书库。
 - `npm run build:release` / `package:mac`：生成 ARM64 app、DMG、ZIP、blockmap 与本地更新元数据。
@@ -19,7 +19,7 @@
 ## 修复的具体问题
 
 - 主动停机晚于退出事件才设置 stopping，可能误报“本地服务已停止”。现已提前设置，并对真正异常实施有限重启；原端口 / Token 保持不变，不自动重放请求。
-- macOS 缺少 Windows 的 OCR / RetainPDF / 渲染 / 模型控制 / 重译等实现。已由受管镜像统一源码和依赖，CI 增加一致性及 macOS 原生验证。
+- macOS 缺少 Windows 的 OCR / Lee / 渲染 / 模型控制 / 重译等实现。已由受管镜像统一源码和依赖，CI 增加一致性及 macOS 原生验证。
 - 仓库忽略了上游渲染引擎 bin 目录。已从原固定提交恢复 CLI，并修正忽略规则。
 - 打包前端、Go、Python / Typst 路径不完整，以及 Python 复制时将相对符号链接变成构建机绝对路径。已修正并检查包内导入。
 - 打包目录未复制渲染 node_modules，以及 Go 只查找开发目录中的依赖。已显式打包，并补充开发 / 安装包目录回归测试。

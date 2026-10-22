@@ -4,14 +4,49 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"cbctv2/server/internal/legacy"
 )
 
 type translationPreviewBlock struct {
 	Source string     `json:"source"`
 	Target string     `json:"target"`
 	Box    [4]float64 `json:"box"`
+}
+
+// handleTranslatedPageRender serves the single-page PDF once background
+// translation and layout have both completed for that page.
+func (s *Server) handleTranslatedPageRender(w http.ResponseWriter, r *http.Request) {
+	key, pageNumber, ok := pathKeyAndPage(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.loadDocument(r.Context(), key); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "没有这篇文档")
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	job, found := s.loadImportJobForDocument(r.Context(), key)
+	if !found || job == nil {
+		http.NotFound(w, r)
+		return
+	}
+	pageDir := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).DataDir(), "retain", "jobs", job.Key, "rendered", "pages")
+	pagePath := leeRenderedPagePath(pageDir, pageNumber)
+	if _, err := os.Stat(pagePath); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, pagePath)
 }
 
 // handleTranslationPreview exposes translations as soon as LeePDF has flushed

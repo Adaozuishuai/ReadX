@@ -1,6 +1,6 @@
 # ReadX macOS
 
-与 Windows 使用相同的 React 阅读器、Go API、SQLite 迁移、Electron 主进程及 RetainPDF OCR / 翻译 / 排版流水线。macOS 独立维护运行时安装、图标、签名和打包配置。
+与 Windows 使用相同的 React 阅读器、Go API、SQLite 迁移、Electron 主进程及 Lee OCR / 翻译 / 排版流水线。macOS 独立维护运行时安装、图标、签名和打包配置。
 
 ## 开发与启动
 
@@ -16,7 +16,7 @@ npm start
 
 也可双击 `启动 ReadX.command`。`npm start` 检查源码指纹后构建并启动；`npm run dev` 启动 Go、Vite 和 Electron 开发环境。设置 `CBCT_V2_GO` 可指定 Go，`READX_UV` 可指定 uv。
 
-`setup:runtime` 安装工程内的 Python 3.12.14、预编译 PDF 依赖和 SHA-256 校验的 Typst 0.15.1。不启动 RetainPDF 桌面端、Rust API 或独立任务服务。
+`setup:runtime` 安装工程内的 Python 3.12.14、预编译 PDF 依赖和 SHA-256 校验的 Typst 0.15.1。无需单独启动翻译引擎桌面端、Rust API 或任务服务。
 
 ## 功能与架构
 
@@ -24,7 +24,9 @@ npm start
 
 以上阅读、批注、AI 助教、精读、导入与翻译功能和 Windows 版共用核心实现。Windows 功能指南中的交互与功能说明同样适用于 macOS；只有明确标注的 Windows 快捷方式、目录和系统集成例外。
 
-PDF 导入统一运行：Go 接收文件 → RetainPDF Python provider-case → PaddleOCR → document.v1 → 翻译 / 质检 / 修复 → RPR 排版 → 回填文库。必须配置 PaddleOCR 和可用的 AI 渠道；仅配置 OCR 不能完成全文翻译。文件、任务限制与 Windows 相同。EPUB 使用相同的安全章节导入路径。
+PDF 导入统一运行：Go 接收文件 → Lee Python provider-case → PaddleOCR → document.v1 → 翻译 / 质检 / 修复 → RPR 排版 → 回填文库。必须配置 PaddleOCR 和可用的 AI 渠道；仅配置 OCR 不能完成全文翻译。文件、任务限制与 Windows 相同。EPUB 使用相同的安全章节导入路径。
+
+PDF 入库时统一联网检索 OpenAlex / Crossref，再由所选 AI 助手核对并补齐缺失的期刊/会议与年份。重复导入缺少出版信息的旧论文会复用正文补齐题录。阅读器支持原 PDF 内置引用跳转、无链接方括号编号定位及返回正文；引用导出与引用关系窗口使用更大的字号并显示完整标题。
 
 AI 渠道包括 OpenAI 兼容 API、Anthropic、Codex Desktop / CLI、Claude CLI、Kimi CLI。macOS 查找 `/Applications/Codex.app` 和 `~/Applications/Codex.app` 中的 Codex，也可用 `CBCT_CODEX_PATH` 指定。不读取登录令牌文件。
 
@@ -77,7 +79,7 @@ npm run test:packaged
 node scripts/packaged-smoke.mjs --check-updates
 ```
 
-产物位于 `release/`：当前架构的 ReadX.app、DMG 和更新用 ZIP。包内包含 Go、React、Python 及依赖、Typst、RetainPDF、Node 渲染依赖和字体。普通用户不需要开发工具，OCR 与云端模型仍需联网。
+产物位于 `release/`：当前架构的 ReadX.app、DMG 和更新用 ZIP。包内包含 Go、React、Python 及依赖、Typst、Lee 引擎、Node 渲染依赖和字体。普通用户不需要开发工具，OCR 与云端模型仍需联网。
 
 本机未签名构建不代表通过 Gatekeeper 或公证。仓库的 `build-macos.yml` 在 macOS runner 上构建 DMG、ZIP、blockmap 和 `latest-mac.yml`，并在推送 `macos-vX.Y.Z` 标签后上传到同版本的 GitHub Release；Windows 安装包由 `vX.Y.Z` 标签对应的 Release workflow 构建。自动更新是否可用还取决于 macOS 对未签名应用的安全策略；首次启动或更新若被系统拦截，请从 Release 下载 DMG 手动安装。
 

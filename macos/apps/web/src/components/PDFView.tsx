@@ -12,6 +12,8 @@ import type { TextContent } from 'pdfjs-dist/types/src/display/api';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import { api, type Annotation, type NewAnnotation } from '../api/client';
+import { findMatchRanges, normalizeFindTextWithOffsets } from '../lib/findMatches';
+import { pdfPageLinks, pdfReferenceTargets, resolvePDFDestination, textCitationLinks, type PDFLinkTarget, type PDFLocation, type PDFSourceLink } from '../lib/pdfReferences';
 
 GlobalWorkerOptions.workerSrc = workerURL;
 export type PDFOutline = PaperHeading;
@@ -21,11 +23,164 @@ export interface PendingSelection {
   left: number;
 }
 
+/** 阅读器查找：命中所在的页与页内命中数（按页码升序）。 */
+export interface PDFFindHitPage {
+  page: number;
+  count: number;
+}
+
+/**
+ * 查找报告。scanning 非空表示还在逐页取文本，此时 pages 是「已扫到的部分」——
+ * 界面必须显示扫描进度而不是把部分结果当成最终结果。
+ * failed 是取文本失败的页数：这些页没有参与匹配，不能让它们看起来像「没有命中」。
+ */
+export interface PDFFindReport {
+  pages: PDFFindHitPage[];
+  scanning: { done: number; total: number } | null;
+  failed: number;
+}
+
+/**
+ * 查找态。
+ *
+ * query/caseSensitive 是「拿什么去扫」，必须在**还没有命中**时就传给视图，
+ * 否则扫描无从开始（曾经把整份状态都挂在上一次扫描的结果上，导致查找永远扫不出东西）。
+ * activePage/activeOccurrence 才是「跳到第几处命中」，没有命中时为 undefined。
+ */
+export interface PDFFindState {
+  query: string;
+  caseSensitive: boolean;
+  activePage?: number;
+  activeOccurrence?: number;
+  nonce: number;
+}
+
 export function textFromPDF(content: TextContent): string {
   return content.items
     .map((item) => ('str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : ''))
     .join('')
     .trim();
+}
+
+/**
+ * 查找用的整本扫描文本：按「item 之间补一个空格」拼接，与页内文本层的拼接规则一致
+ * （textFromPDF 会插入换行，偏移和文本层对不上，不能拿来做命中计数）。
+ */
+export function findItemsText(content: TextContent): string {
+  return content.items
+    .map((item) => ('str' in item ? item.str : ''))
+    .filter((value) => value.trim())
+    .join(' ');
+}
+
+/**
+ * 清理上一次查找留下的 mark，把文本节点还原（相邻文本节点合并，避免反复查找后碎片化）。
+ */
+function clearFindMarks(container: HTMLElement): void {
+  for (const mark of Array.from(container.querySelectorAll('mark.pdf-find-hit'))) {
+    const parent = mark.parentNode;
+    if (!parent) continue;
+    parent.replaceChild(window.document.createTextNode(mark.textContent ?? ''), mark);
+    parent.normalize();
+  }
+}
+
+/**
+ * 在文本层里标注 query 的全部命中，返回当前命中（activeOccurrence）对应的元素。
+ *
+ * 文本层是 pdf.js 生成的绝对定位 span：文字是透明的，只有背景可见，
+ * 所以这里只包 <mark> 改背景，不碰任何排版属性。
+ */
+function applyFindMarks(
+  container: HTMLElement,
+  query: string,
+  caseSensitive: boolean,
+  activeOccurrence: number | null,
+): HTMLElement | null {
+  clearFindMarks(container);
+  if (query.trim().length < 2) return null;
+
+  const nodes: Text[] = [];
+  const walker = window.document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.nodeValue ?? '';
+    if (text.trim()) nodes.push(node as Text);
+  }
+  if (!nodes.length) return null;
+
+  const joined = nodes.map((node) => node.nodeValue ?? '').join(' ');
+  const normalized = normalizeFindTextWithOffsets(joined);
+  const ranges = findMatchRanges(normalized.text, query, caseSensitive).map((range) => ({
+    start: normalized.starts[range.start] ?? range.start,
+    end: normalized.ends[range.end - 1] ?? range.end,
+  }));
+  if (!ranges.length) return null;
+
+  let active: HTMLElement | null = null;
+  let offset = 0;
+  for (const node of nodes) {
+    const text = node.nodeValue ?? '';
+    const nodeStart = offset;
+    offset += text.length + 1; // +1 是拼接时插入的分隔空格
+    const local = ranges
+      .map((range, index) => ({
+        order: index + 1,
+        start: Math.max(range.start - nodeStart, 0),
+        end: Math.min(range.end - nodeStart, text.length),
+      }))
+      .filter((item) => item.end > item.start);
+    if (!local.length) continue;
+
+    const fragment = window.document.createDocumentFragment();
+    let cursor = 0;
+    for (const item of local) {
+      if (item.start > cursor)
+        fragment.appendChild(window.document.createTextNode(text.slice(cursor, item.start)));
+      const mark = window.document.createElement('mark');
+      mark.className = 'pdf-find-hit';
+      mark.textContent = text.slice(item.start, item.end);
+      if (activeOccurrence === item.order) {
+        mark.classList.add('pdf-find-hit-active');
+        active = mark;
+      }
+      fragment.appendChild(mark);
+      cursor = item.end;
+    }
+    if (cursor < text.length)
+      fragment.appendChild(window.document.createTextNode(text.slice(cursor)));
+    node.parentNode?.replaceChild(fragment, node);
+  }
+  return active;
+}
+
+export function usePDFData(data: ArrayBuffer | null) {
+  const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let task: ReturnType<typeof getDocument> | undefined;
+    let cancelled = false;
+    setDocument(null);
+    setError('');
+    if (!data) return;
+    task = getDocument({
+      data: data.slice(0),
+      isEvalSupported: false,
+      cMapUrl: '/pdfjs/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: '/pdfjs/standard_fonts/',
+    });
+    void task.promise.then((loaded) => {
+      if (cancelled) return;
+      setDocument(loaded);
+    }).catch((cause: unknown) => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+    });
+    return () => {
+      cancelled = true;
+      void task?.destroy();
+    };
+  }, [data]);
+  return { document, error };
 }
 
 type PDFMarkRect = { x: number; y: number; width: number; height: number };
@@ -241,6 +396,8 @@ export function PDFDocumentView({
   onParagraph,
   onAnnotationClick,
   navigationRequest,
+  find = null,
+  onFind,
 }: {
   document: PDFDocumentProxy;
   page: number;
@@ -254,6 +411,9 @@ export function PDFDocumentView({
   onParagraph?: (paragraph: SelectedParagraph) => void;
   onAnnotationClick?: (annotation: Annotation, position: { top: number; left: number }) => void;
   navigationRequest?: { page: number; y?: number; viewportOffset?: number; nonce: number };
+  find?: PDFFindState | null;
+  /** 只有当前正在查找的那一栏会拿到 onFind，另一栏就不会重复扫描与标注。 */
+  onFind?: (report: PDFFindReport) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const slots = useRef(new Map<number, HTMLDivElement>());
@@ -261,10 +421,101 @@ export function PDFDocumentView({
   onPageRef.current = onPage;
   const activePageRef = useRef(page);
   activePageRef.current = page;
+  const onFindRef = useRef(onFind);
+  onFindRef.current = onFind;
+  const findEnabled = Boolean(onFind);
   const [scrollRoot, setScrollRoot] = useState<HTMLElement | null>(null);
   const [nearPages, setNearPages] = useState<Set<number>>(() => new Set([page]));
   const [pageRatios, setPageRatios] = useState<number[]>([]);
   const [zoom, setZoom] = useState(1);
+  const [linkNavigation, setLinkNavigation] = useState<(PDFLocation & { nonce: number }) | null>(null);
+  const [returnLocation, setReturnLocation] = useState<PDFLocation | null>(null);
+  const [linkStatus, setLinkStatus] = useState('');
+  const currentDocument = useRef(document);
+  currentDocument.current = document;
+
+  const openSourceLink = async (target: PDFLinkTarget) => {
+    const sourcePage = activePageRef.current;
+    const sourceSlot = slots.current.get(sourcePage);
+    const origin: PDFLocation = { page: sourcePage };
+    if (scrollRoot && sourceSlot) {
+      origin.y = Math.max(0, (scrollRoot.getBoundingClientRect().top - sourceSlot.getBoundingClientRect().top) / sourceSlot.clientHeight);
+      origin.x = Math.max(0, (scrollRoot.getBoundingClientRect().left - sourceSlot.getBoundingClientRect().left) / sourceSlot.clientWidth);
+    }
+    setLinkStatus(target.kind === 'citation' ? `正在定位参考文献 [${target.number}]…` : '正在定位文内目标…');
+    try {
+      const location = target.kind === 'destination'
+        ? await resolvePDFDestination(document, target.destination)
+        : (await pdfReferenceTargets(document)).get(target.number);
+      if (currentDocument.current !== document) return;
+      if (!location) throw new Error(`没有找到参考文献 [${target.kind === 'citation' ? target.number : ''}] 的条目位置`);
+      setReturnLocation(origin);
+      setLinkNavigation((previous) => ({ ...location, nonce: (previous?.nonce ?? 0) + 1 }));
+      setNearPages((previous) => new Set([...previous, location.page]));
+      onPageRef.current(location.page);
+      setLinkStatus('');
+    } catch (cause) {
+      if (currentDocument.current === document)
+        setLinkStatus(cause instanceof Error ? cause.message : '无法定位这个引用');
+    }
+  };
+
+  useEffect(() => {
+    if (!linkNavigation || !scrollRoot || pageRatios.length !== document.numPages) return;
+    const slot = slots.current.get(linkNavigation.page);
+    if (!slot) return;
+    const bounds = slot.getBoundingClientRect(), rootBounds = scrollRoot.getBoundingClientRect();
+    scrollRoot.scrollTo({
+      top: Math.max(0, bounds.top - rootBounds.top + scrollRoot.scrollTop - 14 + (linkNavigation.y ?? 0) * slot.clientHeight),
+      left: linkNavigation.x == null ? scrollRoot.scrollLeft : Math.max(0, bounds.left - rootBounds.left + scrollRoot.scrollLeft + linkNavigation.x * slot.clientWidth - 20),
+      behavior: 'smooth',
+    });
+  }, [linkNavigation, scrollRoot, pageRatios.length, document.numPages]);
+
+  // 逐页取文本算命中：防抖 + 可中断。整本重扫只在关键词或大小写开关变化时发生。
+  useEffect(() => {
+    const report = onFindRef.current;
+    if (!report || !findEnabled) return;
+    const query = find?.query.trim() ?? '';
+    if (query.length < 2) {
+      report({ pages: [], scanning: null, failed: 0 });
+      return;
+    }
+    const caseSensitive = find?.caseSensitive ?? false;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const total = document.numPages;
+        const pages: PDFFindHitPage[] = [];
+        let failed = 0;
+        report({ pages: [], scanning: { done: 0, total }, failed: 0 });
+        for (let number = 1; number <= total; number++) {
+          try {
+            const pdfPage = await document.getPage(number);
+            const content = await pdfPage.getTextContent();
+            if (cancelled) return;
+            const count = findMatchRanges(findItemsText(content), query, caseSensitive).length;
+            if (count) pages.push({ page: number, count });
+          } catch {
+            // 单页取文本失败（损坏页）只跳过这一页，但必须计数：
+            // 静默跳过会让「这一页搜不到」看起来像「这一页没有这个词」。
+            failed++;
+          }
+          if (cancelled) return;
+          if (number % 5 === 0 || number === total)
+            report({
+              pages: [...pages],
+              scanning: number === total ? null : { done: number, total },
+              failed,
+            });
+        }
+      })();
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [document, findEnabled, find?.query, find?.caseSensitive]);
 
   useEffect(() => setScrollRoot(root.current), []);
   useEffect(() => {
@@ -353,7 +604,14 @@ export function PDFDocumentView({
         <button onClick={() => setZoom((value) => Math.min(3, value + 0.2))} aria-label="放大">＋</button>
         <button onClick={() => setZoom(1)}>适合宽度</button>
         <span className="pdf-document-page-count">第 {page} / {document.numPages} 页</span>
+        {returnLocation ? <button type="button" onClick={() => {
+          setLinkNavigation((previous) => ({ ...returnLocation, nonce: (previous?.nonce ?? 0) + 1 }));
+          onPageRef.current(returnLocation.page);
+          setReturnLocation(null);
+          setLinkStatus('');
+        }}>返回引用处</button> : null}
       </div>
+      {linkStatus ? <p className="pdf-link-status" role="status">{linkStatus}</p> : null}
       <div className="pdf-document-scroll" ref={root}>
         {pageRatios.length !== document.numPages ? (
           <p className="pdf-page-placeholder-status" role="status">正在准备连续阅读…</p>
@@ -385,6 +643,18 @@ export function PDFDocumentView({
                   continuousPage
                   scrollRoot={scrollRoot}
                   zoomLevel={zoom}
+                  onSourceLink={(target) => void openSourceLink(target)}
+                  find={
+                    find && find.query.trim().length >= 2
+                      ? {
+                          query: find.query,
+                          caseSensitive: find.caseSensitive,
+                          activeOccurrence:
+                            find.activePage === pageNumber ? find.activeOccurrence ?? null : null,
+                          nonce: find.activePage === pageNumber ? find.nonce : 0,
+                        }
+                      : null
+                  }
                 />
               ) : <span className="pdf-page-placeholder">{pageNumber}</span>}
             </div>
@@ -409,6 +679,8 @@ export function PDFPage({
   continuousPage = false,
   scrollRoot,
   zoomLevel,
+  find = null,
+  onSourceLink,
 }: {
   document: PDFDocumentProxy;
   page: number;
@@ -423,6 +695,8 @@ export function PDFPage({
   continuousPage?: boolean;
   scrollRoot?: HTMLElement | null;
   zoomLevel?: number;
+  find?: { query: string; caseSensitive: boolean; activeOccurrence: number | null; nonce: number } | null;
+  onSourceLink?: (target: PDFLinkTarget) => void;
 }) {
   const paragraphLayout = layout;
   const container = useRef<HTMLDivElement>(null);
@@ -436,6 +710,8 @@ export function PDFPage({
   const [zoom, setZoom] = useState(1);
   const activeZoom = zoomLevel ?? zoom;
   const [renderedPage, setRenderedPage] = useState<number | null>(null);
+  const [renderNonce, setRenderNonce] = useState(0);
+  const [sourceLinks, setSourceLinks] = useState<PDFSourceLink[]>([]);
   const [rendering, setRendering] = useState(true);
   const [error, setError] = useState('');
   const [hoveredRegion, setHoveredRegion] = useState<{ kind: 'paragraph' | 'visual'; index: number } | null>(null);
@@ -464,6 +740,7 @@ export function PDFPage({
     let layer: TextLayer | undefined;
     setError('');
     setRendering(true);
+    setSourceLinks([]);
     void (async () => {
       try {
         await previousRender.current.catch(() => undefined);
@@ -511,8 +788,12 @@ export function PDFPage({
         });
         previousRender.current = renderDone.catch(() => undefined);
         await renderDone;
-        if (!cancelled) {
+        const nativeLinks = await pdfPageLinks(pdfPage).catch(() => []);
+        if (!cancelled && textLayer.current && paper.current) {
+          const citations = textCitationLinks(textLayer.current, paper.current.getBoundingClientRect(), nativeLinks);
+          setSourceLinks([...nativeLinks, ...citations]);
           setRenderedPage(page);
+          setRenderNonce((value) => value + 1);
           setRendering(false);
         }
       } catch (cause) {
@@ -531,6 +812,26 @@ export function PDFPage({
   useEffect(() => {
     if (!continuousPage) container.current?.scrollTo(0, 0);
   }, [page, continuousPage]);
+  // 查找高亮：文本层每次重绘（缩放/翻页）都会被 replaceChildren 清空，
+  // 所以用 renderNonce 而不是 renderedPage 触发重标；同一处命中只在 nonce 变化时滚动。
+  const findScrolledNonce = useRef(-1);
+  useEffect(() => {
+    const layer = textLayer.current;
+    if (!layer) return;
+    const active = applyFindMarks(
+      layer,
+      find?.query ?? '',
+      find?.caseSensitive ?? false,
+      find?.activeOccurrence ?? null,
+    );
+    if (!active || !find || find.nonce === findScrolledNonce.current) return;
+    findScrolledNonce.current = find.nonce;
+    // 延后一拍：翻页滚动由父组件的 navigationRequest effect 发起，而子组件 effect 先跑；
+    // 直接滚会被父组件的「滚到页首」覆盖掉，命中处就落在视野外了。
+    window.setTimeout(() => {
+      active.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 0);
+  }, [renderNonce, find?.query, find?.caseSensitive, find?.activeOccurrence, find?.nonce]);
   useEffect(() => {
     if (!focusedId) return;
     (scrollRoot ?? container.current)
@@ -663,6 +964,19 @@ export function PDFPage({
         >
           <canvas ref={canvas} />
           <div className="textLayer" ref={textLayer} />
+          <div className="pdf-source-links">
+            {sourceLinks.map((link) => {
+              const style = { left: `${link.x * 100}%`, top: `${link.y * 100}%`, width: `${link.width * 100}%`, height: `${link.height * 100}%` };
+              return link.target ? (
+                <button type="button" key={link.id} className="pdf-source-link" style={style} title={link.label} aria-label={link.label}
+                  onMouseUp={(event) => event.stopPropagation()}
+                  onClick={(event) => { event.stopPropagation(); onSourceLink?.(link.target!); }} />
+              ) : (
+                <a key={link.id} className="pdf-source-link" style={style} href={link.url} target="_blank" rel="noopener noreferrer" title={link.label} aria-label={link.label}
+                  onMouseUp={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} />
+              );
+            })}
+          </div>
           {paragraphMode && paragraphLayout && hoveredRegion !== null && (() => {
             const isVisual = hoveredRegion.kind === 'visual';
             const block = isVisual ? paragraphLayout.visuals?.[hoveredRegion.index] : paragraphLayout.blocks[hoveredRegion.index];

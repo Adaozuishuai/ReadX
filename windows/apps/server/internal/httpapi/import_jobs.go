@@ -34,6 +34,10 @@ type JobStage struct {
 	Unit        string `json:"unit,omitempty"`
 	ResultCount int    `json:"resultCount,omitempty"`
 	ResultUnit  string `json:"resultUnit,omitempty"`
+	// StartedAt/FinishedAt 只由 setStage 盖章，用于「这一步花了多久」的统计。
+	// 老任务没有这两个字段：统计里必须把缺失的算成缺失，不能用总耗时去猜。
+	StartedAt  string `json:"startedAt,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
 }
 
 // JobRun 是一次历史执行的摘要。
@@ -100,6 +104,9 @@ func (job *DocumentJob) stage(key string) *JobStage {
 }
 
 // setStage 更新一个阶段；空字段保持不变，避免每次都要重传全部信息。
+//
+// 阶段耗时只在第一次转 running 时记 StartedAt、第一次进终态时记 FinishedAt：
+// 进度回报会反复以 running 调用它，重复盖章会把耗时算成「最后一次回报」。
 func (job *DocumentJob) setStage(key, status, message string, completed, total int) {
 	stage := job.stage(key)
 	if stage == nil {
@@ -107,6 +114,16 @@ func (job *DocumentJob) setStage(key, status, message string, completed, total i
 	}
 	if status != "" {
 		stage.Status = status
+		switch status {
+		case "running":
+			if stage.StartedAt == "" {
+				stage.StartedAt = nowStamp()
+			}
+		case "done", "failed", "skipped":
+			if stage.StartedAt != "" && stage.FinishedAt == "" {
+				stage.FinishedAt = nowStamp()
+			}
+		}
 	}
 	if message != "" {
 		stage.Message = message

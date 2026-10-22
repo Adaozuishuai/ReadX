@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +18,6 @@ type dailyPaper struct {
 	Title     string   `json:"title"`
 	Authors   []string `json:"authors"`
 	Venue     string   `json:"venue"`
-	VenueTier int      `json:"venueTier"`
 	Year      int      `json:"year"`
 	Published string   `json:"published"`
 	DOI       string   `json:"doi"`
@@ -26,76 +26,29 @@ type dailyPaper struct {
 	Abstract  string   `json:"abstract"`
 }
 
-// Venue tiers keep the v1 preference for leading conference proceedings while
-// giving top medical-imaging journals equal priority and field meetings a
-// separate lower tier. Workshop proceedings are deliberately excluded.
-var dailyVenueRules = []struct {
-	label string
-	tier  int
-	cues  []string
-}{
-	{"MICCAI", 0, []string{"miccai", "medical image computing and computer-assisted intervention", "medical image computing and computer assisted intervention"}},
-	{"CVPR", 0, []string{"cvpr", "computer vision and pattern recognition"}},
-	{"ICCV", 0, []string{"iccv", "international conference on computer vision"}},
-	{"ECCV", 0, []string{"eccv", "european conference on computer vision"}},
-	{"NeurIPS", 0, []string{"neurips", "neural information processing systems"}},
-	{"ICLR", 0, []string{"iclr", "international conference on learning representations"}},
-	{"AAAI", 0, []string{"aaai", "association for the advancement of artificial intelligence"}},
-	{"TMI", 0, []string{"ieee transactions on medical imaging", "transactions on medical imaging"}},
-	{"Medical Image Analysis", 0, []string{"medical image analysis"}},
-	{"ISBI", 1, []string{"isbi", "international symposium on biomedical imaging"}},
-	{"SPIE Medical Imaging", 1, []string{"spie medical imaging", "medical imaging (spie)"}},
-}
-
 func dailyVenue(raw string) (string, int, bool) {
-	lower := strings.ToLower(strings.TrimSpace(raw))
-	if lower == "" || strings.Contains(lower, "workshop") || strings.Contains(lower, "work in progress") {
+	venue := strings.TrimSpace(raw)
+	if venue == "" {
 		return "", 0, false
 	}
-	for _, rule := range dailyVenueRules {
-		for _, cue := range rule.cues {
-			if strings.Contains(lower, cue) {
-				return rule.label, rule.tier, true
-			}
-		}
-	}
-	return "", 0, false
+	return venue, 0, true
 }
 
-// 每日推荐的数据源是 OpenAlex。Semantic Scholar 的匿名配额在 AWS 网关层长期返回
-// 429（重试无用，官方要求申请 Key），因此换成免密钥、限流宽松的 OpenAlex，
-// 检索结果再交给上面的 venue 规则筛选。
-//
-// 期刊与 IEEE 会议在 OpenAlex 里各有独立 source；Springer 的 MICCAI/ECCV 论文
-// 统一挂在下述 LNCS source 下，source 名不含会议名，需要按 DOI 到 Crossref 的
-// container-title 还原（如 "Medical Image Computing and Computer Assisted
-// Intervention – MICCAI 2026"）。LNCS 命中会额外做一批受限的 Crossref 查询。
+// 每日推荐使用 OpenAlex 的公开 works 索引；领域、检索词、排除词和时间范围由用户配置。
+// LNCS 的 OpenAlex source 不含具体会议名，仍按 DOI 从 Crossref 补充 container-title。
 const (
 	dailyLNCSourceID   = "S106296714"
-	dailyTopicQuery    = `"cone beam" OR "CBCT" OR "cone-beam CT" OR "sparse-view CT" OR "sparse view CT"`
-	dailyRecentMonths  = 24
-	dailyWidestMonths  = 60
 	dailyMaxPapers     = 50
 	dailyEnrichLimit   = 24
 	dailyEnrichWorkers = 4
 )
 
-// dailyVenueSources 把 dailyVenueRules 里的 venue 映射到 OpenAlex source ID
-// （2026-10 通过 /sources 精确匹配名称解析，source 是长期稳定的实体）。
-var dailyVenueSources = []struct {
-	label string
-	id    string
-}{
-	{"IEEE Transactions on Medical Imaging", "S58069681"},
-	{"Medical Image Analysis", "S116571295"},
-	{"IEEE/CVF Conference on Computer Vision and Pattern Recognition", "S4210176548"},
-	{"IEEE/CVF International Conference on Computer Vision", "S4363607764"},
-	{"Proceedings of the AAAI Conference on Artificial Intelligence", "S4210191458"},
-	{"International Conference on Learning Representations", "S4306419637"},
-	{"Neural Information Processing Systems", "S4363606243"},
-	{"IEEE International Symposium on Biomedical Imaging", "S4363605129"},
-	{"SPIE Medical Imaging: Physics of Medical Imaging", "S4363606018"},
-	{"Lecture notes in computer science", dailyLNCSourceID},
+type dailyRecommendationRules struct {
+	Field    string
+	Keywords []string
+	Exclude  []string
+	Venues   []string
+	Years    int
 }
 
 type openAlexSource struct {
@@ -162,9 +115,14 @@ func (w openAlexWork) shortID() string {
 }
 
 func (s *Server) handleDailyRecommendations(w http.ResponseWriter, r *http.Request) {
+	rules, err := parseDailyRecommendationRules(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
-	papers, err := fetchDailyPapers(ctx)
+	papers, err := fetchDailyPapers(ctx, rules)
 	if err != nil {
 		writeError(w, 502, "每日论文推荐暂时不可用："+err.Error())
 		return
@@ -172,30 +130,80 @@ func (s *Server) handleDailyRecommendations(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, 200, map[string]any{"papers": papers, "fetchedAt": time.Now().Format(time.RFC3339)})
 }
 
-// fetchDailyPapers 先按近两年检索；一条都筛不出来时把窗口放宽到五年再试一次。
-func fetchDailyPapers(ctx context.Context) ([]dailyPaper, error) {
-	for _, months := range []int{dailyRecentMonths, dailyWidestMonths} {
-		works, err := fetchOpenAlexDaily(ctx, months)
-		if err != nil {
-			return nil, err
-		}
-		papers := buildDailyPapers(ctx, works)
-		if len(papers) > 0 {
-			return papers, nil
+func parseDailyRecommendationRules(r *http.Request) (dailyRecommendationRules, error) {
+	values := r.URL.Query()
+	rules := dailyRecommendationRules{
+		Field: strings.TrimSpace(values.Get("field")),
+		Keywords: splitDailyRuleValues(values.Get("keywords")),
+		Exclude: splitDailyRuleValues(values.Get("exclude")),
+		Venues: splitDailyRuleValues(values.Get("venues")),
+		Years: 2,
+	}
+	if raw := strings.TrimSpace(values.Get("years")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			rules.Years = parsed
+		} else {
+			return rules, fmt.Errorf("时间范围必须是 1、2、3 或 5 年")
 		}
 	}
-	return []dailyPaper{}, nil
+	if rules.Years != 1 && rules.Years != 2 && rules.Years != 3 && rules.Years != 5 {
+		return rules, fmt.Errorf("时间范围必须是 1、2、3 或 5 年")
+	}
+	if rules.Field != "" {
+		rules.Keywords = append([]string{rules.Field}, rules.Keywords...)
+	}
+	rules.Keywords = cleanDailyRuleValues(rules.Keywords, 12)
+	rules.Exclude = cleanDailyRuleValues(rules.Exclude, 20)
+	rules.Venues = cleanDailyRuleValues(rules.Venues, 12)
+	if len(rules.Keywords) == 0 {
+		return rules, fmt.Errorf("请先设置研究领域或至少一个检索词")
+	}
+	return rules, nil
 }
 
-func fetchOpenAlexDaily(ctx context.Context, months int) ([]openAlexWork, error) {
-	ids := make([]string, 0, len(dailyVenueSources))
-	for _, source := range dailyVenueSources {
-		ids = append(ids, source.id)
+func splitDailyRuleValues(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool { return r == '\n' || r == '\r' || r == ';' })
+}
+
+func cleanDailyRuleValues(values []string, limit int) []string {
+	cleaned := make([]string, 0, limit)
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || len([]rune(value)) > 100 {
+			continue
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		cleaned = append(cleaned, value)
+		if len(cleaned) == limit {
+			break
+		}
+	}
+	return cleaned
+}
+
+func fetchDailyPapers(ctx context.Context, rules dailyRecommendationRules) ([]dailyPaper, error) {
+	works, err := fetchOpenAlexDaily(ctx, rules)
+	if err != nil {
+		return nil, err
+	}
+	return buildDailyPapers(ctx, works, rules), nil
+}
+
+func fetchOpenAlexDaily(ctx context.Context, rules dailyRecommendationRules) ([]openAlexWork, error) {
+	terms := make([]string, len(rules.Keywords))
+	for index, term := range rules.Keywords {
+		term = strings.ReplaceAll(term, `\`, `\\`)
+		term = strings.ReplaceAll(term, `"`, `\"`)
+		terms[index] = `"` + term + `"`
 	}
 	filters := strings.Join([]string{
-		"primary_location.source.id:" + strings.Join(ids, "|"),
-		"title_and_abstract.search:" + dailyTopicQuery,
-		"from_publication_date:" + time.Now().AddDate(0, -months, 0).Format("2006-01-02"),
+		"title_and_abstract.search:" + strings.Join(terms, " OR "),
+		"from_publication_date:" + time.Now().AddDate(-rules.Years, 0, 0).Format("2006-01-02"),
 	}, ",")
 	fields := "id,doi,title,publication_year,publication_date,primary_location,best_oa_location,open_access,authorships,abstract_inverted_index"
 	endpoint := "https://api.openalex.org/works?per-page=200&sort=publication_date:desc" +
@@ -213,24 +221,22 @@ func fetchOpenAlexDaily(ctx context.Context, months int) ([]openAlexWork, error)
 	return response.Results, nil
 }
 
-func buildDailyPapers(ctx context.Context, works []openAlexWork) []dailyPaper {
+func buildDailyPapers(ctx context.Context, works []openAlexWork, rules dailyRecommendationRules) []dailyPaper {
 	containers := resolveLNCSContainers(ctx, works)
 	papers := make([]dailyPaper, 0, 20)
 	seen := map[string]bool{}
 	for _, work := range works {
-		paper, ok := dailyPaperFromWork(work, containers[work.doi()])
-		if !ok || seen[paper.ID] {
+		containerTitles := containers[work.doi()]
+		paper, ok := dailyPaperFromWork(work, containerTitles)
+		if !ok || !matchesDailyRecommendationRules(paper, containerTitles, rules) || seen[paper.ID] {
 			continue
 		}
 		seen[paper.ID] = true
 		papers = append(papers, paper)
 	}
 	sort.SliceStable(papers, func(i, j int) bool {
-		if papers[i].VenueTier != papers[j].VenueTier {
-			return papers[i].VenueTier < papers[j].VenueTier
-		}
-		if papers[i].Year != papers[j].Year {
-			return papers[i].Year > papers[j].Year
+		if papers[i].Published != papers[j].Published {
+			return papers[i].Published > papers[j].Published
 		}
 		return strings.ToLower(papers[i].Title) < strings.ToLower(papers[j].Title)
 	})
@@ -240,24 +246,39 @@ func buildDailyPapers(ctx context.Context, works []openAlexWork) []dailyPaper {
 	return papers
 }
 
-// dailyPaperFromWork 把一条 OpenAlex work 转成推荐卡片。venue 先按 OpenAlex 的
-// source 名匹配规则；LNCS 这类只有刊名没有会议名的，再用 Crossref 的
-// container-title 补一次。
+func matchesDailyRecommendationRules(paper dailyPaper, containers []string, rules dailyRecommendationRules) bool {
+	searchable := strings.ToLower(strings.Join([]string{paper.Title, paper.Abstract}, " "))
+	for _, term := range rules.Exclude {
+		if strings.Contains(searchable, strings.ToLower(term)) {
+			return false
+		}
+	}
+	if len(rules.Venues) == 0 {
+		return true
+	}
+	venueText := strings.ToLower(strings.Join(append([]string{paper.Venue}, containers...), " "))
+	for _, venue := range rules.Venues {
+		if strings.Contains(venueText, strings.ToLower(venue)) {
+			return true
+		}
+	}
+	return false
+}
+
+// dailyPaperFromWork 把一条 OpenAlex work 转成推荐卡片；用户可以自行配置可选 venue 规则。
 func dailyPaperFromWork(work openAlexWork, containers []string) (dailyPaper, bool) {
 	title := strings.TrimSpace(work.Title)
 	if title == "" {
 		return dailyPaper{}, false
 	}
-	label, tier, ok := dailyVenue(work.venueName())
-	if !ok {
+	venue, _, _ := dailyVenue(work.venueName())
+	if venue == "" || strings.EqualFold(venue, "Lecture notes in computer science") {
 		for _, container := range containers {
-			if label, tier, ok = dailyVenue(container); ok {
+			if strings.TrimSpace(container) != "" && !strings.EqualFold(strings.TrimSpace(container), "Lecture notes in computer science") {
+				venue, _, _ = dailyVenue(container)
 				break
 			}
 		}
-	}
-	if !ok {
-		return dailyPaper{}, false
 	}
 	doi := work.doi()
 	authors := make([]string, 0, len(work.Authorships))
@@ -287,7 +308,7 @@ func dailyPaperFromWork(work openAlexWork, containers []string) (dailyPaper, boo
 		return dailyPaper{}, false
 	}
 	return dailyPaper{
-		ID: id, Title: title, Authors: authors, Venue: label, VenueTier: tier,
+		ID: id, Title: title, Authors: authors, Venue: venue,
 		Year: work.Year, Published: strings.TrimSpace(work.Date), DOI: doi,
 		URL: link, PDFURL: pdf, Abstract: openAlexAbstract(work.AbstractIndex),
 	}, true

@@ -4,7 +4,7 @@
 
 Windows / macOS 都使用 Electron → React / PDF.js → 本机 Go HTTP API → SQLite / 本机文库。Electron 负责窗口、服务生命周期、Token 注入与更新；Go 管理导入、任务、存储、AI 接入及处理子进程。
 
-PDF 主处理链为 RetainPDF Python provider-case：PaddleOCR → document.v1 → 翻译 / 修复 → Node RPR / Typst 排版。阅读器加载整本译文 PDF，段落使用标准化块和坐标。RetainPDF 的 Rust API、账户和任务服务器不在 ReadX 启动链中。
+PDF 主处理链为 Lee Python provider-case：PaddleOCR → document.v1 → 翻译 / 修复 → Node RPR / Typst 排版。阅读器加载整本译文 PDF，段落使用标准化块和坐标。上游 RetainPDF 的 Rust API、账户和任务服务器不在 ReadX 启动链中。
 
 ## 源码一致性
 
@@ -21,7 +21,7 @@ node scripts/sync-platforms.mjs --check
 
 ## 开发 / 打包运行时
 
-两端独立执行 npm ci。macOS 运行时在 `.retain-runtime` 与 `.retain-python`，Windows 在 `.retain-runtime`。开发服务通过显式工作区路径定位 RetainPDF 与资源；Electron 打包后从 Resources 定位，避免依赖编译机的绝对源码路径。
+两端独立执行 npm ci。macOS 运行时在 `.retain-runtime` 与 `.retain-python`，Windows 在 `.retain-runtime`。开发服务通过显式工作区路径定位 Lee 引擎与资源；Electron 打包后从 Resources 定位，避免依赖编译机的绝对源码路径。
 
 macOS 安装包使用可重定位的 Python，保留相对符号链接；将 venv 的二进制依赖复制到包内 Python。安装包包含 Node 依赖、字体、Typst 和引擎 CLI，不依赖用户 PATH 中的 Python / Node。Intel 与 Apple Silicon 分别原生构建。
 

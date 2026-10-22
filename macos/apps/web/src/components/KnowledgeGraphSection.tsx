@@ -8,6 +8,7 @@ import type {
 } from '../api/client';
 import { api } from '../api/client';
 import type { WorkspacePhase } from '../hooks/useWorkspace';
+import { Graph3DCloud } from './Graph3DCloud';
 
 /** 三类实体的展示名与配色（配色走既有 token，随主题生效）。 */
 const KIND_META: Record<string, { label: string; tone: string; hex: string }> = {
@@ -18,7 +19,7 @@ const KIND_META: Record<string, { label: string; tone: string; hex: string }> = 
 
 const KIND_ORDER = ['concept', 'method', 'conclusion'] as const;
 
-type ViewId = 'matrix' | 'network' | 'conclusions';
+type ViewId = 'cloud' | 'matrix' | 'network' | 'conclusions';
 
 function shortLabel(value: string, max = 26): string {
   const clean = value.replace(/\s+/g, ' ').trim();
@@ -42,16 +43,18 @@ interface Props {
 }
 
 /**
- * 知识图谱（重设计版）。
+ * 知识图谱。
  *
- * 设计依据来自实测数据与可视化研究，不是审美偏好：
- *  - 实测两篇 CT 重建论文抽出 102 节点，却只有 2 个跨文献合并节点、0 条跨文献边。
- *    「节点 > 20 时矩阵比连线图更易读」有受控实验支持（Palgrave IVS 2004），
- *    稀疏矩阵的成熟解法是不画整张网格、只列非空交集（UpSet, TVCG 2014）。
- *  - 所以默认视图是**三分组对照表**（共有 / 仅各篇），而不是力导向毛球。
- *  - 网络视图保留，但按文献成簇（Group-in-a-Box）；簇间无连线时如实说明，
- *    不用一张漂亮的图暗示不存在的结构。
- *  - 论证链数据太稀（conclusion 仅 4%）时不画链条，退化为按结论分组的列表。
+ * 默认视图是**三维点云**（双环同心）：内环是跨文献共享的实体、外圈是单篇实体、最外层是论文。
+ * 它回答的是「这堆论文里的知识长成什么形状」——一团向心的云，每个点都能点开看它的连线与原文依据。
+ * 点云视图铺满整个内容区（工具栏与详情面板是浮层），因为一团云被挤在小格子里就没法看了。
+ *
+ * 保留另外两个视图，因为它们回答不同的问题：
+ *  - **对照表（矩阵）**：实测两篇 CT 重建论文抽出 102 节点、却只有 2 个跨文献合并节点时，
+ *    点云会显得很稀；矩阵把「共有 / 仅各篇」逐条列清楚，比形状更精确。
+ *  - **结论**：论证链数据太稀（conclusion 占比低）时不画链条，退化为按结论分组的列表。
+ * 所以点云负责「看形状」，矩阵负责「读交集」，两者都给跨文献实体数与关系数，
+ * 不用一张漂亮的图暗示不存在的结构。
  *
  * 硬要求不变：每条关系都有逐字、页锚定的原文依据，点依据回到阅读器对应页。
  */
@@ -60,7 +63,7 @@ export function KnowledgeGraphSection({ phase, onBack, onCite, documents }: Prop
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [view, setView] = useState<ViewId>('matrix');
+  const [view, setView] = useState<ViewId>('cloud');
   const [kindFilter, setKindFilter] = useState<string>('all');
   const [query, setQuery] = useState('');
   const [selectedEntity, setSelectedEntity] = useState<string | null>(null);
@@ -197,9 +200,15 @@ export function KnowledgeGraphSection({ phase, onBack, onCite, documents }: Prop
   };
 
   const hasGraph = papers.length > 0 && nodes.length > 0;
+  /**
+   * 图谱有数据、只是被筛选筛空：与「库里根本没抽过」是两件事，提示语必须分开——
+   * 否则用户会跑去重抽已经抽过的论文。注意判断要基于**筛选后**的点数：
+   * 用未筛选的 nodes 判断会让筛空时仍然走进视图分支，提示语永远显示不出来。
+   */
+  const filterMatchedNothing = hasGraph && filteredNodes.length === 0;
 
   return (
-    <div className="graph-section">
+    <div className={`graph-section${view === 'cloud' && hasGraph && !filterMatchedNothing && !manageOpen ? ' cloud-fullbleed' : ''}`}>
       <header className="graph-toolbar">
         <div className="graph-toolbar-row">
           {onBack ? (
@@ -226,6 +235,7 @@ export function KnowledgeGraphSection({ phase, onBack, onCite, documents }: Prop
           <span className="graph-tabs" role="tablist">
             {(
               [
+                { id: 'cloud', label: '点云' },
                 { id: 'matrix', label: '对照表' },
                 { id: 'network', label: '关系网络' },
                 { id: 'conclusions', label: '结论' },
@@ -281,7 +291,7 @@ export function KnowledgeGraphSection({ phase, onBack, onCite, documents }: Prop
         />
       ) : null}
 
-      <div className={`graph-body${selectedEntity || selectedEdge ? '' : ' bare'}`}>
+      <div className={`graph-body${selectedEntity || selectedEdge || focusPaper ? '' : ' bare'}`}>
         <div className="graph-main">
           {!hasGraph ? (
             <p className="graph-empty">
@@ -289,6 +299,31 @@ export function KnowledgeGraphSection({ phase, onBack, onCite, documents }: Prop
                 ? '还没有图谱数据。点右上角「抽取管理」，对论文逐篇抽取：AI 只输出结构（概念/方法/结论与关系），展示的每一句都来自 PDF 正文并标了页码。'
                 : '加载中…'}
             </p>
+          ) : filterMatchedNothing ? (
+            <p className="graph-empty">
+              当前筛选下没有匹配的实体
+              {query.trim() ? `（关键词「${query.trim()}」）` : ''}
+              {kindFilter !== 'all' ? `（类型：${KIND_META[kindFilter]?.label ?? kindFilter}）` : ''}
+              ：清空搜索或切回「全部」即可看到完整图谱。
+            </p>
+          ) : view === 'cloud' ? (
+            <Graph3DCloud
+              nodes={filteredNodes}
+              edges={filteredEdges}
+              papers={papers}
+              selectedId={selectedEntity}
+              onPick={(id) => {
+                // 论文点点击＝聚焦那篇；实体点点击＝打开实体详情。
+                if (id.startsWith('paper:')) {
+                  const key = id.slice('paper:'.length);
+                  setSelectedEntity(null);
+                  setSelectedEdge(null);
+                  setFocusPaper(key);
+                  return;
+                }
+                pickEntity(id, null);
+              }}
+            />
           ) : view === 'matrix' ? (
             <MatrixView
               papers={papers}
@@ -355,6 +390,16 @@ export function KnowledgeGraphSection({ phase, onBack, onCite, documents }: Prop
                 setSelectedEntity(null);
                 setFocusPaper(null);
               }}
+            />
+          </aside>
+        ) : focusPaper ? (
+          <aside className="graph-side">
+            <PaperDetail
+              paper={papers.find((paper) => paper.key === focusPaper) ?? null}
+              titleByKey={titleByKey}
+              nodes={filteredNodes.filter((node) => node.docs.includes(focusPaper))}
+              onPick={(entityId) => pickEntity(entityId, focusPaper)}
+              onClose={() => setFocusPaper(null)}
             />
           </aside>
         ) : null}
@@ -1070,6 +1115,45 @@ function EvidenceList({
         <li className="graph-evidence-more">另有 {evidence.length - 1} 条同类依据</li>
       ) : null}
     </ul>
+  );
+}
+
+/* ---------------- 抽取管理 ---------------- */
+
+function PaperDetail({
+  paper,
+  titleByKey,
+  nodes,
+  onPick,
+  onClose,
+}: {
+  paper: GraphPaper | null;
+  titleByKey: Map<string, string>;
+  nodes: GraphNode[];
+  onPick: (entityId: string) => void;
+  onClose: () => void;
+}) {
+  if (!paper) return null;
+  return (
+    <div className="graph-detail">
+      <div className="graph-detail-head">
+        <span className="graph-section-label">论文</span>
+        <button type="button" className="graph-close" onClick={onClose} aria-label="关闭论文详情">×</button>
+      </div>
+      <h2 className="graph-detail-title">{titleByKey.get(paper.key) ?? paper.title ?? paper.key}</h2>
+      <p className="graph-detail-summary">包含 {nodes.length} 个图谱实体。选择一个实体查看关系和原文依据。</p>
+      <ul className="graph-pending-list">
+        {nodes.map((node) => (
+          <li key={node.id}>
+            <button type="button" className="graph-chip" onClick={() => onPick(node.id)}>
+              {node.label}
+            </button>
+            <span className="graph-evidence-count">{KIND_META[node.kind]?.label ?? node.kind}</span>
+          </li>
+        ))}
+        {!nodes.length ? <li className="text-[11px] text-ink-faint">当前筛选下没有实体。</li> : null}
+      </ul>
+    </div>
   );
 }
 

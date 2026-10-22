@@ -2,13 +2,17 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"cbctv2/server/internal/legacy"
 )
@@ -24,6 +28,13 @@ type retranslationCacheEntry struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+// handleRetranslate 重新翻译一篇已在库论文的全文。
+//
+// 有可复用的识别结果时只重跑翻译阶段（快，不动 OCR）；没有时就**重新识别**再翻译。
+// 不能像原先那样让用户「重新导入」：重新导入会丢掉这篇论文的批注、精读笔记与阅读进度，
+// 而用户要的只是重新翻译。
+//
+// 两条路径共用同一套任务机制，响应里的 ocr 字段如实说明走了哪条（reused / rerun）。
 func (s *Server) handleRetranslate(w http.ResponseWriter, r *http.Request) {
 	key, ok := pathKey(w, r)
 	if !ok {
@@ -51,9 +62,15 @@ func (s *Server) handleRetranslate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "读取已有 OCR 结果失败: "+err.Error())
 		return
 	}
-	if !available || len(layout.Pages) == 0 {
-		writeError(w, http.StatusConflict, "论文没有可复用的 OCR 结果，请重新导入")
-		return
+	normalized := s.reusableOCRDocument(r.Context(), key)
+	reuseOCR := available && len(layout.Pages) > 0 && len(normalized) > 0
+	if !reuseOCR {
+		// 没有可复用的识别结果：改成重新识别。硬前提（模型与 PaddleOCR 令牌）同步查清，
+		// 缺什么立刻告诉用户，而不是让任务跑起来才失败。
+		if err := s.reidentifyPreflight(); err != nil {
+			writeError(w, http.StatusConflict, "这篇论文没有可复用的 OCR 结果，需要重新识别："+err.Error())
+			return
+		}
 	}
 	paths := legacy.NewPaths(s.cfg.DataRoot)
 	jobID, err := randomLeeJobID()
@@ -63,25 +80,6 @@ func (s *Server) handleRetranslate(w http.ResponseWriter, r *http.Request) {
 	}
 	jobKey := "retranslate-" + jobID
 	jobRoot := filepath.Join(paths.DataDir(), "retain", "jobs", jobKey)
-	priorJobKey := key
-	if prior, found := s.loadImportJobForDocument(r.Context(), key); found && prior.Key != "" {
-		priorJobKey = prior.Key
-	}
-	if filepath.Base(priorJobKey) != priorJobKey {
-		writeError(w, http.StatusInternalServerError, "原处理任务编号无效，无法定位 Lee OCR 结果")
-		return
-	}
-	priorSourceJSON := filepath.Join(paths.DataDir(), "retain", "jobs", priorJobKey, "ocr", "normalized", "document.v1.json")
-	normalized, err := os.ReadFile(priorSourceJSON)
-	if err != nil {
-		writeError(w, http.StatusConflict, "找不到原始 Lee OCR 归一化文件，无法复用识别结果: "+err.Error())
-		return
-	}
-	pdf, err := os.ReadFile(doc.PDFPath)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "读取书库 PDF 失败: "+err.Error())
-		return
-	}
 	for _, dir := range []string{
 		filepath.Join(jobRoot, "source"),
 		filepath.Join(jobRoot, "ocr", "normalized"),
@@ -95,13 +93,32 @@ func (s *Server) handleRetranslate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := os.WriteFile(filepath.Join(jobRoot, "source", "source.pdf"), pdf, 0o600); err != nil {
+	// 原文用书库目录定位，而不是信 documents.pdf_path 那一列：
+// 旧数据里这列可能为空，但库里的 PDF 是真实存在的（documentHasPDF 也是这么判断的）。
+pdfPath, found := paths.PDFFile(key)
+if !found {
+		writeError(w, http.StatusConflict, "书库里找不到这篇论文的 PDF 文件，无法重新翻译")
+		return
+	}
+	pdf, err := os.ReadFile(pdfPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取书库 PDF 失败: "+err.Error())
+		return
+	}
+	sourceName := "source.pdf"
+	if base := filepath.Base(doc.Title + ".pdf"); base != ".pdf" && strings.EqualFold(filepath.Ext(base), ".pdf") {
+		// 与识别阶段写的文件名保持一致：两边都按「标题.pdf」找原文，避免同一份 PDF 存两份。
+		sourceName = base
+	}
+	if err := os.WriteFile(filepath.Join(jobRoot, "source", sourceName), pdf, 0o600); err != nil {
 		writeError(w, http.StatusInternalServerError, "复制重新翻译输入 PDF 失败: "+err.Error())
 		return
 	}
-	if err := os.WriteFile(filepath.Join(jobRoot, "ocr", "normalized", "document.v1.json"), normalized, 0o600); err != nil {
-		writeError(w, http.StatusInternalServerError, "复制 Lee OCR 结果失败: "+err.Error())
-		return
+	if reuseOCR {
+		if err := os.WriteFile(filepath.Join(jobRoot, "ocr", "normalized", "document.v1.json"), normalized, 0o600); err != nil {
+			writeError(w, http.StatusInternalServerError, "复制 Lee OCR 结果失败: "+err.Error())
+			return
+		}
 	}
 	backupPath := filepath.Join(jobRoot, "retranslate-backup.json")
 	if err := s.backupAndClearTranslations(r.Context(), key, backupPath); err != nil {
@@ -116,17 +133,149 @@ func (s *Server) handleRetranslate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobCtx, cancel := context.WithCancel(context.Background())
-	job := s.beginImportJob(jobKey, doc.Title+"（重新翻译）", len(layout.Pages), cancel)
-	s.jobStage(job.Key, "ocr", "done", "复用已有 Lee OCR 与段落结构", len(layout.Pages), len(layout.Pages))
-	s.jobStage(job.Key, "translate", "running", "正在重新翻译全文（忽略旧译文缓存）", 0, countLeeTranslationUnits(layoutOCRPages(layout)))
-	s.jobStage(job.Key, "memory", "skipped", "复用书库中已有论文记忆", -1, -1)
+	title := doc.Title + "（重新翻译）"
+	if !reuseOCR {
+		title = doc.Title + "（重新识别并翻译）"
+	}
+	s.beginImportJob(jobKey, title, len(layout.Pages), cancel)
+	s.jobStage(jobKey, "memory", "skipped", "复用书库中已有论文记忆", -1, -1)
+	if reuseOCR {
+		s.jobStage(jobKey, "ocr", "done", "复用已有 Lee OCR 与段落结构", len(layout.Pages), len(layout.Pages))
+		s.jobStage(jobKey, "translate", "running", "正在重新翻译全文（忽略旧译文缓存）", 0, countLeeTranslationUnits(layoutOCRPages(layout)))
+		s.linkImportJobDocument(jobKey, key)
+		pages := layoutOCRPages(layout)
+		go func() {
+			defer cancel()
+			s.runLeeTranslationInBackground(jobCtx, jobKey, key, sourceName, pages, true)
+		}()
+		writeJSON(w, http.StatusAccepted, map[string]any{"jobKey": jobKey, "status": "running", "ocr": "reused"})
+		return
+	}
+	s.jobStage(jobKey, "ocr", "running", "没有可复用的 OCR 结果，正在重新识别", 0, -1)
+	s.jobStage(jobKey, "translate", "pending", "等待重新识别完成", 0, -1)
 	s.linkImportJobDocument(jobKey, key)
-	pages := layoutOCRPages(layout)
 	go func() {
 		defer cancel()
-		s.runLeeTranslationInBackground(jobCtx, jobKey, key, doc.Title+".pdf", pages, true)
+		metadata := leeMetadataForExistingDocument(doc)
+		if _, err := s.runLeePDFImport(jobCtx, jobKey, sourceName, pdf, &metadata, leeImportOptions{SkipMetadataCompletion: true}); err != nil {
+			s.abortReidentify(jobCtx, jobKey, key, jobRoot, err)
+			return
+		}
+		if err := s.persistReimportedOCR(jobCtx, key, metadata); err != nil {
+			s.abortReidentify(jobCtx, jobKey, key, jobRoot, err)
+			return
+		}
+		s.runLeeTranslationInBackground(jobCtx, jobKey, key, sourceName, metadata.OCRPages, true)
 	}()
-	writeJSON(w, http.StatusAccepted, map[string]any{"jobKey": jobKey, "status": "running"})
+	writeJSON(w, http.StatusAccepted, map[string]any{"jobKey": jobKey, "status": "running", "ocr": "rerun"})
+}
+
+// reusableOCRDocument 找出这篇论文上一次识别留下的 document.v1.json。
+// 返回空表示没有可复用的识别产物，调用方据此转为重新识别。
+func (s *Server) reusableOCRDocument(ctx context.Context, key string) []byte {
+	priorJobKey := key
+	if prior, found := s.loadImportJobForDocument(ctx, key); found && prior.Key != "" {
+		priorJobKey = prior.Key
+	}
+	// 任务编号会直接拼进路径：拒绝任何带分隔符的值，避免越出 retain/jobs。
+	if priorJobKey == "" || filepath.Base(priorJobKey) != priorJobKey {
+		return nil
+	}
+	body, err := os.ReadFile(filepath.Join(
+		legacy.NewPaths(s.cfg.DataRoot).DataDir(), "retain", "jobs", priorJobKey, "ocr", "normalized", "document.v1.json"))
+	if err != nil {
+		return nil
+	}
+	return body
+}
+
+// reidentifyPreflight 是「重新识别」的硬前提，与导入同源但措辞针对重新识别。
+func (s *Server) reidentifyPreflight() error {
+	config, err := s.aiConfig()
+	if err != nil {
+		return fmt.Errorf("需要先配置 AI 助手：%w", err)
+	}
+	if !config.Ready() {
+		return errors.New("需要先配置 AI 助手的 API Key（重新识别后要接着重新翻译）")
+	}
+	if _, err := s.ocrClient(); err != nil {
+		return fmt.Errorf("需要先配置 PaddleOCR 令牌：%w", err)
+	}
+	return nil
+}
+
+// leeMetadataForExistingDocument 用已在库论文的题录当识别结果容器。
+func leeMetadataForExistingDocument(doc DocumentSummary) recognizedPaperMetadata {
+	metadata := recognizedPaperMetadata{
+		Title:           doc.Title,
+		TranslatedTitle: doc.TranslatedTitle,
+		Authors:         doc.Authors,
+		DOI:             doc.DOI,
+		Venue:           doc.Venue,
+	}
+	if doc.Year != nil {
+		metadata.Year = *doc.Year
+	}
+	return metadata
+}
+
+// persistReimportedOCR 把重新识别出的逐页文本与版式写回书库。
+//
+// 必须是覆盖语义：识别结果本身就变了，若沿用导入路径的 INSERT OR IGNORE，
+// 旧文本（或空文本）会继续留着，阅读器依旧没有版式，下一次「重新翻译」还是说没有可复用的 OCR。
+func (s *Server) persistReimportedOCR(ctx context.Context, key string, metadata recognizedPaperMetadata) error {
+	tx, err := s.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stamp := nowStamp()
+	for _, page := range metadata.Pages {
+		sum := sha256.Sum256([]byte(page.Text))
+		if _, err := tx.ExecContext(ctx, `INSERT INTO document_pages(document_id,page,text,hash,updated_at) VALUES(?,?,?,?,?)
+			ON CONFLICT(document_id,page) DO UPDATE SET text=excluded.text, hash=excluded.hash, updated_at=excluded.updated_at`,
+			key, page.Page, page.Text, hex.EncodeToString(sum[:]), stamp); err != nil {
+			return err
+		}
+	}
+	if len(metadata.Pages) > 0 {
+		// 识别出的页数变少时，多出来的旧页文本必须删掉，否则阅读器里会留下已经不存在的页。
+		if _, err := tx.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id=? AND page>?`, key, len(metadata.Pages)); err != nil {
+			return err
+		}
+	}
+	if err := saveLayoutTx(ctx, tx, key, metadata.LayoutPages); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// abortReidentify 收尾「重新识别」阶段的失败。
+//
+// 回滚是必须的：开始前我们清空了翻译缓存、把旧译文 PDF 挪走了，
+// 识别失败若不还原，用户会既没有新译文、也没有旧译文。
+//
+// 失败的阶段要标在真正失败的那一步：识别已经完成、倒在写回或后续步骤时，
+// 不能把已经成功的识别标成失败（那会让人以为 OCR 又白跑了一遍）。
+func (s *Server) abortReidentify(ctx context.Context, jobKey, documentKey, jobRoot string, cause error) {
+	status, message := "failed", cause.Error()
+	if ctx.Err() != nil {
+		status, message = "cancelled", "已取消"
+	}
+	stageKey := "ocr"
+	if job, ok := s.loadImportJob(context.Background(), jobKey); ok {
+		if stage := job.stage("ocr"); stage != nil && (stage.Status == "done" || stage.Status == "skipped") {
+			stageKey = "translate"
+		}
+	}
+	s.jobStage(jobKey, stageKey, status, message, -1, -1)
+	if err := restoreRetranslateBackup(context.Background(), s, documentKey, filepath.Join(jobRoot, "retranslate-backup.json")); err != nil {
+		log.Printf("重新识别失败后恢复翻译缓存出错: %v", err)
+	}
+	if err := restoreRetranslatePDF(s, documentKey, filepath.Join(jobRoot, "previous-translated.pdf")); err != nil {
+		log.Printf("重新识别失败后恢复旧译文 PDF 出错: %v", err)
+	}
+	s.finishImportJob(jobKey, status, message)
 }
 
 func (s *Server) backupAndClearTranslations(ctx context.Context, key, backupPath string) error {

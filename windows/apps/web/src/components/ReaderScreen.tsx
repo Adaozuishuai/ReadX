@@ -5,12 +5,14 @@ import { api, type Annotation, type EPUBSection, type TranslationPreview } from 
 import type { DocumentPhase } from '../hooks/useDocument';
 import { AssistantSidebar, type AssistantTab } from './AssistantPanels';
 import type { useAnnotations } from '../hooks/useAnnotations';
-import { PDFDocumentView, usePDF, type PendingSelection } from './PDFView';
+import { PDFDocumentView, usePDF, usePDFData, type PDFFindReport, type PDFFindState, type PendingSelection } from './PDFView';
 import type { LeeParagraphs } from '../api/client';
 import { ResizeHandle } from './ResizeHandle';
 import { EPUBView } from './EPUBView';
 import { ParagraphActions, type SelectedParagraph, type ParagraphQuestion } from './ParagraphActions';
 import { ExportPDFDialog } from './ExportPDFDialog';
+import { CitationExportDialog } from './CitationExportDialog';
+import { CitationNetworkDialog } from './CitationNetworkDialog';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 type ReadingMode = 'source' | 'parallel' | 'translation';
@@ -26,6 +28,10 @@ interface Props {
   annotations: ReturnType<typeof useAnnotations>;
   onFocusAnnotation: (id: string, page: number | null) => void;
   focusedAnnotationId: string | null;
+  /** 从全文检索结果进来时带的关键词与目标页：打开查找栏并定位到那一页的命中。 */
+  pendingFind?: { query: string; page: number; nonce: number } | null;
+  /** 按论文键打开另一篇（引用关系里跳转用）。 */
+  onOpenDocument?: (key: string) => void;
 }
 
 // Lee document.v1 的段落块直接给 PDFView 做命中测试；坐标单位与 page 宽高保持一致。
@@ -64,11 +70,15 @@ export function ReaderScreen({
   annotations,
   onFocusAnnotation,
   focusedAnnotationId,
+  pendingFind = null,
+  onOpenDocument,
 }: Props) {
   const epub = selected?.format === 'epub';
   const documentKey = selected?.key ?? null;
   const pdf = usePDF(!epub ? documentKey : null);
   const translatedPDF = usePDF(!epub ? documentKey : null, true);
+  const [liveRenderedPage, setLiveRenderedPage] = useState<ArrayBuffer | null>(null);
+  const liveRenderedPDF = usePDFData(liveRenderedPage);
   const [liveTranslationPreview, setLiveTranslationPreview] = useState<TranslationPreview | null>(null);
   const [liveTranslationProgress, setLiveTranslationProgress] = useState('等待本页译文…');
   const [mode, setMode] = useState<ReadingMode>('source');
@@ -130,6 +140,16 @@ export function ReaderScreen({
   const restored = useRef(false);
   // 通过 LeePDF 重新处理并获取整本译文 PDF。
   const [exportOpen, setExportOpen] = useState(false);
+  // 文档内查找：命中报告由当前的「查找栏」那一栏（原文或译文）回报。
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findCase, setFindCase] = useState(false);
+  const [findIndex, setFindIndex] = useState(0);
+  const [findNonce, setFindNonce] = useState(0);
+  const [findReport, setFindReport] = useState<PDFFindReport>({ pages: [], scanning: null, failed: 0 });
+  const findInput = useRef<HTMLInputElement>(null);
+  const [citationOpen, setCitationOpen] = useState(false);
+  const [networkOpen, setNetworkOpen] = useState(false);
   // 由外部出处（图谱证据 / 批注）驱动跳转时置位：不让「恢复上次阅读位置」抢走目标页。
   const citeTakeover = useRef(false);
   const [locationReady, setLocationReady] = useState(false);
@@ -177,6 +197,27 @@ export function ReaderScreen({
       controller.abort();
     };
   }, [documentKey, epub, current, pdf.document, translatedPDF.document]);
+  useEffect(() => {
+    setLiveRenderedPage(null);
+    if (epub || !documentKey || !pdf.document || translatedPDF.document) return;
+    const controller = new AbortController();
+    void (async () => {
+      while (!controller.signal.aborted) {
+        try {
+          const data = await api.translatedRenderFile(documentKey, current, controller.signal);
+          if (!controller.signal.aborted) setLiveRenderedPage(data);
+          return;
+        } catch {
+          if (controller.signal.aborted) return;
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(resolve, 1200);
+            controller.signal.addEventListener('abort', () => { window.clearTimeout(timer); resolve(); }, { once: true });
+          });
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [documentKey, epub, current, pdf.document, translatedPDF.document]);
   const [navigationRequest, setNavigationRequest] = useState<{ page: number; y?: number; viewportOffset?: number; nonce: number }>(() => ({ page: page ?? 1, nonce: 0 }));
   const [translationNavigationRequest, setTranslationNavigationRequest] = useState<{ page: number; y?: number; viewportOffset?: number; nonce: number }>(() => ({ page: page ?? 1, nonce: 0 }));
   const navigatePage = useCallback((targetPage: number, y?: number) => {
@@ -209,6 +250,114 @@ export function ReaderScreen({
         : pdfLayout ? pdfLayout.blocks.map((block) => block.text) : pageParagraphs(sourceText),
     [epub, section, sourceText, pdfLayout],
   );
+
+  /**
+   * 查找作用在「当前正在看的那一栏」：仅译文模式下查译文，其余情况查原文。
+   * 只有这一栏会拿到 onFind，另一栏不重复扫描，也就不会两边同时标黄。
+   */
+  const findScope: 'source' | 'translated' =
+    !epub && mode === 'translation' && translatedPDF.document ? 'translated' : 'source';
+  const findTotal = findReport.pages.reduce((sum, item) => sum + item.count, 0);
+  const findTarget = useMemo(() => {
+    if (!findTotal) return null;
+    let remaining = Math.min(Math.max(findIndex, 0), findTotal - 1);
+    for (const item of findReport.pages) {
+      if (remaining < item.count) return { page: item.page, occurrence: remaining + 1 };
+      remaining -= item.count;
+    }
+    return null;
+  }, [findReport.pages, findIndex, findTotal]);
+  /**
+   * 查找态。
+   *
+   * 关键：只要有 ≥2 个字的关键词就要把 query 交给视图——扫描是靠这个开始的。
+   * 曾经这里额外要求 findTarget 存在（也就是要先有命中），扫描因此永远拿不到关键词，
+   * 界面一直显示「没有找到」。activePage/activeOccurrence 才是「跳到第几处」。
+   */
+  const findState: PDFFindState | null = useMemo(
+    () =>
+      findOpen && findQuery.trim().length >= 2
+        ? {
+            query: findQuery,
+            caseSensitive: findCase,
+            activePage: findTarget?.page,
+            activeOccurrence: findTarget?.occurrence,
+            nonce: findNonce,
+          }
+        : null,
+    [findOpen, findQuery, findCase, findTarget, findNonce],
+  );
+  const findStatus = findQuery.trim().length < 2
+    ? '输入至少 2 个字符'
+    : findReport.scanning
+      ? `正在查找 ${findReport.scanning.done}/${findReport.scanning.total} 页…`
+      : findTotal
+        ? `${Math.min(findIndex + 1, findTotal)} / ${findTotal}`
+          + (findReport.failed ? ` · ${findReport.failed} 页取文本失败` : '')
+        : `没有找到「${findQuery.trim()}」`
+          + (findReport.failed ? `（其中 ${findReport.failed} 页取文本失败，未参与匹配）` : '');
+  const stepFind = useCallback(
+    (delta: number) => {
+      if (!findTotal) return;
+      setFindIndex((value) => (value + delta + findTotal) % findTotal);
+      setFindNonce((value) => value + 1);
+    },
+    [findTotal],
+  );
+  // 换栏（原文 ⇄ 译文）时旧的命中报告不再成立，等新栏重新扫描回报。
+  useEffect(() => {
+    setFindReport({ pages: [], scanning: null, failed: 0 });
+  }, [findScope]);
+  // 目标命中出现或换了一处时把对应那栏滚过去；扫描过程中的报告刷新不重复跳。
+  const findJumped = useRef('');
+  useEffect(() => {
+    if (!findOpen || !findTarget) return;
+    const key = `${findNonce}:${findTarget.page}:${findTarget.occurrence}`;
+    if (key === findJumped.current) return;
+    findJumped.current = key;
+    if (findScope === 'translated') navigateTranslationPage(findTarget.page);
+    else navigatePage(findTarget.page);
+  }, [findOpen, findTarget, findNonce, findScope, navigatePage, navigateTranslationPage]);
+  useEffect(() => {
+    if (!findOpen) return;
+    findInput.current?.focus();
+    findInput.current?.select();
+  }, [findOpen]);
+  useEffect(() => {
+    if (epub) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLocaleLowerCase() !== 'f') return;
+      event.preventDefault();
+      setFindOpen(true);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [epub]);
+  // 从全文检索进来：把关键词填进查找栏，并记下要落到哪一页。
+  const pendingFindPage = useRef<number | null>(null);
+  useEffect(() => {
+    if (!pendingFind?.query) return;
+    setFindQuery(pendingFind.query);
+    setFindCase(false);
+    setFindIndex(0);
+    setFindOpen(true);
+    pendingFindPage.current = pendingFind.page;
+    setFindNonce((value) => value + 1);
+  }, [pendingFind?.nonce, pendingFind?.query, pendingFind?.page]);
+  // 命中报告回来后，把序号定位到用户点的那一页（而不是文档里的第一处命中）。
+  // 必须等扫描结束：扫描是逐页增量回报的，中途的页码表还不完整。
+  useEffect(() => {
+    const target = pendingFindPage.current;
+    if (target == null || findReport.scanning || !findReport.pages.length) return;
+    let index = 0;
+    for (const item of findReport.pages) {
+      if (item.page >= target) break;
+      index += item.count;
+    }
+    pendingFindPage.current = null;
+    setFindIndex(index);
+    setFindNonce((value) => value + 1);
+  }, [findReport]);
 
   useEffect(() => {
     if (!documentKey || restored.current) return;
@@ -474,6 +623,8 @@ export function ReaderScreen({
           paragraphMode
           onParagraph={openParagraphTranslation}
           onAnnotationClick={openHighlightedTextActions}
+          find={findScope === 'source' ? findState : null}
+          onFind={findScope === 'source' ? setFindReport : undefined}
         />
       ) : (
         <div className="translation-document">
@@ -515,6 +666,20 @@ export function ReaderScreen({
           navigationRequest={translationNavigationRequest}
           annotations={annotations.items}
           focusedId={focusedAnnotationId}
+          onSelect={select}
+          onText={() => undefined}
+          onAnnotationClick={openHighlightedTextActions}
+          find={findScope === 'translated' ? findState : null}
+          onFind={findScope === 'translated' ? setFindReport : undefined}
+        />
+      ) : liveRenderedPDF.document ? (
+        <PDFDocumentView
+          document={liveRenderedPDF.document}
+          page={1}
+          onPage={() => undefined}
+          navigationRequest={{ page: 1, nonce: current }}
+          annotations={[]}
+          focusedId={null}
           onSelect={select}
           onText={() => undefined}
           onAnnotationClick={openHighlightedTextActions}
@@ -571,6 +736,25 @@ export function ReaderScreen({
               </button>
             ))}
           </span>
+          {!epub && pdf.document ? (
+          <button
+            aria-pressed={findOpen}
+            onClick={() => setFindOpen((value) => !value)}
+            title="在文档中查找（Ctrl+F）"
+          >
+            查找
+          </button>
+          ) : null}
+          {!epub && pdf.document && documentKey ? (
+          <button onClick={() => setCitationOpen(true)} title="导出这篇论文的 BibTeX / RIS 条目">
+            引用
+          </button>
+          ) : null}
+          {!epub && pdf.document && documentKey ? (
+          <button onClick={() => setNetworkOpen(true)} title="看这篇论文与本库其它论文的引用关系">
+            引用网络
+          </button>
+          ) : null}
           {!epub && pdf.document && documentKey ? (
           <button onClick={() => setExportOpen(true)} title="交给 LeePDF 重新生成整本译文 PDF">
               导出译文 PDF
@@ -602,6 +786,47 @@ export function ReaderScreen({
           )}
         </div>
       </header>
+      {findOpen && !epub ? (
+        <div className="reader-find-bar" role="search">
+          <input
+            ref={findInput}
+            type="text"
+            value={findQuery}
+            onChange={(event) => {
+              setFindQuery(event.target.value);
+              setFindIndex(0);
+              setFindNonce((value) => value + 1);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                stepFind(event.shiftKey ? -1 : 1);
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                setFindOpen(false);
+              }
+            }}
+            placeholder={findScope === 'translated' ? '在译文中查找' : '在原文中查找'}
+            aria-label="查找内容"
+          />
+          <span className="reader-find-count" aria-live="polite">{findStatus}</span>
+          <button type="button" onClick={() => stepFind(-1)} disabled={!findTotal} title="上一处（Shift+Enter）" aria-label="上一处">↑</button>
+          <button type="button" onClick={() => stepFind(1)} disabled={!findTotal} title="下一处（Enter）" aria-label="下一处">↓</button>
+          <label className="reader-find-option">
+            <input
+              type="checkbox"
+              checked={findCase}
+              onChange={(event) => {
+                setFindCase(event.target.checked);
+                setFindIndex(0);
+                setFindNonce((value) => value + 1);
+              }}
+            />
+            区分大小写
+          </label>
+          <button type="button" onClick={() => setFindOpen(false)}>关闭</button>
+        </div>
+      ) : null}
       <div className="reader-panels" ref={panelRoot}>
         <aside className="reader-sidebar" data-open={leftOpen} style={{ width: visibleLeft, flexBasis: visibleLeft }}>
           <p className="panel-label">{epub ? '章节目录' : 'PDF 目录与页码'}</p>
@@ -829,6 +1054,20 @@ export function ReaderScreen({
           documentKey={documentKey}
           pageCount={pdf.document.numPages}
           onClose={() => setExportOpen(false)}
+        />
+      ) : null}
+      {citationOpen && documentKey ? (
+        <CitationExportDialog
+          keys={[documentKey]}
+          scopeLabel={selected?.title || documentKey}
+          onClose={() => setCitationOpen(false)}
+        />
+      ) : null}
+      {networkOpen && documentKey ? (
+        <CitationNetworkDialog
+          documentKey={documentKey}
+          onOpenDocument={onOpenDocument}
+          onClose={() => setNetworkOpen(false)}
         />
       ) : null}
     </div>

@@ -3,6 +3,7 @@ import type { CalendarDay, CalendarPaper, CalendarResponse } from '../api/client
 import { api } from '../api/client';
 import type { WorkspacePhase } from '../hooks/useWorkspace';
 import { WorkspaceIcon } from './WorkspaceIcon';
+import { LibraryStatsPanel } from './LibraryStatsPanel';
 
 /**
  * 阅读日历 —— GitHub 贡献热力图形态。
@@ -299,6 +300,8 @@ export function ReadingCalendarSection({ phase, onBack, onOpenDocument, document
             )}
           </div>
           <p className="heat-basis">{data?.basis || '按每篇论文最近一次阅读的时间归入当天；这里展示最新阅读位置快照，并非完整历史。'}</p>
+          {/* 日历回答「哪天读了什么」，统计回答「整体读了多少、处理花了多久」。 */}
+          <LibraryStatsPanel />
         </div>
       </div>
       {phase.kind !== 'ready' ? <p className="heat-basis">书库尚未就绪。</p> : null}

@@ -402,6 +402,7 @@ type generateRequest struct {
 	Key                string                 `json:"key"`
 	Kind               string                 `json:"kind"`
 	Visuals            []readingVisualContext `json:"visuals"`
+	RepositoryURL      string                 `json:"repositoryURL"`
 	Workflow           string                 `json:"workflow"`
 	Fingerprint        string                 `json:"fingerprint"`
 	PageCount          int                    `json:"pageCount"`
@@ -431,6 +432,16 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	if !readingKinds[body.Kind] && body.Kind != "visuals" {
 		writeError(w, http.StatusBadRequest, "不支持的精读生成类型")
 		return
+	}
+	if len(body.RepositoryURL) > 2048 {
+		writeError(w, http.StatusBadRequest, "代码仓库链接过长")
+		return
+	}
+	if strings.TrimSpace(body.RepositoryURL) != "" {
+		if _, err := githubRepoPath(strings.TrimSpace(body.RepositoryURL)); err != nil {
+			writeError(w, http.StatusBadRequest, "代码仓库链接无效：请输入公开的 GitHub HTTPS 仓库地址")
+			return
+		}
 	}
 	key, err := safeKey(body.Key, "论文键")
 	if err != nil {
@@ -520,11 +531,16 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Kind == "reproduction" {
-		if _, repositoryURL := abstractRepositoryURL(source); repositoryURL == "" {
-			message := "摘要末句没有代码仓库链接，已跳过代码复现。"
-			updateProgress(100, message)
-			emit(map[string]any{"result": map[string]any{"saved": true, "kind": body.Kind, "skipped": true, "message": message, "pruned": false, "demoted": []string{}, "validationError": nil, "attempts": 0}, "done": true})
-			return
+		if strings.TrimSpace(body.RepositoryURL) == "" {
+			source = s.sourceWithPDFAbstractLink(r.Context(), key, source)
+		}
+		if strings.TrimSpace(body.RepositoryURL) == "" {
+			if _, repositoryURL := abstractRepositoryURL(source); repositoryURL == "" {
+				message := "摘要末句没有代码仓库链接，已跳过代码复现。"
+				updateProgress(100, message)
+				emit(map[string]any{"result": map[string]any{"saved": true, "kind": body.Kind, "skipped": true, "message": message, "pruned": false, "demoted": []string{}, "validationError": nil, "attempts": 0}, "done": true})
+				return
+			}
 		}
 	}
 	var visualAnalysis []readingVisualAnalysis
@@ -543,7 +559,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	repository := ""
 	if body.Kind == "reproduction" {
 		updateProgress(32, "正在定位摘要末句的代码仓库并读取源码")
-		repository = s.reproductionRepositoryContext(r.Context(), source)
+		repository = s.reproductionRepositoryContext(r.Context(), source, body.RepositoryURL)
 	}
 	system := ai.ReadingSystemPrompt(body.Kind, material)
 	if repository != "" {

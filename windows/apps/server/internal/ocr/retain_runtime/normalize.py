@@ -19,7 +19,7 @@ def _load_retain_paddle_normalizer(runtime_root: Path):
         module_name, provider_dir / "paddle_normalize.py"
     )
     if spec is None or spec.loader is None:
-        raise RuntimeError("RetainPDF Paddle normalize module is unavailable")
+        raise RuntimeError("Lee Paddle normalize module is unavailable")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
@@ -89,7 +89,7 @@ def main() -> None:
     request = json.load(sys.stdin)
     payload = {
         "layoutParsingResults": request.get("layoutParsingResults") or [],
-        # Retain's page adapter safely falls back to each prunedResult's own
+        # The page adapter safely falls back to each prunedResult's own
         # dimensions when provider JSONL metadata is unavailable.
         "dataInfo": {},
         "_meta": {"source": "readx_paddle_layout_results"},
@@ -113,5 +113,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print(f"RetainPDF Paddle normalization failed: {error}", file=sys.stderr)
+        print(f"Lee Paddle normalization failed: {error}", file=sys.stderr)
         raise

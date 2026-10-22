@@ -13,7 +13,7 @@ function probe(command, args) {
   if (result.error || result.status !== 0) throw new Error(`${command}: ${result.error?.message || result.stderr}`);
   console.log(result.stdout.trim());
 }
-probe(env.READX_PYTHON || 'python3', ['-c', 'import PIL, fitz, pikepdf, requests, urllib3; import retainpdf_pipeline.entrypoints.console; print("RetainPDF Python runtime OK")']);
+probe(env.READX_PYTHON || 'python3', ['-c', 'import PIL, fitz, pikepdf, requests, urllib3; import retainpdf_pipeline.entrypoints.console; print("Lee Python runtime OK")']);
 probe(env.TYPST_BIN || 'typst', ['--version']);
 probe(process.execPath, ['-e', 'for(const name of ["fontkit","mathjax-full","pdf-lib"]) require.resolve(name); console.log("Node rendering dependencies OK")']);
 for (const file of ['resources/fonts/SourceHanSerifSC-Regular.otf', 'resources/rendering-engine/engine/bin/rpr-retain.js']) {

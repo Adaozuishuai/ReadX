@@ -1,0 +1,23 @@
+{
+  "name": "readx-promo-remotion",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "node scripts/render.mjs",
+    "poster": "remotion still src/index.ts ReadXPromo ../../output/ReadX-宣传片-绿色版-封面.png --frame=350",
+    "render:editorial": "node scripts/render-editorial.mjs",
+    "images:editorial": "node scripts/render-editorial-images.mjs",
+    "poster:editorial": "remotion still src/index.ts ReadXEditorialPromo ../../output/ReadX-宣传片-编辑风格-封面.png --frame=40"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.537",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.537"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}

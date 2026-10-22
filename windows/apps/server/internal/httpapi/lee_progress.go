@@ -110,9 +110,9 @@ func (s *Server) leeImportObservation(key string, event leeStageObservation) {
 			}
 			if key != stageKey {
 				if stage.Status == "running" {
-					stage.Status = "done"
-					stage.Message = "Lee 已完成" + stage.Label
-					stage.Completed = stage.Total
+					// 走 setStage 而不是直接改字段：阶段耗时的盖章只在 setStage 里发生，
+					// 绕过它会让这一步在统计里永远缺 FinishedAt。
+					job.setStage(key, "done", "Lee 已完成"+stage.Label, stage.Total, stage.Total)
 				}
 				continue
 			}

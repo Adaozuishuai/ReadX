@@ -359,7 +359,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
             <strong>{activeName ?? baseURL ?? '尚未填写地址'}</strong>
             <small>
               {provider === 'codex'
-                ? `${settings?.codex?.source === 'desktop' ? 'Codex Desktop/ChatGPT' : '本机 Codex'} · ${settings?.codex?.authenticated ? '已登录' : settings?.cli.codex ? '待确认登录' : '未检测到'}`
+                ? `${settings?.codex?.source === 'desktop' ? 'Codex Desktop' : '本机 Codex'} · ${settings?.codex?.authenticated ? '已登录' : settings?.cli.codex ? '待确认登录' : '未检测到'}`
                 : provider === 'workbuddy'
                   ? `WorkBuddy 国内版 · ${settings?.workbuddy?.authenticated ? `已登录${settings.workbuddy.nickname ? `（${settings.workbuddy.nickname}）` : ''}` : '未登录'}`
                 : cli ? `本机 CLI · ${settings?.cli[provider] ? '已检测到' : '未检测到'}` : baseURL || '尚未填写地址'}
@@ -393,7 +393,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
                       ? '自己填服务地址与模型（OpenAI 兼容接口）'
                       : preset.local
                         ? `${preset.baseURL}（本机服务）`
-                        : preset.id === 'codex' ? '自动识别 Codex Desktop、ChatGPT 内置 CLI 或本机 CLI，使用已有登录' : preset.baseURL ?? '使用本机 CLI 已登录的账户'
+                        : preset.id === 'codex' ? '自动识别 Codex Desktop 或 CLI，使用已有登录' : preset.baseURL ?? '使用本机 CLI 已登录的账户'
                   }
                 >
                   <ProviderLogo id={preset.custom ? 'custom' : (preset.logo ?? preset.id)} size={15} />

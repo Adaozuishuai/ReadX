@@ -17,6 +17,7 @@ import (
 	"cbctv2/server/internal/ai"
 	"cbctv2/server/internal/legacy"
 	"cbctv2/server/internal/ocr"
+	"cbctv2/server/internal/render"
 )
 
 func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, documentKey, name string, pages []ocr.Page, forceRetranslate bool) {
@@ -44,6 +45,24 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 		}
 		s.finishImportJob(jobKey, status, message)
 	}
+	pageRenderDir := filepath.Join(jobRoot, "rendered", "pages")
+	if forceRetranslate {
+		_ = os.RemoveAll(pageRenderDir)
+	}
+	if err := os.MkdirAll(pageRenderDir, 0o755); err != nil {
+		fail(fmt.Errorf("创建逐页排版目录失败: %w", err))
+		return
+	}
+	renderer := render.New(s.cfg.DataRoot)
+	sourcePDF := filepath.Join(jobRoot, "source", filepath.Base(name))
+	if !existingFile(sourcePDF) {
+		sourcePDF = filepath.Join(jobRoot, "source", "source.pdf")
+	}
+	sourcePDFBytes, sourceErr := os.ReadFile(sourcePDF)
+	if sourceErr != nil {
+		fail(fmt.Errorf("读取逐页排版原文失败: %w", sourceErr))
+		return
+	}
 	config, err := s.aiConfig()
 	if err != nil || !config.Ready() {
 		fail(errors.New("AI 模型配置不可用，原文已入库，可从文库重新翻译"))
@@ -63,10 +82,6 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 	if baseURL == "" {
 		fail(errors.New("AI 助手设置中缺少模型服务地址"))
 		return
-	}
-	sourcePDF := filepath.Join(jobRoot, "source", filepath.Base(name))
-	if !existingFile(sourcePDF) {
-		sourcePDF = filepath.Join(jobRoot, "source", "source.pdf")
 	}
 	sourceJSON := filepath.Join(jobRoot, "ocr", "normalized", "document.v1.json")
 	translatedDir := filepath.Join(jobRoot, "translated")
@@ -98,6 +113,8 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 	}
 	translationUnits := countLeeTranslationUnits(pages)
 	s.jobStage(jobKey, "translate", "running", "正在后台逐页翻译；已完成页面会立即显示在阅读器", 0, translationUnits)
+	s.jobStage(jobKey, "render", "running", "等待页面译文完成后逐页排版", 0, len(pages))
+	renderedPages := map[int]bool{}
 	commandDone := make(chan error, 1)
 	go func() {
 		unitCacheDir := ""
@@ -128,10 +145,18 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 					fail(err)
 					return
 				}
+				renderedCount, renderErr := s.renderAvailableLeePages(ctx, documentKey, sourcePDFBytes, pages, pageRenderDir, renderer, renderedPages, forceRetranslate, jobKey)
+				if renderErr != nil {
+					fail(renderErr)
+					return
+				}
 				count := len(metadata.Translations)
 				if count != lastCount {
 					s.jobStage(jobKey, "translate", "running", fmt.Sprintf("后台翻译中，%d 段译文已可阅读", count), count, translationUnits)
 					lastCount = count
+				}
+				if renderedCount > 0 {
+					s.jobStage(jobKey, "render", "running", fmt.Sprintf("已逐页排版 %d / %d 页，完成页面可立即查看", renderedCount, len(pages)), renderedCount, len(pages))
 				}
 				lastFingerprint = fingerprintHex
 			}
@@ -160,11 +185,33 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 				fail(err)
 				return
 			}
-			s.jobStage(jobKey, "translate", "done", fmt.Sprintf("全文翻译完成，共 %d 段", len(metadata.Translations)), len(metadata.Translations), translationUnits)
-			s.jobStage(jobKey, "render", "running", "翻译完成，正在排版译文 PDF", 0, len(pages))
-			if err := s.runLeeRenderStage(ctx, jobKey, config, bridge, apiKey, baseURL, sourcePDF, sourceJSON, translatedDir); err != nil {
-				fail(err)
+			renderedCount, renderErr := s.renderAvailableLeePages(ctx, documentKey, sourcePDFBytes, pages, pageRenderDir, renderer, renderedPages, forceRetranslate, jobKey)
+			if renderErr != nil {
+				fail(renderErr)
 				return
+			}
+			s.jobStage(jobKey, "translate", "done", fmt.Sprintf("全文翻译完成，共 %d 段", len(metadata.Translations)), len(metadata.Translations), translationUnits)
+			if renderedCount == len(pages) {
+				pagePaths := make([]string, len(pages))
+				for index := range pages {
+					pagePaths[index] = leeRenderedPagePath(pageRenderDir, index+1)
+				}
+				rendered := filepath.Join(jobRoot, "rendered", "readx-translated.pdf")
+				s.jobStage(jobKey, "render", "running", "逐页排版已完成，正在合并译文 PDF", renderedCount, len(pages))
+				if err := renderer.AssemblePages(ctx, sourcePDF, pagePaths, rendered); err != nil {
+					// The provider's document-wide renderer remains a fallback if page assembly fails.
+					log.Printf("逐页译文合并失败，改用完整排版: %v", err)
+					if err := s.runLeeRenderStage(ctx, jobKey, config, bridge, apiKey, baseURL, sourcePDF, sourceJSON, translatedDir); err != nil {
+						fail(err)
+						return
+					}
+				}
+			} else {
+				s.jobStage(jobKey, "render", "running", "全文翻译完成，正在补齐未完成页面并合成译文 PDF", renderedCount, len(pages))
+				if err := s.runLeeRenderStage(ctx, jobKey, config, bridge, apiKey, baseURL, sourcePDF, sourceJSON, translatedDir); err != nil {
+					fail(err)
+					return
+				}
 			}
 			rendered := filepath.Join(jobRoot, "rendered", "readx-translated.pdf")
 			if err := s.adoptLeeTranslatedPDF(documentKey, rendered, len(pages)); err != nil {
@@ -183,6 +230,74 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 		case <-time.After(1200 * time.Millisecond):
 		}
 	}
+}
+
+func leeRenderedPagePath(dir string, page int) string {
+	return filepath.Join(dir, fmt.Sprintf("page-%05d.pdf", page))
+}
+
+func (s *Server) renderAvailableLeePages(ctx context.Context, documentKey string, source []byte, pages []ocr.Page, pageDir string, renderer *render.Renderer, rendered map[int]bool, force bool, jobKey string) (int, error) {
+	for index, page := range pages {
+		pageNumber := index + 1
+		if rendered[pageNumber] {
+			continue
+		}
+		pagePath := leeRenderedPagePath(pageDir, pageNumber)
+		if !force && existingFile(pagePath) {
+			rendered[pageNumber] = true
+			continue
+		}
+		items, _, _ := pageTranslationItems(page, neighbor(pages, index-1), neighbor(pages, index+1))
+		targets, err := s.translatePageItemsMode(ctx, documentKey, items, false, true)
+		if err != nil {
+			return 0, fmt.Errorf("检查第 %d 页译文状态失败: %w", pageNumber, err)
+		}
+		ready := len(targets) == len(items)
+		for _, target := range targets {
+			if strings.TrimSpace(target) == "" {
+				ready = false
+				break
+			}
+		}
+		if !ready {
+			continue
+		}
+		before, after := neighbor(pages, index-1), neighbor(pages, index+1)
+		_, data, err := s.renderTranslatedPage(ctx, documentKey, source, pageNumber, page, before, after, false, renderer)
+		if err != nil {
+			return 0, fmt.Errorf("第 %d 页译文排版失败: %w", pageNumber, err)
+		}
+		if err := writeLeeRenderedPage(pagePath, data); err != nil {
+			return 0, err
+		}
+		rendered[pageNumber] = true
+		count := len(rendered)
+		s.jobStage(jobKey, "render", "running", fmt.Sprintf("已逐页排版 %d / %d 页，完成页面可立即查看", count, len(pages)), count, len(pages))
+	}
+	return len(rendered), nil
+}
+
+func writeLeeRenderedPage(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".page-*.pdf")
+	if err != nil {
+		return err
+	}
+	tempPath := temporary.Name()
+	defer os.Remove(tempPath)
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("保存逐页译文失败: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) persistLeeTranslationSegments(ctx context.Context, documentKey string, segments []translateSegment) error {

@@ -4,7 +4,7 @@ import type { DocumentSummary } from '@cbct/shared';
 import type { DesktopUpdateStatus } from '@cbct/shared';
 import { statusLabel } from '@cbct/shared';
 import type { Category, DocumentMeta } from '../api/client';
-import { api } from '../api/client';
+import { api, type SearchHit, type SearchResponse } from '../api/client';
 import type { Filters, WorkspacePhase } from '../hooks/useWorkspace';
 import { useDebouncedValue } from '../hooks/useWorkspace';
 import type { useLibraryMeta } from '../hooks/useLibraryMeta';
@@ -12,6 +12,7 @@ import { CATEGORY_COLORS, categoryDot, categoryLabel } from '../categories';
 import { LibraryCard } from './LibraryCard';
 import { LibraryTrashButton } from './LibraryTrashButton';
 import { EmptyTrashDialog } from './EmptyTrashDialog';
+import { CitationExportDialog } from './CitationExportDialog';
 import { DailyRecommendations } from './DailyRecommendations';
 import { ResizeHandle } from './ResizeHandle';
 import { WorkspaceIcon, type WorkspaceIconName } from './WorkspaceIcon';
@@ -112,7 +113,7 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 /** 左侧导航的视图项（复刻参考实现：全部文档 / 收藏 / 回收站）。 */
-type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'calendar' | 'graph';
+type ViewId = 'all' | 'favorite' | 'trash' | 'shelves' | 'calendar' | 'graph' | 'compare';
 
 interface Props {
   phase: WorkspacePhase;
@@ -132,6 +133,8 @@ interface Props {
   onOpenReproduction: (key: string) => void;
   onTrashEmptied: () => void;
   onReload: () => void;
+  /** 打开某篇论文并跳到指定页，同时把搜索词带进阅读器的查找栏。 */
+  onOpenAtPage: (key: string, page: number, query: string) => void;
 }
 
 /**
@@ -156,6 +159,7 @@ export function LibraryScreen({
   onOpenReproduction,
   onTrashEmptied,
   onReload,
+  onOpenAtPage,
 }: Props) {
   const [emptyTrashKeys, setEmptyTrashKeys] = useState<string[] | null>(null);
   const [input, setInput] = useState(filters.q);
@@ -176,13 +180,62 @@ export function LibraryScreen({
   const [fetchingArxiv, setFetchingArxiv] = useState(false);
   const [arxivProgress, setArxivProgress] = useState('');
   const [arxivSummary, setArxivSummary] = useState('');
+  const [citationOpen, setCitationOpen] = useState(false);
+  // 搜索分两档：题录（本地筛选，标题/作者/会场）与全文（服务端逐页正文匹配）。
+  // 全文检索的覆盖面见 coverage：未索引的论文搜不到，必须显示出来。
+  const [searchMode, setSearchMode] = useState<'meta' | 'fulltext'>('meta');
+  const [fulltext, setFulltext] = useState<SearchResponse | null>(null);
+  const [fulltextLoading, setFulltextLoading] = useState(false);
+  const [fulltextError, setFulltextError] = useState('');
   const arxivController = useRef<AbortController | null>(null);
   const debounced = useDebouncedValue(input, 300);
+  /** 全文模式下有关键词时，正文结果取代文献列表；空关键词仍然显示书库。 */
+  const fulltextActive = searchMode === 'fulltext' && input.trim().length >= 2;
 
   useEffect(() => {
-    if (debounced !== filters.q) setFilters({ q: debounced });
+    // 全文模式下不再把关键词塞进题录筛选：两档各管一个搜索框，混在一起会互相打架。
+    if (searchMode === 'meta' && debounced !== filters.q) setFilters({ q: debounced });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debounced]);
+  }, [debounced, searchMode]);
+
+  useEffect(() => {
+    if (searchMode !== 'fulltext') {
+      setFulltext(null);
+      setFulltextError('');
+      return;
+    }
+    const query = debounced.trim();
+    if (query.length < 2) {
+      setFulltext(null);
+      setFulltextError('');
+      return;
+    }
+    const controller = new AbortController();
+    setFulltextLoading(true);
+    setFulltextError('');
+    api
+      .search(query, controller.signal)
+      .then((value) => setFulltext(value))
+      .catch((cause: unknown) => {
+        if (cause instanceof DOMException && cause.name === 'AbortError') return;
+        setFulltextError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFulltextLoading(false);
+      });
+    return () => controller.abort();
+  }, [searchMode, debounced]);
+
+  // 服务端按论文分组返回，这里只做相邻合并，保持后端给的顺序（命中多的在前）。
+  const fulltextGroups = useMemo(() => {
+    const groups: { key: string; title: string; year: number; hits: SearchHit[] }[] = [];
+    for (const hit of fulltext?.hits ?? []) {
+      const last = groups[groups.length - 1];
+      if (last && last.key === hit.key) last.hits.push(hit);
+      else groups.push({ key: hit.key, title: hit.title, year: hit.year, hits: [hit] });
+    }
+    return groups;
+  }, [fulltext]);
 
   useEffect(() => {
     try {
@@ -283,25 +336,22 @@ export function LibraryScreen({
   const toggleSort = (key: SortKey) =>
     setSort((current) => (current.key === key ? { key, reverse: !current.reverse } : { key, reverse: false }));
 
-  // 书架计数按**论文**算：只数真的被归入某个书架的非回收站论文。
-  // 原先用的是 activeDocuments.length（全部未删除论文），数字看起来像"书架个数"，
-  // 也把没归类的论文算了进去。
-  const shelfNames = useMemo(() => new Set(meta.categories.map((item) => item.name)), [meta.categories]);
-  const shelvedDocuments = useMemo(
-    () => activeDocuments.filter((doc) => (meta.items[doc.key]?.categories ?? []).some((name) => shelfNames.has(name))),
-    [activeDocuments, meta.items, shelfNames],
-  );
+  // 导航项右边的数字有两种口径，别混：
+  //   导航里的「书架」= **书架个数**（和「收藏」「回收站」并列的都是条目数）；
+  //   下面「我的书架」每个书架右边的数字 = **该书架里的论文数**。
+  // 原先导航用的是「已被归类的论文数」，读起来就是书架个数，两处数字又不一样，必然误导。
   const countInShelf = useCallback(
     (name: string) => activeDocuments.filter((doc) => (meta.items[doc.key]?.categories ?? []).includes(name)).length,
     [activeDocuments, meta.items],
   );
 
-  const VIEWS: { id: ViewId; label: string; icon: WorkspaceIconName; count?: number }[] = [
+  const VIEWS: { id: ViewId; label: string; icon: WorkspaceIconName; count?: number; hint?: string }[] = [
     { id: 'all', label: '全部文档', icon: 'library', count: total - trashCount },
-    { id: 'shelves', label: '书架', icon: 'shelves', count: shelvedDocuments.length },
+    { id: 'shelves', label: '书架', icon: 'shelves', count: meta.categories.length, hint: '书架个数' },
     { id: 'favorite', label: '收藏', icon: 'star', count: favoriteCount },
     { id: 'trash', label: '回收站', icon: 'trash', count: trashCount },
     { id: 'graph', label: '知识图谱', icon: 'graph' },
+    { id: 'compare', label: '跨文献对照', icon: 'panel' },
     { id: 'calendar', label: '阅读日历', icon: 'calendar' },
   ];
 
@@ -323,7 +373,7 @@ export function LibraryScreen({
                 onViewChange(item.id);
               }}
               aria-current={view === item.id ? 'page' : undefined}
-              title={item.label}
+              title={item.hint ? `${item.label}（${item.hint}）` : item.label}
               className={`nav-item${view === item.id ? ' active' : ''}`}
             >
               <WorkspaceIcon name={item.icon} /><span className="nav-label">{item.label}</span>
@@ -334,7 +384,9 @@ export function LibraryScreen({
 
         {meta.categories.length || managingCategories ? (
           <div className="sidebar-shelves flex flex-col gap-1 px-1">
-              <span className="px-2 text-[10px] uppercase tracking-wide text-ink-faint">我的书架</span>
+              <span className="px-2 text-[10px] uppercase tracking-wide text-ink-faint">
+                我的书架{meta.categories.length ? `（${meta.categories.length}）` : ''}
+              </span>
             {meta.categories.map((item) => (
               <button
                 key={item.name}
@@ -411,6 +463,16 @@ export function LibraryScreen({
                 清空回收站
               </button>
             ) : null}
+            {view !== 'trash' && view !== 'graph' && view !== 'calendar' ? (
+              <button
+                type="button"
+                className="mr-2 rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-ink-soft hover:border-accent hover:text-accent"
+                title={categoryFilter ? `导出书架「${categoryFilter}」的书目` : '导出整库书目（不含回收站）'}
+                onClick={() => setCitationOpen(true)}
+              >
+                导出书目
+              </button>
+            ) : null}
             <div className="view-switch" role="group" aria-label="文献布局">
             {(['grid', 'list', 'table'] as Layout[]).map((item) => (
               <button
@@ -440,7 +502,7 @@ export function LibraryScreen({
           {arxivProgress ? <p role="status" className="mb-2 rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">{arxivProgress}</p> : null}
           {arxivSummary ? <p role="status" className="mb-2 rounded-md bg-surface-sunk px-3 py-2 text-xs text-ink-soft">{arxivSummary}</p> : null}
           {view === 'trash' ? <div className="mb-3 text-xs leading-relaxed text-ink-soft"><p>清空会删除 library 文件夹中未被其他论文引用的导入副本，原始位置文件保留。</p>{phase.kind === 'ready' ? <p className="break-all">导入副本位置：{phase.meta.dataRoot.replace(/[\\/]$/, '')}/library</p> : null}</div> : null}
-          {phase.kind === 'ready' && view !== 'trash' ? (
+          {!fulltextActive && phase.kind === 'ready' && view !== 'trash' ? (
             <div className="library-metrics" aria-label="当前列表概览">
               <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="file" /></span><strong>{documents.length}</strong><span>当前文献</span></div>
               <div className="library-metric"><span className="metric-icon"><WorkspaceIcon name="library" /></span><strong>{documents.filter(doc => doc.status === 'reading').length}</strong><span>正在阅读</span></div>
@@ -448,6 +510,23 @@ export function LibraryScreen({
             </div>
           ) : null}
           <div className="library-controls">
+            <div className="view-switch" role="group" aria-label="搜索范围">
+              {(['meta', 'fulltext'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  aria-pressed={searchMode === item}
+                  className={searchMode === item ? 'active' : ''}
+                  title={item === 'meta' ? '按标题、作者、会场筛选' : '在已索引的逐页正文里检索'}
+                  onClick={() => {
+                    setSearchMode(item);
+                    if (item === 'fulltext') setFilters({ q: '' });
+                  }}
+                >
+                  {item === 'meta' ? '题录' : '全文'}
+                </button>
+              ))}
+            </div>
             <label className="search-field">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="11" cy="11" r="7" />
@@ -456,8 +535,8 @@ export function LibraryScreen({
               <input
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
-                placeholder="搜索标题 / 作者 / 会场"
-                aria-label="搜索文献标题、作者或会场"
+                placeholder={searchMode === 'meta' ? '搜索标题 / 作者 / 会场' : '在全文里找（至少 2 个字）'}
+                aria-label={searchMode === 'meta' ? '搜索文献标题、作者或会场' : '在全库正文里检索'}
               />
             </label>
             <span style={{ flex: 1 }} />
@@ -473,12 +552,72 @@ export function LibraryScreen({
             ))}
           </div>
 
-          {phase.kind === 'loading' ? <SkeletonGrid /> : null}
-          {phase.kind === 'error' ? (
+          {fulltextActive ? (
+            <section className="fulltext-results" aria-label="全文检索结果">
+              {fulltextError ? (
+                <p className="text-bad" role="alert">{fulltextError}</p>
+              ) : fulltextLoading && !fulltext ? (
+                <p role="status" className="text-[13px] text-ink-soft">正在检索正文…</p>
+              ) : fulltext ? (
+                <>
+                  <p className="fulltext-summary">
+                    命中 <strong>{fulltext.matches}</strong> 处，分布在 {fulltext.documents} 篇论文
+                    {fulltext.truncated ? '（结果已截断，请用更具体的关键词）' : ''}
+                  </p>
+                  {/* 覆盖度必须显示：未索引的论文搜不到，不能让人以为库里没有。 */}
+                  <p className="fulltext-coverage">
+                    已索引 {fulltext.coverage.indexedDocuments} / {fulltext.coverage.documents} 篇 ·{' '}
+                    {fulltext.coverage.indexedPages} 页
+                    {fulltext.coverage.unindexedDocuments > 0
+                      ? ` · ${fulltext.coverage.unindexedDocuments} 篇还没有正文索引（未翻译且没在阅读器里打开过，或整篇是扫描页）`
+                      : ''}
+                  </p>
+                  {!fulltextGroups.length ? (
+                    <p className="text-[13px] leading-relaxed text-ink-soft">
+                      已索引的正文里没有「{fulltext.query}」。可以换关键词，或把这篇论文导入翻译后再搜。
+                    </p>
+                  ) : null}
+                  <ul className="fulltext-groups">
+                    {fulltextGroups.map((group) => (
+                      <li key={group.key}>
+                        <div className="fulltext-group-head">
+                          <button type="button" onClick={() => onOpenAtPage(group.key, group.hits[0]!.page, fulltext.query)}>
+                            {group.title}
+                          </button>
+                          {group.year ? <span className="tabular-nums">{group.year}</span> : null}
+                          <span>{group.hits.length} 页命中</span>
+                        </div>
+                        <ul className="fulltext-hits">
+                          {group.hits.map((hit) => (
+                            <li key={`${hit.key}-${hit.page}`}>
+                              <button type="button" onClick={() => onOpenAtPage(hit.key, hit.page, fulltext.query)}>
+                                <span className="fulltext-page">P{hit.page}</span>
+                                <span className="fulltext-snippet">
+                                  {hit.before}
+                                  <mark>{hit.match}</mark>
+                                  {hit.after}
+                                </span>
+                                {hit.count > 1 ? <span className="fulltext-count">本页 {hit.count} 处</span> : null}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <p className="text-[13px] text-ink-soft">输入至少 2 个字开始全文检索。</p>
+              )}
+            </section>
+          ) : null}
+
+          {!fulltextActive && phase.kind === 'loading' ? <SkeletonGrid /> : null}
+          {!fulltextActive && phase.kind === 'error' ? (
             <p className="py-6 text-[13px] leading-relaxed text-ink-soft">{phase.message}</p>
           ) : null}
 
-          {phase.kind === 'ready' && documents.length === 0 ? (
+          {!fulltextActive && phase.kind === 'ready' && documents.length === 0 ? (
             <div className="empty-state">
               {view === 'trash' ? (
                 <>
@@ -510,7 +649,7 @@ export function LibraryScreen({
             </div>
           ) : null}
 
-          {view === 'shelves' && phase.kind === 'ready' ? (
+          {!fulltextActive && view === 'shelves' && phase.kind === 'ready' ? (
             <ShelfOverview
               documents={documents}
               categories={meta.categories}
@@ -525,7 +664,7 @@ export function LibraryScreen({
             />
           ) : null}
 
-          {view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'grid' ? (
+          {!fulltextActive && view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'grid' ? (
             <div className="book-grid">
               {documents.map((doc) => (
                 <LibraryCard
@@ -545,7 +684,7 @@ export function LibraryScreen({
             </div>
           ) : null}
 
-          {view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'list' ? (
+          {!fulltextActive && view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'list' ? (
             <ul className="flex flex-col gap-1.5">
               {documents.map((doc) => (
                 <ListRow
@@ -565,7 +704,7 @@ export function LibraryScreen({
             </ul>
           ) : null}
 
-          {view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'table' ? (
+          {!fulltextActive && view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'table' ? (
             <DocumentTable
               documents={documents}
               meta={meta.items}
@@ -580,7 +719,7 @@ export function LibraryScreen({
             />
           ) : null}
 
-          {duplicates.length > 0 ? (
+          {!fulltextActive && duplicates.length > 0 ? (
             <p className="mt-4 rounded-lg bg-warn/10 px-3 py-2 text-[11px] leading-relaxed text-warn">
               检测到 {duplicates.length} 组疑似重复（arXiv 号 / DOI / 标题+作者）。仅提示，不自动合并——逐篇核对后再手动取舍。
             </p>
@@ -619,6 +758,13 @@ export function LibraryScreen({
         </>
       ) : null}
       {emptyTrashKeys ? <EmptyTrashDialog keysToDelete={emptyTrashKeys} onClose={() => setEmptyTrashKeys(null)} onCleared={async () => { setEmptyTrashKeys(null); onTrashEmptied(); await meta.reload(); }} /> : null}
+      {citationOpen ? (
+        <CitationExportDialog
+          category={categoryFilter || undefined}
+          scopeLabel={categoryFilter ? `书架：${categoryFilter}` : '全部文献（不含回收站）'}
+          onClose={() => setCitationOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

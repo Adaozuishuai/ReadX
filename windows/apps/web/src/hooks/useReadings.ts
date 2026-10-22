@@ -85,7 +85,7 @@ export function useReadings(key: string | null) {
         const report = (value: GenerateProgress) => { if (epoch.current === generation && request.current.get(kind) === controller) setProgress((current) => ({ ...current, [kind]: value })); };
         const input = typeof visuals === 'function' ? await visuals(controller.signal, report) : visuals;
         const references = Array.isArray(input) ? input : input.visuals;
-        const paper = Array.isArray(input) ? undefined : { workflow: input.workflow, fingerprint: input.fingerprint, pageCount: input.pageCount, unavailableVisuals: input.unavailableVisuals };
+        const paper = Array.isArray(input) ? undefined : { workflow: input.workflow, fingerprint: input.fingerprint, pageCount: input.pageCount, unavailableVisuals: input.unavailableVisuals, repositoryURL: input.repositoryURL };
         controller.signal.throwIfAborted();
         const result = await api.generate(key, kind, references, report, controller.signal, (savedKind, entry) => {
           if (epoch.current === generation && savedKind === kind && kind !== 'visuals') setState((current) => ({ ...current, entries: { ...current.entries, [kind]: entry } }));

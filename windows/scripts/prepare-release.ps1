@@ -48,7 +48,7 @@ $pythonSite = Join-Path $portablePython 'Lib/site-packages'
 New-Item -ItemType Directory -Path $pythonSite -Force | Out-Null
 & $python -m pip install --upgrade --only-binary=:all: --disable-pip-version-check --no-warn-script-location `
   --target $pythonSite Pillow==10.4.0 PyMuPDF==1.26.5 pikepdf==10.13.0.post1 requests==2.32.5 urllib3==2.5.0
-if ($LASTEXITCODE -ne 0) { throw 'Installing bundled RetainPDF Python wheels failed.' }
+if ($LASTEXITCODE -ne 0) { throw 'Installing bundled Lee Python wheels failed.' }
 
 $backendSource = Join-Path $windowsRoot 'vendor/retainpdf/backend'
 Copy-Item -Path $backendSource -Destination (Join-Path $resourceRoot 'vendor/retainpdf/backend') -Recurse -Force
@@ -101,6 +101,7 @@ $nodePackage = Join-Path $resourceRoot 'package.json'
 @'
 {
   "private": true,
+  "allowScripts": {},
   "dependencies": {
     "fontkit": "2.0.4",
     "mathjax-full": "3.2.1",

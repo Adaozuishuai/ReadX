@@ -46,4 +46,4 @@ if (!fs.existsSync(typst)) {
   fs.unlinkSync(archive);
 }
 run(typst, ['--version']);
-console.log('macOS RetainPDF runtime ready. Run npm run check:runtime.');
+console.log('macOS Lee runtime ready. Run npm run check:runtime.');

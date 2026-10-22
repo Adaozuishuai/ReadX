@@ -1,23 +1,27 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var (
 	paperAbstractStart = regexp.MustCompile(`(?i)\babstract\b\s*[:.]?`)
 	paperAbstractEnd   = regexp.MustCompile(`(?im)^\s*(?:\d+(?:\.\d+)*\.?\s+)?introduction\b`)
-	repositoryURLMatch = regexp.MustCompile(`https?://[^\s<>"'\])}]+`)
+	repositoryURLMatch = regexp.MustCompile(`(?i)https?://[^\s<>"'\])}，。；：！？、]+`)
 )
 
 const (
@@ -49,8 +53,11 @@ type githubBlob struct {
 	Content  string `json:"content"`
 }
 
-func (s *Server) reproductionRepositoryContext(ctx context.Context, source string) string {
+func (s *Server) reproductionRepositoryContext(ctx context.Context, source, repositoryURLOverride string) string {
 	abstract, repositoryURL := abstractRepositoryURL(source)
+	if strings.TrimSpace(repositoryURLOverride) != "" {
+		repositoryURL = strings.TrimSpace(repositoryURLOverride)
+	}
 	if repositoryURL == "" {
 		return "摘要末句未找到以 https:// 开头的公开 GitHub 仓库地址。只能依据论文原文说明复现条件，不得声称已比对仓库。\n摘要内容（节选）：\n" + truncateRepositoryText(abstract, 5000)
 	}
@@ -77,6 +84,156 @@ func abstractFinalSentence(abstract, repositoryURL string) string {
 	return strings.TrimSpace(prefix) + repositoryURL
 }
 
+// sourceWithPDFAbstractLink restores a URL stored as a clickable PDF
+// annotation when the extracted page text only says "this URL" or "here".
+// Keep the lookup tied to first-page link annotations so links in references
+// or later body text cannot accidentally enable code reproduction.
+func (s *Server) sourceWithPDFAbstractLink(ctx context.Context, key, source string) string {
+	if _, link := abstractRepositoryURL(source); link != "" {
+		return source
+	}
+	doc, err := s.loadDocument(ctx, key)
+	if err != nil || !strings.EqualFold(doc.Format, "pdf") || doc.PDFPath == "" {
+		return source
+	}
+	link := firstPagePDFGitHubURL(doc.PDFPath)
+	if link == "" {
+		return source
+	}
+	return attachPDFURLToAbstract(source, link)
+}
+
+func attachPDFURLToAbstract(source, link string) string {
+	start := paperAbstractStart.FindStringIndex(source)
+	if start == nil {
+		return source
+	}
+	end := len(source)
+	if match := paperAbstractEnd.FindStringIndex(source[start[1]:]); match != nil {
+		end = start[1] + match[0]
+	}
+	body := source[start[1]:end]
+	// The URL is associated with the final abstract sentence only when the
+	// sentence explicitly describes code availability and contains a link
+	// placeholder (the common arXiv "Code is available at this URL." wording).
+	placeholder := regexp.MustCompile(`(?i)\b(?:this\s+url|the\s+following\s+(?:url|link)|here)\b\.?\s*$`)
+	if !regexp.MustCompile(`(?i)\bcode\b`).MatchString(body) {
+		return source
+	}
+	loc := placeholder.FindStringIndex(body)
+	if loc == nil {
+		return source
+	}
+	updated := body[:loc[0]] + link + strings.TrimLeft(body[loc[1]:], ".!?。；; \t\r\n")
+	return source[:start[1]] + updated + source[end:]
+}
+
+var (
+	pdfPageObjectMatch = regexp.MustCompile(`(?s)(\d+)\s+\d+\s+obj\b(.*?)endobj`)
+	pdfAnnotsMatch     = regexp.MustCompile(`(?s)/Annots\s*\[(.*?)\]`)
+	pdfObjectRefMatch  = regexp.MustCompile(`(\d+)\s+\d+\s+R`)
+	pdfURIStringMatch  = regexp.MustCompile(`(?i)/URI\s*\(([^)]*)\)`)
+	pdfURIHexMatch     = regexp.MustCompile(`(?i)/URI\s*<([0-9a-f]+)>`)
+)
+
+func firstPagePDFGitHubURL(path string) string {
+	// A bounded read avoids loading unusually large PDFs just to inspect link
+	// annotations. Most annotations are stored as ordinary indirect objects.
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 128<<20))
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	objects := make(map[string][]byte)
+	pageRefs := []byte(nil)
+	for _, match := range pdfPageObjectMatch.FindAllSubmatch(data, -1) {
+		objects[string(match[1])] = match[2]
+		if pageRefs == nil && regexp.MustCompile(`/Type\s*/Page\b`).Match(match[2]) && !regexp.MustCompile(`/Type\s*/Pages\b`).Match(match[2]) {
+			if annotations := pdfAnnotsMatch.FindSubmatch(match[2]); annotations != nil {
+				pageRefs = annotations[1]
+			}
+		}
+	}
+	if pageRefs == nil {
+		return ""
+	}
+	for _, ref := range pdfObjectRefMatch.FindAllSubmatch(pageRefs, -1) {
+		object := objects[string(ref[1])]
+		if len(object) == 0 || !bytes.Contains(object, []byte("/Subtype /Link")) {
+			continue
+		}
+		if link := githubURIFromPDFObject(object); link != "" {
+			return link
+		}
+		// Some producers store the action dictionary in a separate object.
+		if action := regexp.MustCompile(`/A\s+(\d+)\s+\d+\s+R`).FindSubmatch(object); action != nil {
+			if link := githubURIFromPDFObject(objects[string(action[1])]); link != "" {
+				return link
+			}
+		}
+	}
+	return ""
+}
+
+func githubURIFromPDFObject(object []byte) string {
+	value := ""
+	if match := pdfURIStringMatch.FindSubmatch(object); match != nil {
+		value = unescapePDFString(match[1])
+	} else if match := pdfURIHexMatch.FindSubmatch(object); match != nil {
+		decoded, err := hexDecodePDFString(match[1])
+		if err != nil {
+			return ""
+		}
+		value = decoded
+	}
+	value = strings.TrimSpace(value)
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.") != "github.com" {
+		return ""
+	}
+	return value
+}
+
+func unescapePDFString(value []byte) string {
+	var out strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] != '\\' || i+1 >= len(value) {
+			out.WriteByte(value[i])
+			continue
+		}
+		i++
+		switch value[i] {
+		case 'n':
+			out.WriteByte('\n')
+		case 'r':
+			out.WriteByte('\r')
+		case 't':
+			out.WriteByte('\t')
+		case 'b':
+			out.WriteByte('\b')
+		case 'f':
+			out.WriteByte('\f')
+		case '\n', '\r':
+		default:
+			out.WriteByte(value[i])
+		}
+	}
+	return out.String()
+}
+
+func hexDecodePDFString(value []byte) (string, error) {
+	decoded := make([]byte, hex.DecodedLen(len(value)))
+	n, err := hex.Decode(decoded, value)
+	if err != nil {
+		return "", err
+	}
+	return string(decoded[:n]), nil
+}
+
 func truncateRepositoryText(value string, limit int) string {
 	runes := []rune(strings.TrimSpace(value))
 	if len(runes) <= limit {
@@ -100,16 +257,22 @@ func abstractRepositoryURL(source string) (abstract, repositoryURL string) {
 	if len(urls) == 0 {
 		return strings.TrimSpace(body), ""
 	}
-	last := strings.TrimRight(urls[len(urls)-1], ".,;:!?")
+	last := strings.TrimRight(urls[len(urls)-1], ".,;:!?…，。；：！？、")
 	parsed, err := url.Parse(last)
-	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "github.com") {
+	host := ""
+	if parsed != nil {
+		host = strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
+	}
+	if err != nil || parsed.Scheme != "https" || host != "github.com" {
 		return strings.TrimSpace(body), ""
 	}
 	// The repository URL must be in the final abstract sentence. Reject URLs
 	// followed by meaningful text so a citation or earlier resource link isn't
 	// mistaken for that sentence.
 	idx := strings.LastIndex(body, urls[len(urls)-1])
-	if idx < 0 || strings.TrimSpace(strings.Trim(body[idx+len(urls[len(urls)-1]):], ".,;:!?")) != "" {
+	if idx < 0 || strings.TrimSpace(strings.TrimFunc(body[idx+len(urls[len(urls)-1]):], func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsPunct(r)
+	})) != "" {
 		return strings.TrimSpace(body), ""
 	}
 	return strings.TrimSpace(body), last
@@ -117,7 +280,11 @@ func abstractRepositoryURL(source string) (abstract, repositoryURL string) {
 
 func githubRepoPath(repositoryURL string) (string, error) {
 	parsed, err := url.Parse(repositoryURL)
-	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "github.com") || parsed.User != nil {
+	host := ""
+	if parsed != nil {
+		host = strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
+	}
+	if err != nil || parsed.Scheme != "https" || host != "github.com" || parsed.User != nil {
 		return "", fmt.Errorf("摘要末句不是有效的 GitHub HTTPS 地址")
 	}
 	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")

@@ -23,10 +23,25 @@ import (
 	"cbctv2/server/internal/ocr"
 )
 
+// leeImportOptions 让「导入新论文」与「对已在库论文重新识别」共用同一条识别阶段。
+// 识别本身完全一样，不该有两份实现；差别只在措辞与题录核对。
+type leeImportOptions struct {
+	// SkipMetadataCompletion：重新识别时不再联网核对题录。题录早已入库，
+	// 再查一次既慢，又会把「题录核对未完成」的提示混进重新识别的任务里。
+	SkipMetadataCompletion bool
+}
+
 // runLeePDFImport runs only LeePDF's OCR and document.v1 normalization stage.
 // ReadX stores the recognized PDF in the library immediately; translation and
 // rendering continue in a cancellable background task.
-func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []byte, metadata *recognizedPaperMetadata) (string, error) {
+//
+// jobKey 是**任务**编号（识别产物落在 retain/jobs/<jobKey>），与文档 key 是两件事：
+// 导入时两者常相同，重新识别时任务编号是 retranslate-<id>，文档 key 才是书库里的那篇。
+func (s *Server) runLeePDFImport(ctx context.Context, jobKey, name string, pdf []byte, metadata *recognizedPaperMetadata, options ...leeImportOptions) (string, error) {
+	var opts leeImportOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	if metadata == nil {
 		return "", errors.New("导入元数据不可用")
 	}
@@ -42,7 +57,7 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 		return "", errors.New("请先在 AI 助手设置中配置 PaddleOCR 令牌")
 	}
 
-	jobRoot := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).DataDir(), "retain", "jobs", key)
+	jobRoot := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).DataDir(), "retain", "jobs", jobKey)
 	sourceDir := filepath.Join(jobRoot, "source")
 	for _, dir := range []string{
 		jobRoot,
@@ -226,11 +241,11 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 	}
 	defer logFile.Close()
 	logWriter := &leeImportLogWriter{sink: logFile, observe: func(event leeStageObservation) {
-		s.leeImportObservation(key, event)
+		s.leeImportObservation(jobKey, event)
 	}}
 	cmd.Stdout, cmd.Stderr = logWriter, logWriter
-	s.jobStage(key, "ocr", "running", "Lee 正在识别并整理论文", 0, -1)
-	s.jobStage(key, "translate", "pending", "等待 OCR 完成", 0, -1)
+	s.jobStage(jobKey, "ocr", "running", "Lee 正在识别并整理论文", 0, -1)
+	s.jobStage(jobKey, "translate", "pending", "等待 OCR 完成", 0, -1)
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("启动 Lee pipeline 失败: %w", err)
 	}
@@ -247,7 +262,7 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 		if detail == "" {
 			detail = err.Error()
 		}
-		s.updateImportJob(key, func(job *DocumentJob) {
+		s.updateImportJob(jobKey, func(job *DocumentJob) {
 			if job.Status == "running" {
 				for i := range job.Stages {
 					if job.Stages[i].Status == "running" {
@@ -275,42 +290,28 @@ func (s *Server) runLeePDFImport(ctx context.Context, key, name string, pdf []by
 	// OCR completes before translation starts; this is not a failed-translation
 	// warning because the document is now readable and the worker is queued.
 	metadata.Untranslated = 0
-	s.jobStage(key, "ocr", "done", "Lee 已完成 OCR 与 document.v1 整理，原文已可阅读", len(pages), len(pages))
 	translationUnits := countLeeTranslationUnits(pages)
-	s.jobStage(key, "translate", "pending", "已入库，阅读时后台逐页翻译", 0, translationUnits)
-	s.jobStage(key, "render", "pending", "等待全文翻译完成后排版", 0, len(pages))
-	// Lee 只负责 OCR/翻译/排版，不做题录识别；用 OCR 首页文本补回 ReadX 的
-	// 题名、作者、期刊、年份、DOI 与中文题名。识别失败不阻断已完成的翻译。
-	if strings.TrimSpace(metadata.Title) == "" && len(metadata.Pages) > 0 {
-		hint := publicationMetadataHint{FirstPage: metadata.Pages[0].Text, DOI: metadata.DOI}
-		if len(metadata.Authors) > 0 {
-			hint.Author = metadata.Authors[0]
-		}
-		recognized, recErr := s.recognizePDFMetadata(ctx, name, hint)
-		if recErr != nil {
-			log.Printf("题录识别失败，保留文件名标题: %v", recErr)
-		} else {
-			if metadata.Title == "" {
-				metadata.Title = recognized.Title
-			}
-			if metadata.TranslatedTitle == "" {
-				metadata.TranslatedTitle = recognized.TranslatedTitle
-			}
-			if len(metadata.Authors) == 0 {
-				metadata.Authors = recognized.Authors
-			}
-			if metadata.Venue == "" {
-				metadata.Venue = recognized.Venue
-			}
-			if metadata.Year == 0 {
-				metadata.Year = recognized.Year
-			}
-			if metadata.DOI == "" {
-				metadata.DOI = recognized.DOI
-			}
-		}
+	if opts.SkipMetadataCompletion {
+		// 重新识别：题录早已入库，不再联网核对，措辞也不再提「已入库」。
+		s.jobStage(jobKey, "ocr", "done", fmt.Sprintf("重新识别完成，共 %d 页", len(pages)), len(pages), len(pages))
+		s.jobStage(jobKey, "translate", "pending", "识别结果已更新，等待后台重新翻译", 0, translationUnits)
+		s.jobStage(jobKey, "render", "pending", "等待全文翻译完成后排版", 0, len(pages))
+		s.updateImportJob(jobKey, func(job *DocumentJob) { job.Pages = len(pages) })
+		return "", nil
 	}
-	s.updateImportJob(key, func(job *DocumentJob) { job.Pages = len(pages) })
+	s.jobStage(jobKey, "ocr", "running", "OCR 已完成，AI 助手正在联网核对出版来源与年份", len(pages), len(pages))
+	if err := s.completeImportedPDFMetadata(ctx, name, metadata); err != nil {
+		log.Printf("导入题录联网补齐未完成: %v", err)
+		metadata.MetadataWarning = "出版信息联网核对未完成：" + err.Error() + "；已保留原文与已有题录"
+	}
+	metadataMessage := "OCR 与题录核对已结束，原文已可阅读"
+	if metadata.MetadataWarning != "" {
+		metadataMessage += "；" + metadata.MetadataWarning
+	}
+	s.jobStage(jobKey, "ocr", "done", metadataMessage, len(pages), len(pages))
+	s.jobStage(jobKey, "translate", "pending", "已入库，阅读时后台逐页翻译", 0, translationUnits)
+	s.jobStage(jobKey, "render", "pending", "等待全文翻译完成后排版", 0, len(pages))
+	s.updateImportJob(jobKey, func(job *DocumentJob) { job.Pages = len(pages) })
 	return "", nil
 }
 

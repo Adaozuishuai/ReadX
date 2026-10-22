@@ -95,6 +95,19 @@ function query(params: Record<string, string | undefined>): string {
   return rendered ? `?${rendered}` : '';
 }
 
+/** 书目导出的查询串：keys 与 category 互斥，由服务端兜底校验。 */
+function citationQuery(params: {
+  format: CitationFormat;
+  keys?: string[];
+  category?: string;
+}): string {
+  return query({
+    format: params.format,
+    keys: params.keys?.length ? params.keys.join(',') : undefined,
+    category: params.category,
+  });
+}
+
 export interface AIStatus {
   provider?: string;
   configured: boolean;
@@ -126,6 +139,7 @@ export interface ReadingGenerationInput {
   fingerprint?: string;
   pageCount?: number;
   unavailableVisuals?: string[];
+  repositoryURL?: string;
 }
 
 export interface ReadingVisualAnalysis {
@@ -661,13 +675,19 @@ export interface DailyRecommendation {
   title: string;
   authors: string[];
   venue: string;
-  venueTier: number;
   year: number;
   published: string;
   doi: string;
   url: string;
   pdfUrl: string;
   abstract: string;
+}
+export interface DailyRecommendationRules {
+  field: string;
+  keywords: string[];
+  exclude: string[];
+  venues: string[];
+  years: number;
 }
 export interface ImportProgress {
   stage: string;
@@ -688,6 +708,9 @@ export interface ImportStreamEvent {
 export interface ImportMetadataHint {
   title: string;
   author: string;
+  authors?: string[];
+  venue?: string;
+  year?: number;
   doi: string;
   arxiv: string;
   firstPage: string;
@@ -860,6 +883,178 @@ async function importRemotePublication(
   return result;
 }
 
+export type CitationFormat = 'bibtex' | 'ris';
+
+/** 一篇论文的条目类型判定结果（kind/field/basis 由服务端按会场名推断）。 */
+export interface CitationPreviewItem {
+  key: string;
+  title: string;
+  citeKey: string;
+  kind: string;
+  field: string;
+  value: string;
+  basis: string;
+}
+
+/** 导出前的预览：把「会写成什么」和「哪些字段是空的」在下载之前摊开。 */
+export interface CitationPreview {
+  format: string;
+  count: number;
+  skipped: number;
+  items: CitationPreviewItem[];
+  bases: { basis: string; count: number }[];
+  warnings: string[];
+}
+
+export interface CitationExportResult {
+  filename: string;
+  exported: number;
+  skipped: number;
+}
+
+/** 一条命中：片段拆成 before/match/after，界面只负责把 match 标黄，不需要解析标记。 */
+export interface SearchHit {
+  key: string;
+  title: string;
+  year: number;
+  status: string;
+  page: number;
+  count: number;
+  before: string;
+  match: string;
+  after: string;
+}
+
+/**
+ * 索引覆盖度。检索语料只有「导入过 OCR 正文」和「在阅读器里打开过并提取过正文」的页，
+ * 所以未索引的论文数必须显示出来，不能让用户把「搜不到」当成「不存在」。
+ */
+export interface SearchCoverage {
+  documents: number;
+  indexedDocuments: number;
+  unindexedDocuments: number;
+  indexedPages: number;
+  trashedDocuments: number;
+}
+
+export interface SearchResponse {
+  query: string;
+  hits: SearchHit[];
+  matches: number;
+  documents: number;
+  truncated: boolean;
+  coverage: SearchCoverage;
+}
+
+/** 一个阶段的耗时汇总。PerPageMs 只在有页数可摊时给出，缺省表示无法摊派。 */
+export interface StageStats {
+  key: string;
+  label: string;
+  runs: number;
+  totalMs: number;
+  medianMs: number;
+  maxMs: number;
+  perPageMs?: number;
+}
+
+export interface NamedCount {
+  name: string;
+  count: number;
+}
+
+/**
+ * 书库与阅读统计。
+ *
+ * 这里没有「读了多久」：页面停留时长需要前台心跳，当前没有采集。
+ * 处理耗时来自任务阶段自己盖的时间戳，老任务缺时间戳的会单独计数（missingStageTiming）。
+ */
+export interface StatsResponse {
+  library: {
+    total: number;
+    active: number;
+    queue: number;
+    reading: number;
+    done: number;
+    archive: number;
+    favorite: number;
+    trashed: number;
+    shelves: number;
+  };
+  reading: {
+    located: number;
+    activeWeek: number;
+    activeMonth: number;
+    annotations: number;
+    annotationsMonth: number;
+    readingNotes: number;
+    indexedDocuments: number;
+    indexedPages: number;
+  };
+  processing: {
+    jobs: number;
+    runs: number;
+    failedRuns: number;
+    pages: number;
+    stages: StageStats[];
+    slowest: { key: string; title: string; stage: string; ms: number }[];
+    missingStageTiming: number;
+    totalRunMs: number;
+    medianRunMs: number;
+  };
+  distribution: {
+    years: NamedCount[];
+    shelves: NamedCount[];
+    tags: NamedCount[];
+  };
+  basis: string[];
+}
+
+/** /v1/trends 的条目：字段名沿用后端 Go 字段（该结构没有 JSON tag）。 */
+export interface TrendFinding {
+  Topic: string;
+  Count: number;
+  IsSupported: boolean;
+  Claim: string;
+  Caveat: string;
+  Evidence?: { category: string; value: string; evidence?: string }[];
+}
+
+export interface TrendsResponse {
+  sample: { papers: string[]; count: number };
+  findings: TrendFinding[];
+  coverage: { Category: string; Count: number }[];
+  minimum: number;
+}
+
+/** 库内引用关系的一条边。relation：reference = 本文引用了它，citation = 它引用了本文。 */
+export interface CitationEdge {
+  key: string;
+  title: string;
+  year: number;
+  doi: string;
+  relation: 'reference' | 'citation';
+}
+
+export interface CitationNetworkResponse {
+  key: string;
+  title: string;
+  doi: string;
+  available: boolean;
+  openAlexId?: string;
+  fetchedAt?: string;
+  fromCache: boolean;
+  inLibrary: CitationEdge[];
+  external: { title: string; year: number; doi: string }[];
+  counts: {
+    references: number;
+    citations: number;
+    resolvedReferences: number;
+    inLibraryReferences: number;
+    inLibraryCitations: number;
+  };
+  disclosure: string[];
+}
+
 export const api = {
   settings: () => request<AISettings>('/v1/ai/settings'),
   saveSettings: (body: {
@@ -885,7 +1080,16 @@ export const api = {
   workbuddyLogout: () => request<{ authenticated: boolean }>('/v1/ai/workbuddy/login', { method: 'DELETE' }),
   upload: uploadPublications,
   importURL: importRemotePublication,
-  dailyRecommendations: (signal?: AbortSignal) => request<{ papers: DailyRecommendation[]; fetchedAt: string }>('/v1/discovery/daily', { signal }),
+  dailyRecommendations: (rules: DailyRecommendationRules, signal?: AbortSignal) => {
+    const query = new URLSearchParams({
+      field: rules.field,
+      keywords: rules.keywords.join('\n'),
+      exclude: rules.exclude.join('\n'),
+      venues: rules.venues.join('\n'),
+      years: String(rules.years),
+    });
+    return request<{ papers: DailyRecommendation[]; fetchedAt: string }>(`/v1/discovery/daily?${query}`, { signal });
+  },
   downloadPublication: async (value: string, title: string | undefined, signal?: AbortSignal, onProgress?: (received: number, total: number) => void) => {
     const response = await authenticatedFetch('/v1/import/url', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -953,6 +1157,13 @@ export const api = {
     (
       await authenticatedFetch(
         `/v1/documents/${encodeURIComponent(key)}/translated-pdf`,
+        { signal },
+      )
+    ).arrayBuffer(),
+  translatedRenderFile: async (key: string, page: number, signal?: AbortSignal) =>
+    (
+      await authenticatedFetch(
+        `/v1/documents/${encodeURIComponent(key)}/pages/${page}/translated-render`,
         { signal },
       )
     ).arrayBuffer(),
@@ -1061,6 +1272,63 @@ export const api = {
     request<ReadingsResponse>(`/v1/readings/${encodeURIComponent(key)}`, {
       signal,
     }),
+  /** 书目导出预览：条目类型是按会场名推断的，所以先让用户看清依据再下载。 */
+  citationPreview: (
+    params: { format: CitationFormat; keys?: string[]; category?: string },
+    signal?: AbortSignal,
+  ) =>
+    request<CitationPreview>(
+      `/v1/citations/preview${citationQuery(params)}`,
+      { signal },
+    ),
+  /** 全库全文检索：逐字匹配逐页正文，覆盖度随结果一起返回。 */
+  search: (query: string, signal?: AbortSignal) =>
+    request<SearchResponse>(`/v1/search?q=${encodeURIComponent(query)}`, {
+      signal,
+    }),
+  /** 下载书目文件（BibTeX / RIS）。跳过与导出的篇数从响应头读，界面如实提示。 */
+  exportCitations: async (params: {
+    format: CitationFormat;
+    keys?: string[];
+    category?: string;
+  }): Promise<CitationExportResult> => {
+    const { apiBase, token } = bootstrap();
+    const headers = new Headers();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(`${apiBase}/v1/citations${citationQuery(params)}`, {
+      headers,
+      credentials: 'omit',
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let message = `HTTP ${response.status}`;
+      try {
+        const parsed = JSON.parse(text) as ApiFailure;
+        if (isApiFailure(parsed)) message = parsed.error;
+      } catch {
+        /* 非 JSON 错误体：保留兜底文案 */
+      }
+      throw new ApiError(message, response.status);
+    }
+    const disposition = response.headers.get('Content-Disposition') ?? '';
+    const filename =
+      /filename="([^"]+)"/.exec(disposition)?.[1] ??
+      `readx-citations.${params.format === 'ris' ? 'ris' : 'bib'}`;
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return {
+      filename,
+      exported: Number(response.headers.get('X-ReadX-Exported') ?? '0'),
+      skipped: Number(response.headers.get('X-ReadX-Skipped') ?? '0'),
+    };
+  },
   /** 校验并返回 LeePDF 导入阶段生成的排版译文 PDF 信息。 */
   translatedPDF: (key: string, body: { pageCount: number }, signal?: AbortSignal) =>
     request<TranslatedPDFResponse>(`/v1/documents/${encodeURIComponent(key)}/translated-pdf`, {
@@ -1280,6 +1548,18 @@ export const api = {
   /** 阅读日历：按"每篇最近一次阅读"聚合，覆盖面见 basis。 */
   calendar: (signal?: AbortSignal) =>
     request<CalendarResponse>('/v1/calendar', { signal }),
+  /** 书库与阅读统计（口径随响应一起返回，界面照实展示）。 */
+  stats: (signal?: AbortSignal) =>
+    request<StatsResponse>('/v1/stats', { signal }),
+  /** 主题分布：按题录关键词聚合，样本不足时后端只报计数、不下判断。 */
+  trends: (signal?: AbortSignal) =>
+    request<TrendsResponse>('/v1/trends', { signal }),
+  /** 库内引用关系（OpenAlex 元数据，缓存 7 天；refresh=true 强制重取）。 */
+  citationNetwork: (key: string, refresh = false, signal?: AbortSignal) =>
+    request<CitationNetworkResponse>(
+      `/v1/documents/${encodeURIComponent(key)}/citations${refresh ? '?refresh=1' : ''}`,
+      { signal },
+    ),
   /** 对一篇论文跑图谱抽取；已有结果时 force=true 才会重新调模型。 */
   graphExtract: (key: string, force = false) =>
     request<{ skipped: boolean; paper: GraphPaper }>(

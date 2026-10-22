@@ -60,7 +60,9 @@ export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pd
   const [saving, setSaving] = useState(false);
   const saveLock = useRef(false);
   const [checklistOpen, setChecklistOpen] = useState(false);
-  useEffect(() => { ++batchEpoch.current; batchLock.current = false; setBatch(false); setActive('motivation'); setTextOnly(false); setNotice(''); return () => { ++batchEpoch.current; }; }, [apiKey]);
+  const [repositoryURL, setRepositoryURL] = useState('');
+  const [repositoryRetryPending, setRepositoryRetryPending] = useState(false);
+  useEffect(() => { ++batchEpoch.current; batchLock.current = false; setBatch(false); setActive('motivation'); setTextOnly(false); setNotice(''); setRepositoryURL(''); setRepositoryRetryPending(false); return () => { ++batchEpoch.current; }; }, [apiKey]);
   const step = READING_STEPS.find((s) => s.kind === active)!;
   const index = READING_STEPS.indexOf(step);
   const entry = reading.entries[active];
@@ -71,7 +73,8 @@ export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pd
   const savedCount = Object.keys(reading.entries).length;
   const readingLabel = (kind: ReadingKind) => reading.generating[kind] ? '正在生成…' : reading.jobErrors[kind] ? '生成失败' : reading.notices[kind]?.skipped ? '已跳过' : reading.entries[kind]?.readerStatus === 'partial' ? '部分已保存' : reading.entries[kind] ? reading.entries[kind]!.validationError ? '待核对' : '已保存' : '尚未生成';
   const remaining = READING_STEPS.filter((s) => (!reading.entries[s.kind] || reading.entries[s.kind]?.readerStatus === 'partial') && !reading.notices[s.kind]?.skipped && !reading.generating[s.kind]);
-  const visualReferences = (signal: AbortSignal, report: (value: GenerateProgress) => void) => preparePaperReading(apiKey!, pdfDocument ?? null, visuals, textOnly, signal, report);
+  const visualReferences = async (signal: AbortSignal, report: (value: GenerateProgress) => void) => ({ ...(await preparePaperReading(apiKey!, pdfDocument ?? null, visuals, textOnly, signal, report)), repositoryURL: repositoryURL.trim() || undefined });
+  const retryReproduction = () => { setRepositoryRetryPending(false); setNotice(''); void reading.generate('reproduction', visualReferences); };
   const runningSteps = READING_STEPS.filter((s) => reading.generating[s.kind]);
   const sharedAnalyses = currentVisualAnalyses(entry?.visuals ?? reading.visualAnalysis?.visuals, visuals);
   const inlineItems = sharedAnalyses.filter((item) => item.step === active);
@@ -128,7 +131,8 @@ export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pd
     </nav>
     <main className="precision-content" role="tabpanel" id={`reading-panel-${active}`} aria-labelledby={`reading-tab-${active}`}>
       <header className="precision-heading"><div><span className="precision-overline">0{index + 1} / 05 · PAPER WORKBOOK</span><h2>{step.label}</h2></div><AIModelControls preferences={preferences} compact /></header>
-      <div className="precision-actions"><button className="precision-button primary" disabled={blocked} onClick={() => { setNotice(''); void reading.generate(active, visualReferences); }}>{reading.generating[active] ? '本节生成中…' : entry?.readerStatus === 'partial' ? '继续本节' : entry ? '重新生成' : '生成本节'}</button><button className="precision-button" disabled={!entry} onClick={() => entry && onAsk(`请针对「${step.label}」精读笔记继续分析。\n\n${entryMarkdown(step.label, entry!, sharedAnalyses).slice(0, 12000)}\n\n我的问题：${step.questions[0]}`)}>向助教追问 ↗</button><button className="precision-button" disabled={!entry} onClick={() => entry && void copyText(entryMarkdown(step.label, entry, sharedAnalyses)).then(setNotice)}>复制本节</button></div>
+      <div className="precision-actions"><button className="precision-button primary" disabled={blocked} onClick={() => { if (active === 'reproduction' && repositoryURL.trim()) retryReproduction(); else { setNotice(''); void reading.generate(active, visualReferences); } }}>{reading.generating[active] ? '本节生成中…' : active === 'reproduction' && repositoryURL.trim() ? '使用链接生成' : entry?.readerStatus === 'partial' ? '继续本节' : entry ? '重新生成' : '生成本节'}</button><button className="precision-button" disabled={!entry} onClick={() => entry && onAsk(`请针对「${step.label}」精读笔记继续分析。\n\n${entryMarkdown(step.label, entry!, sharedAnalyses).slice(0, 12000)}\n\n我的问题：${step.questions[0]}`)}>向助教追问 ↗</button><button className="precision-button" disabled={!entry} onClick={() => entry && void copyText(entryMarkdown(step.label, entry, sharedAnalyses)).then(setNotice)}>复制本节</button></div>
+      {active === 'reproduction' && <div className="precision-repository-input"><label htmlFor="precision-repository-url"><span>代码仓库链接 <small>自动识别失败时粘贴 GitHub HTTPS 地址</small></span></label><input id="precision-repository-url" type="url" value={repositoryURL} onChange={(event) => { setRepositoryURL(event.target.value); setRepositoryRetryPending(true); }} placeholder="https://github.com/owner/repository" aria-label="代码仓库链接" /><button className="precision-button" disabled={blocked || !repositoryURL.trim()} onClick={retryReproduction}>用此链接重试</button></div>}
       {(waitingPDF || visualProgress) && <p className="precision-muted" role="status">{waitingPDF ? '正在准备 PDF…' : '正在识别图表 · Page ' + visualProgress!.page + ' / ' + visualProgress!.total}</p>}
       {visualError && <div className="precision-alert" role="alert">{visualError}</div>}
       {(waitingPDF || visualProgress || visualError || textOnly) && <label className="precision-text-mode"><input type="checkbox" checked={textOnly} disabled={anyGenerating || batch} onChange={(e) => setTextOnly(e.target.checked)} /><span>仅依据正文先生成</span></label>}
@@ -137,7 +141,7 @@ export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pd
       {notice && <p className="precision-notice" role="status">{notice}</p>}
       {reading.jobErrors[active] && <div className="precision-alert" role="alert">{reading.jobErrors[active]}</div>}
       {reading.notices[active] && !reading.notices[active]!.saved && <div className="precision-alert" role="alert">本节未完成，已保留原记录。{reading.notices[active]!.validationError && <details><summary>错误详情</summary>{reading.notices[active]!.validationError}</details>}</div>}
-      {reading.notices[active]?.skipped && <p className="precision-notice" role="status">{reading.notices[active]!.message || '摘要末句没有代码仓库链接，已跳过代码复现。'}</p>}
+      {reading.notices[active]?.skipped && !(active === 'reproduction' && repositoryURL.trim() && repositoryRetryPending) && <p className="precision-notice" role="status">{reading.notices[active]!.message || '摘要末句没有代码仓库链接，已跳过代码复现。'}</p>}
       {entry && <p className="precision-provenance">{entry.updatedAt ? new Date(entry.updatedAt).toLocaleString() : '旧版记录'} · {entry.model || entry.provider || '模型未记录'} · {entry.reasoningEffort || '默认推理强度'}</p>}
       {reading.loading && <p className="precision-muted">读取已保存的精读记录…</p>}
       {!entry && !reading.loading && !reading.notices[active]?.skipped && <section className="precision-empty"><span>0{index + 1}</span><h3>尚未生成</h3><ul>{step.outline.map((item) => <li key={item}>{item}</li>)}</ul>{waitingPDF || visualProgress ? <small>正在准备 PDF 与图表目录…</small> : null}</section>}

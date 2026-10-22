@@ -61,6 +61,7 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 - **四段流水线**：OCR → 翻译 → 渲染 → 论文记忆依次执行，每一步显示「处理中 / 等待中」状态。
 - **按页计数**：翻译进度与渲染进度以页为单位实时累计，有效结果日志记录每步的开始与完成时间。
 - **多视角查看**：概览、进度、文件三个页签切换，处理可随时取消或重试。
+- **重新翻译不必重新导入**：书库里的「重新翻译」优先复用已有的识别结果，只重跑翻译；如果这篇论文没有可复用的识别结果（旧版本导入、识别产物已被清理），它会**自己重新识别再翻译**，并把更新后的逐页文本与版式写回书库。前提（模型与 PaddleOCR 令牌）缺失时会立刻说清缺什么，而不是让人重新导入——那会丢掉批注、精读笔记与阅读进度。
 
 #### 04 · 双语阅读：原文译文并排，逐页对照着读
 
@@ -124,6 +125,32 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 - **CLI 直连**：Codex Desktop / CLI、Claude Code CLI、Kimi Code CLI 等可直接连接；Codex Desktop 用户登录后即可使用，无需单独管理密钥。
 - **按流程配置**：模型、推理强度等设置保存在本机，翻译、问答与精读可各用各的组合。
 
+#### 10 · 查找、检索与对照：把散在各篇里的东西找出来
+
+论文多了以后，真正的成本是「我记得在哪见过」。这一组能力都围绕「找到并回到原文」：
+
+- **文档内查找**：阅读器按 Ctrl/Cmd+F 打开查找条，命中计数、上下条跳转，命中处直接在页面上标出（仅译文模式查译文，其余查原文）。
+- **全库全文检索**：书库搜索框可切到「全文」，在已索引的逐页正文里检索，结果显示论文、页码与上下文片段，点一下跳到那一页并自动定位到命中处。结果头部会说明索引覆盖（未翻译且没在阅读器里打开过的论文、整页扫描的论文不在索引内）。
+- **跨文献对照**：从「对照」工作区选 2–4 篇，把「精读 · 实验配置」的七个维度（研究对象与数据、研究设计与条件、实施流程、分析方法、对照或基线、评价标准、结果）并排摊开，每格都带页码可回原文；还没抽取的论文可以就地生成。表里区分「未抽取」与「论文未提及」两种状态。
+
+#### 11 · 引用与统计：把阅读沉淀成可用的材料
+
+- **书目导出**：阅读器工具栏「引用」或书库「导出书目」，导出 BibTeX / RIS（单篇、按书架或整库）。下载前会先告诉你条目类型是怎么判定的：按会场名识别会议/期刊，判断不出来时用 `@misc` 并原样带出会场名，不替作者猜；作者姓名按题录原样输出。
+- **引用关系**：阅读器工具栏「引用网络」看这篇论文与本库其它论文的引用关系（哪几篇是它的参考文献、本库哪几篇引用了它），数据来自 OpenAlex，结果缓存 7 天。只有题录里有 DOI 的论文可查，这一点会在界面上写明。
+- **书库统计**：阅读日历页底部给出在库/在读/已精读、最近 7 天与 30 天在读篇数、批注与精读产出、各处理阶段（OCR / 翻译 / 渲染）的耗时中位数与每页耗时，以及年份、书架与主题分布。不报「读了多久」——页面停留时长没有采集，不编。
+
+#### 12 · 知识图谱：跨文献的概念连成一团可旋转的点云
+
+![知识图谱：双环同心点云，内环是跨文献共享的实体，外圈是单篇实体，最外层是论文](docs/images/promo/11-knowledge-cloud.png)
+
+把每篇论文抽出的实体与关系合并成一张跨文献图谱，用**双环同心点云**呈现：
+
+- **越靠圆心＝被越多篇论文共享**：核心环是被多篇共享的实体（真正沉淀下来的共识），外圈是只出现在一篇里的实体，最外层是论文本身——每篇论文连到它包含的实体。
+- **每个点都能点开**：拖拽旋转、滚轮缩放、右键平移，可开自转；悬停一个点会点亮它的全部连线并放大邻居；点标签或点，右侧面板列出关系与**逐字、带页码的原文依据**，点依据回到阅读器对应页。搜索与类型筛选会就地重新收敛。
+- **如实披露**：状态行给出跨文献实体数与关系边数；关系来自 AI 抽取、按论文逐篇进行，没抽取过的论文不在图里；点或边超过绘制上限时会说明只画了前多少条。
+- **对照表视图保留**：图形负责「看形状」，矩阵负责「读交集」（共有 / 仅各篇逐条列清楚），两种问题分别回答。
+- **实现说明**：点云用 three.js（WebGL）渲染，按主题切换混合模式（深色底走加色发光，浅色与纸张底走常规混合），并且随图谱工作区懒加载——不打开图谱就不会下载这部分代码。
+
 ### 下载与开始使用
 
 从[最新 Release](https://github.com/Leechion/ReadX/releases/latest)下载 Windows 或 macOS 安装包。启动后，在 **AI 助手设置**中选择模型服务并配置连接；Codex Desktop 用户可先登录 Codex，再从 ReadX 中连接。
@@ -153,13 +180,16 @@ ReadX is a desktop workspace for research reading. Import papers, let recognitio
 
 1. **Library (01)** — One library per project with shelves, favorites, reading status, reading plans, card-style paper list, and a daily paper recommendation panel.
 2. **Import (02)** — Drag in PDF / EPUB or fetch by arXiv ID, DOI, or URL; a three-step dialog shows limits and what happens next.
-3. **Processing (03)** — A visible OCR → translation → rendering → paper-memory pipeline with per-step status, page-level progress, and a result log.
+3. **Processing (03)** — A visible OCR → translation → rendering → paper-memory pipeline with per-step status, page-level progress, and a result log. "Re-translate" in the library reuses the stored OCR result when there is one and **re-runs OCR itself when there is not**, writing the refreshed page text and layout back to the library — it never sends you off to re-import, which would cost your annotations, notes, and reading progress.
 4. **Bilingual reading (04)** — Original and translated pages side by side with synced paging, section navigation, preserved two-column layout, and annotated-PDF export.
 5. **Highlights & notes (05)** — Highlight passages and equations, translate a whole paragraph, or send the selection to the assistant with context; annotations persist locally.
 6. **AI assistant (06)** — Paper-context Q&A whose answers cite pages, figures, and sections so every claim can be checked against the source.
 7. **Deep-reading quintet (07)** — Five independently generated and saved sections: motivation, methods and equations, experimental setup, results analysis, and code reproduction.
 8. **Presentation studio (08)** — Pick a paper from the library and generate an editable academic slide deck with live preview, thumbnails, and built-in or custom templates.
 9. **AI settings (09)** — Presets for major providers plus custom endpoints and CLI connections (Codex, Claude Code, Kimi Code), with per-flow model and reasoning-effort choices.
+10. **Find, search & compare (10)** — In-document find with hit counts and next/previous (Ctrl/Cmd+F); library-wide full-text search over indexed page text with snippets, coverage disclosure, and jump-to-page; a cross-paper comparison table for 2–4 papers built from their experimental-setup extractions, with per-cell page links and an explicit "not extracted" vs "not reported" distinction.
+11. **Citations & stats (11)** — BibTeX / RIS export (single paper, shelf, or whole library) that discloses how each entry type was inferred; an OpenAlex-backed citation network showing which library papers this one cites and which cite it; and library statistics covering reading activity, annotations, per-stage processing durations, and year/shelf/topic distribution. Stay time is deliberately not reported — it is not collected.
+12. **Knowledge graph (12)** — cross-paper entities and relations rendered as a dual-ring point cloud: shared entities sit nearest the center, single-paper entities around them, papers on the outer shell, all interlinked. Drag to rotate, scroll to zoom, hover a node to light up every link, click for relations with verbatim, page-anchored evidence that jumps back to the source page. A matrix view stays available for reading exact overlaps. Rendered with three.js (WebGL), lazy-loaded with the graph workspace.
 
 ### Download
 
@@ -180,6 +210,10 @@ npm run dev
 ```
 
 For macOS development and packaging, see [`macos/README.md`](macos/README.md).
+
+### License
+
+ReadX is released under the [MIT License](LICENSE). Third-party components retain their respective licenses.
 
 ---
 

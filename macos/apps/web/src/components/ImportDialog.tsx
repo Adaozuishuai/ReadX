@@ -38,6 +38,7 @@ export function ImportDialog({
   const [jobFile, setJobFile] = useState<File | null>(null);
   // 来源跟随具体文件对象，避免同名文件互相覆盖题录来源。
   const sources = useRef(new WeakMap<File, string>());
+  const metadataHints = useRef(new WeakMap<File, ImportCandidate>());
   const activity = useImportProgress();
   useEffect(() => {
     dialog.current?.showModal();
@@ -73,7 +74,11 @@ export function ImportDialog({
       const fileIndex = 1;
       const files = 1;
       activity.update({ stage: 'upload', message: '正在准备上传，由 LeePDF 处理论文', name: file.name, file: fileIndex, files, completed: 0, total: 0 });
-      const hint: ImportMetadataHint = { title: '', author: '', doi: '', arxiv: '', firstPage: '' };
+      const known = metadataHints.current.get(file);
+      const hint: ImportMetadataHint = {
+        title: known?.title ?? '', author: known?.authors[0] ?? '', authors: known?.authors,
+        doi: known?.doi ?? '', arxiv: known?.arxiv ?? '', venue: known?.venue, year: known?.year, firstPage: '',
+      };
       const source = sources.current.get(file);
       if (source) {
         hint.source = source;
@@ -108,7 +113,7 @@ export function ImportDialog({
   const importLink = async (
     url: string,
     title?: string,
-    _metadata?: ImportCandidate,
+    metadata?: ImportCandidate,
   ) => {
     const request = startRequest();
     if (!request) return;
@@ -119,6 +124,7 @@ export function ImportDialog({
       request.signal.throwIfAborted();
       // 下载件同样进队列：投进筐才开始导入，规则与手动选文件一致。
       sources.current.set(downloaded.file, downloaded.source);
+      if (metadata) metadataHints.current.set(downloaded.file, metadata);
       setQueue((items) => [...items, downloaded.file]);
       activity.update({ stage: 'complete', message: `已下载《${downloaded.file.name}》，把它投进篮筐开始导入`, completed: 1, total: 1 });
     } catch (cause) {

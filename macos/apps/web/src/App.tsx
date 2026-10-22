@@ -16,6 +16,7 @@ const RetranslateDialog = lazy(() => import('./components/RetranslateDialog').th
 const DocumentJobDialog = lazy(() => import('./components/DocumentJobDialog').then((module) => ({ default: module.DocumentJobDialog })));
 const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then((module) => ({ default: module.AISettingsDialog })));
 const PresentationWorkspace = lazy(() => import('./components/PresentationWorkspace').then((module) => ({ default: module.PresentationWorkspace })));
+const CompareWorkspace = lazy(() => import('./components/CompareWorkspace').then((module) => ({ default: module.CompareWorkspace })));
 
 /**
  * 视觉版式 v2（对齐 cynicalight/reader 的布局结构，token 映射到本仓库暖色系）：
@@ -37,7 +38,7 @@ export default function App() {
     reload,
   } = useWorkspace();
   const [screen, setScreen] = useState<
-    'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation'
+    'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare'
   >('library');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
@@ -75,6 +76,12 @@ export default function App() {
   const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(
     null,
   );
+  // 从全文检索点进来时带着关键词：阅读器打开查找栏并定位到那一页的命中。
+  const [pendingFind, setPendingFind] = useState<{
+    query: string;
+    page: number;
+    nonce: number;
+  } | null>(null);
   const lastScreen = useRef<string>('library');
 
   const pages =
@@ -125,9 +132,37 @@ export default function App() {
     setPage(null);
     setCite(null);
     setFocusedAnnotationId(null);
+    setPendingFind(null);
     setSelectedId(id);
     setScreen('reader');
   }, []);
+
+  /** 按论文键打开（引用关系里跳转用）：键与 id 不总是相同，所以按 key 查回 id。 */
+  const openDocumentByKey = useCallback(
+    (key: string) => {
+      const doc = navigationDocuments.find((item) => item.key === key);
+      if (doc) openDocument(doc.id);
+    },
+    [navigationDocuments, openDocument],
+  );
+
+  /** 从全文检索结果点进某篇的某一页：页码直接给定，并把关键词交给阅读器的查找栏。 */
+  const openSearchHit = useCallback(
+    (key: string, target: number, query: string) => {
+      const doc = navigationDocuments.find((item) => item.key === key);
+      if (doc) setSelectedId(doc.id);
+      setCite(null);
+      setFocusedAnnotationId(null);
+      setPage(target);
+      setPendingFind((current) => ({
+        query,
+        page: target,
+        nonce: (current?.nonce ?? 0) + 1,
+      }));
+      setScreen('reader');
+    },
+    [navigationDocuments],
+  );
 
   const openReproduction = useCallback(
     (key: string) => {
@@ -193,15 +228,25 @@ export default function App() {
                 ? 'graph'
                 : view === 'calendar'
                   ? 'calendar'
-                  : 'library',
+                  : view === 'compare'
+                    ? 'compare'
+                    : 'library',
             );
           }}
           onOpenReproduction={openReproduction}
           onTrashEmptied={() => { setSelectedId(null); reload(); }}
           onReload={reload}
+          onOpenAtPage={openSearchHit}
         />
       ) : screen === 'presentation' ? (
         <PresentationWorkspace documents={navigationDocuments.filter((doc) => !libraryMeta.items[doc.key]?.deleted)} onBack={() => setScreen('library')} />
+      ) : screen === 'compare' ? (
+        <CompareWorkspace
+          documents={navigationDocuments.filter((doc) => !libraryMeta.items[doc.key]?.deleted)}
+          onBack={() => setScreen('library')}
+          onOpenAtPage={openSearchHit}
+          onOpenDocument={openDocument}
+        />
       ) : screen === 'reader' ? (
         <ReaderScreen
           key={selected?.id ?? 'empty'}
@@ -215,6 +260,8 @@ export default function App() {
           annotations={annotations}
           onFocusAnnotation={focusAnnotation}
           focusedAnnotationId={focusedAnnotationId}
+          pendingFind={pendingFind}
+          onOpenDocument={openDocumentByKey}
         />
       ) : screen === 'graph' ? (
         <KnowledgeGraphSection
@@ -317,8 +364,8 @@ function HeaderBar({
   onThemeChange,
 }: {
   phase: ReturnType<typeof useWorkspace>['phase'];
-  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation';
-  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation') => void;
+  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare';
+  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare') => void;
   onPresentation: () => void;
   onReload: () => void;
   onImport: () => void;
@@ -355,6 +402,15 @@ function HeaderBar({
         className={screen === 'calendar' ? 'active' : ''}
       >
         <WorkspaceIcon name="calendar" size={16} /><span>日历</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onScreen('compare')}
+        aria-current={screen === 'compare' ? 'page' : undefined}
+        className={screen === 'compare' ? 'active' : ''}
+        title="跨文献对照：选 2–4 篇并排看实验配置"
+      >
+        <WorkspaceIcon name="panel" size={16} /><span>对照</span>
       </button>
       <button type="button" onClick={onPresentation} aria-current={screen === 'presentation' ? 'page' : undefined} className={screen === 'presentation' ? 'active' : ''} title="从书库选择论文生成演示稿">
         <WorkspaceIcon name="file" size={16} /><span>PPT</span>

@@ -218,6 +218,79 @@ func (r *Renderer) RenderPage(ctx context.Context, sourcePDF []byte, pageNumber 
 	return r.render(ctx, sourcePDF, []Page{page}, outputPath, pageNumber, false)
 }
 
+// AssemblePages joins already-rendered single-page PDFs in source order. Empty
+// entries keep the corresponding original PDF page; a complete set gives the
+// import worker a final document without rendering finished pages a second time.
+func (r *Renderer) AssemblePages(ctx context.Context, sourcePath string, pagePaths []string, outputPath string) error {
+	_, _, script, err := r.resolve()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(sourcePath) == "" || len(pagePaths) == 0 {
+		return errors.New("组装译文 PDF 缺少原文或页面")
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return fmt.Errorf("创建译文目录失败: %w", err)
+	}
+	workDir, err := os.MkdirTemp(filepath.Dir(outputPath), ".assemble-*")
+	if err != nil {
+		return fmt.Errorf("创建 PDF 组装临时目录失败: %w", err)
+	}
+	defer os.RemoveAll(workDir)
+	manifestPath := filepath.Join(workDir, "pages.json")
+	manifest, err := json.Marshal(struct {
+		Pages []string `json:"pages"`
+	}{Pages: pagePaths})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(outputPath), ".translated-assemble-*.pdf")
+	if err != nil {
+		return err
+	}
+	tempPath := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		os.Remove(tempPath)
+		return err
+	}
+	_ = os.Remove(tempPath)
+	node, err := r.nodeBinary()
+	if err != nil {
+		return err
+	}
+	timeout := r.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	command := exec.CommandContext(runCtx, node, script,
+		"--source", sourcePath,
+		"--output", tempPath,
+		"--pagesManifest", manifestPath,
+		"--assemble", "1",
+	)
+	env := os.Environ()
+	if strings.TrimSpace(os.Getenv("CBCT_ELECTRON_AS_NODE")) != "" {
+		env = append(env, "ELECTRON_RUN_AS_NODE=1")
+	}
+	command.Env = env
+	output, runErr := command.CombinedOutput()
+	if runErr != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("PDF 组装超时（%s）", timeout)
+		}
+		return fmt.Errorf("PDF 组装失败: %s", engineError(output, runErr))
+	}
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		return fmt.Errorf("保存组装后的译文 PDF 失败: %w", err)
+	}
+	return nil
+}
+
 // ExtractPage 原样抽出一页（不跑排版引擎）：整页没有可译正文时，阅读器仍拿到
 // 一个合法的单页 PDF，用来显示「保留原页」。
 func (r *Renderer) ExtractPage(ctx context.Context, sourcePDF []byte, pageNumber int, outputPath string) (Report, error) {

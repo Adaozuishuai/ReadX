@@ -230,11 +230,16 @@ func (s *Server) generatePaperReading(ctx context.Context, key string, body gene
 		return
 	}
 	if body.Kind == "reproduction" {
-		if _, repositoryURL := abstractRepositoryURL(source); repositoryURL == "" {
-			message := "摘要末句没有代码仓库链接，已跳过代码复现。"
-			progress(100, message)
-			emit(map[string]any{"result": map[string]any{"saved": true, "kind": body.Kind, "skipped": true, "message": message, "pruned": false, "demoted": []string{}, "validationError": nil, "attempts": 0}, "done": true})
-			return
+		if strings.TrimSpace(body.RepositoryURL) == "" {
+			source = s.sourceWithPDFAbstractLink(ctx, key, source)
+		}
+		if strings.TrimSpace(body.RepositoryURL) == "" {
+			if _, repositoryURL := abstractRepositoryURL(source); repositoryURL == "" {
+				message := "摘要末句没有代码仓库链接，已跳过代码复现。"
+				progress(100, message)
+				emit(map[string]any{"result": map[string]any{"saved": true, "kind": body.Kind, "skipped": true, "message": message, "pruned": false, "demoted": []string{}, "validationError": nil, "attempts": 0}, "done": true})
+				return
+			}
 		}
 	}
 	issues := []string{}
@@ -257,7 +262,7 @@ func (s *Server) generatePaperReading(ctx context.Context, key string, body gene
 	repository := ""
 	if body.Kind == "reproduction" {
 		progress(48, "正在定位摘要末句的代码仓库并读取源码")
-		repository = s.reproductionRepositoryContext(ctx, source)
+		repository = s.reproductionRepositoryContext(ctx, source, body.RepositoryURL)
 	}
 	visuals, _, err := s.analyzePaperVisuals(ctx, key, source, material, cfg, client, body.Visuals, images, progress)
 	if err != nil {

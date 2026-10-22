@@ -21,7 +21,7 @@ func lookupPapers(ctx context.Context, q string) ([]paperCandidate, error) {
 			if raw, _, fetchErr := fetchPublic(crossrefCtx, endpoint, 4<<20); fetchErr == nil {
 				if supplemental, parseErr := crossrefCandidates(raw, true); parseErr == nil && len(supplemental) > 0 {
 					for i := range items {
-						if items[i].Venue == "" {
+						if supplemental[0].Venue != "" && (items[i].Venue == "" || strings.EqualFold(strings.TrimSpace(items[i].Venue), "Lecture notes in computer science")) {
 							items[i].Venue = supplemental[0].Venue
 						}
 						if items[i].Year == 0 {

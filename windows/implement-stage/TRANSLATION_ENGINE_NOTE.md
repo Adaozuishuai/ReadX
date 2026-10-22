@@ -1,31 +1,31 @@
-# 翻译引擎（RetainPDF 风格）实现说明
+# Lee 翻译引擎实现说明
 
 > 当前双端入口：Windows 与 macOS 的受管核心源码已统一运行下述 provider-case 主链。旧段落中关于 macOS 独立 Go 翻译入口、未接入 OCR 或尚未提供渲染目录的描述属于历史记录，不能作为当前架构依据。当前目录和平台边界见 `../../docs/architecture.md` 与 `../../macos/README.md`。
 
-对应分支事项：把 [RetainPDF](https://github.com/wxyhgk/retain-pdf) 的翻译能力内置到 ReadX。
+上游来源：[RetainPDF](https://github.com/wxyhgk/retain-pdf)。ReadX 将其翻译能力内置并集成为 Lee 引擎。
 
-Windows 版由 ReadX 提供上传入口和文库，实际 PDF 处理通过随仓库内置的 RetainPDF Python `provider-case` 全流程执行：PaddleOCR、`document.v1` 归一化、Retain 翻译/修复、Retain RPR 排版。无需启动 RetainPDF 桌面端或其 API/任务服务；OCR 与模型凭据由 ReadX 后端从本机设置注入子进程环境，Codex CLI 通过仅监听回环地址的临时 OpenAI 兼容桥接供 Retain 调用。Retain 输出的标准化版面、逐段译文和译文 PDF 再保存到 ReadX 文库。
+Windows 版由 ReadX 提供上传入口和文库，实际 PDF 处理通过随仓库内置的 Lee Python `provider-case` 全流程执行：PaddleOCR、`document.v1` 归一化、Lee 翻译/修复、Lee RPR 排版。无需启动第三方桌面端或其 API/任务服务；OCR 与模型凭据由 ReadX 后端从本机设置注入子进程环境，Codex CLI 通过仅监听回环地址的临时 OpenAI 兼容桥接供 Lee 调用。Lee 输出的标准化版面、逐段译文和译文 PDF 再保存到 ReadX 文库。
 
 ## 内置了什么、重写了什么
 
-RetainPDF 由几块组成：Rust API + Python 翻译流水线（约 4 万行，依赖它自己的
+上游 RetainPDF 由几块组成：Rust API + Python 翻译流水线（约 4 万行，依赖它自己的
 `document.v1.json` 协议）、PaddleOCR/MinerU 远程 OCR、以及一个独立的 Node.js 排版
 引擎（retain-pdf-rendering）。
 
 - **排版渲染**原样内置：引擎是 Node，ReadX 的 Electron 自带 Node，直接把
   `resources/rendering-engine` 作为子进程运行。
-- **OCR、归一化、翻译、修复和导入排版**由随 ReadX vendor 的 RetainPDF `provider-case`
+- **OCR、归一化、翻译、修复和导入排版**由随 ReadX vendor 的 Lee `provider-case`
   pipeline 实际执行；ReadX 只把 `document.v1` 与逐页 translation payload 投影到自己的
-  文库数据结构。模型 API 配置直接传给 Retain；Codex CLI 通过随机令牌保护的回环桥接调用。
-- **阅读器显示**直接加载 Retain 生成的整本译文 PDF（`/translated-pdf`），不再按页重排；
-  原文的「段落识别」使用 Retain `document.v1` 的块与阅读顺序，不再用 PDF.js 重新切段。
-- **题录识别**仍由 ReadX 负责：Retain 不返回题名/作者/期刊，导入完成后用 OCR 首页文本
+  文库数据结构。模型 API 配置直接传给 Lee；Codex CLI 通过随机令牌保护的回环桥接调用。
+- **阅读器显示**直接加载 Lee 生成的整本译文 PDF（`/translated-pdf`），不再按页重排；
+  原文的「段落识别」使用 Lee `document.v1` 的块与阅读顺序，不再用 PDF.js 重新切段。
+- **题录识别**仍由 ReadX 负责：Lee 不返回题名/作者/期刊，导入完成后用 OCR 首页文本
   调用一次模型识别题录（失败只记日志，不阻断已完成的翻译）。
 
 ## 翻译与排版的边界
 
-Windows PDF 导入执行 RetainPDF 的 Python provider pipeline。PaddleOCR 仍是用户设置的
-远程 OCR 服务；排版通过 Retain 的 RPR/Retain PDF 引擎完成。ReadX 桌面应用不启动 Retain
+Windows PDF 导入执行 Lee Python provider pipeline。PaddleOCR 仍是用户设置的
+远程 OCR 服务；排版通过 Lee 的 RPR 引擎完成。ReadX 桌面应用不启动第三方
 桌面端、Rust API 或独立任务服务。
 
 | 能力 | ReadX 文件 | 对应 RetainPDF |
@@ -64,12 +64,12 @@ Windows PDF 导入执行 RetainPDF 的 Python provider pipeline。PaddleOCR 仍�
 **必须同时配置 PaddleOCR 与 AI 助教**；缺任何一个，PDF 导入直接失败，不再有文本层
 分段或旧翻译接口作为回退。
 
-1. ReadX 上传/链接导入入口把 PDF 写入 Retain job workspace，并生成 `provider.stage.v1` spec；
-2. Retain Paddle provider 产出原始 OCR 与 `document.v1`；
-3. Retain 翻译链按其原生策略执行筛选、续接、批翻译、缓存、质检与修复；
-4. Retain RPR 引擎生成整本译文 PDF；
-5. ReadX 将 Retain 标准化段落与对应译文写入自己的页面/翻译表及版面状态，然后把 Retain PDF 保存为文库译文文件；
-6. Codex CLI 模式下，Retain 调用随机端口、仅监听 `127.0.0.1` 的短生命周期兼容桥；API 凭据只通过子进程环境传递，不写入 stage spec。
+1. ReadX 上传/链接导入入口把 PDF 写入 Lee job workspace，并生成 `provider.stage.v1` spec；
+2. Lee Paddle provider 产出原始 OCR 与 `document.v1`；
+3. Lee 翻译链按其原生策略执行筛选、续接、批翻译、缓存、质检与修复；
+4. Lee RPR 引擎生成整本译文 PDF；
+5. ReadX 将 Lee 标准化段落与对应译文写入自己的页面/翻译表及版面状态，然后把 Lee PDF 保存为文库译文文件；
+6. Codex CLI 模式下，Lee 调用随机端口、仅监听 `127.0.0.1` 的短生命周期兼容桥；API 凭据只通过子进程环境传递，不写入 stage spec。
 
 ## 阅读器里的「OCR 排版译文」
 
@@ -94,14 +94,14 @@ Windows PDF 导入执行 RetainPDF 的 Python provider pipeline。PaddleOCR 仍�
 - `GET /v1/documents/{key}/job`：最近一次任务（进程重启后把未收尾的任务标为 interrupted）；
 - `POST /v1/documents/{key}/job/cancel`：取消导入或后台渲染；
 - 导入提交后，渲染在后台逐页进行并写回进度，阅读器打开即可看成品；
-- 前端 `apps/web/src/components/DocumentJobDialog.tsx` 对应 RetainPDF 的进度页：
+- 前端 `apps/web/src/components/DocumentJobDialog.tsx` 对应 Lee 的进度页：
   左侧封面/题录/下载，右侧概览、进度、文件三个标签与逐页覆盖。
 
 ## 译前领域与文档准备
 
 - 导入翻译会从前两页 OCR 文本识别领域上下文，按模型、服务地址、推理强度及预览文本缓存；识别失败时保留通用翻译提示，不阻断导入。
-- AI 设置提供 RetainPDF 的 `off`、`artifacts_only`、`terms`、`terms+style`、`editorial` 五档。`off` 为默认值；术语建议不写入用户术语表，`terms+style` 会注入冻结的术语建议和风格指南。
-- 术语预扫按 RetainPDF 的 600 token / 12 段规则切批，含逐批 checkpoint、最多 8 路并发、严格 JSON、确定性过滤、按批投票及冲突译法记录；风格指南使用全文样本、领域上下文、通用规则及预扫术语生成，并独立缓存。
+- AI 设置提供 Lee 的 `off`、`artifacts_only`、`terms`、`terms+style`、`editorial` 五档。`off` 为默认值；术语建议不写入用户术语表，`terms+style` 会注入冻结的术语建议和风格指南。
+- 术语预扫按 Lee 的 600 token / 12 段规则切批，含逐批 checkpoint、最多 8 路并发、严格 JSON、确定性过滤、按批投票及冲突译法记录；风格指南使用全文样本、领域上下文、通用规则及预扫术语生成，并独立缓存。
 - `editorial` 已接入每批最多 40 项、最多 8 路并发的术语审定：专业术语锁定、出版物保留原文、人名/机构放开、普通词剔除；失败或漏审时不冻结术语库，重试仍复用成功的预扫批次。首现括注要求随首个匹配段传入翻译提示。RetainPDF 的完整术语审定报告、逐条人工裁决界面及首现括注质检尚未接入。
 - ReadX 目前也没有可配置的领域规则档与自定义规则文本。其余 OCR 结构和专用修复差异见「已知边界」。
 

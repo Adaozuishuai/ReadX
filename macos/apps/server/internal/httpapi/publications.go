@@ -39,6 +39,9 @@ type importResult struct {
 type publicationMetadataHint struct {
 	Title     string                `json:"title"`
 	Author    string                `json:"author"`
+	Authors   []string              `json:"authors"`
+	Venue     string                `json:"venue"`
+	Year      int                   `json:"year"`
 	DOI       string                `json:"doi"`
 	Arxiv     string                `json:"arxiv"`
 	FirstPage string                `json:"firstPage"`
@@ -61,6 +64,7 @@ type recognizedPaperMetadata struct {
 	Venue             string
 	Year              int
 	LeeTranslatedPath string
+	MetadataWarning   string
 }
 
 func (s *Server) importPublication(ctx context.Context, name, source string, data []byte, metadata ...recognizedPaperMetadata) (importResult, error) {
@@ -170,6 +174,9 @@ func (s *Server) importPublication(ctx context.Context, name, source string, dat
 	if recognized.Untranslated > 0 {
 		result.Warning = fmt.Sprintf("%d 段文本暂未获得有效译文；论文原文已入库，可稍后重试翻译", recognized.Untranslated)
 	}
+	if recognized.MetadataWarning != "" {
+		result.Warning = strings.Trim(strings.Join([]string{result.Warning, recognized.MetadataWarning}, "；"), "；")
+	}
 	return result, err
 }
 
@@ -245,6 +252,12 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 							result.Error = restoreErr.Error()
 							return
 						}
+						update("metadata", "论文已在库中，正在联网补齐缺失的出版信息", 0, 1)
+						doc, result.Warning, restoreErr = s.completeExistingPDFMetadata(ctx, file.Filename, doc)
+						if restoreErr != nil {
+							result.Error = restoreErr.Error()
+							return
+						}
 						result.Document = &doc
 						result.Existing = true
 						update("saving", "已恢复书库中的论文，复用原有处理结果", 1, 1)
@@ -260,8 +273,8 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 					report(importProgress{Stage: "ocr", Message: "任务已创建，等待 OCR", Name: file.Filename, File: index + 1, Files: len(files), JobKey: jobKey})
 					s.jobStage(jobKey, "ocr", "running", "正在执行 OCR 与段落整理", 0, len(hint.Pages))
 					update("ocr", "正在识别论文并整理段落", 0, 0)
-					metadata := recognizedPaperMetadata{Title: strings.TrimSpace(hint.Title), DOI: strings.TrimSpace(hint.DOI)}
-					if author := strings.TrimSpace(hint.Author); author != "" {
+					metadata := recognizedPaperMetadata{Title: strings.TrimSpace(hint.Title), DOI: strings.TrimSpace(hint.DOI), Authors: hint.Authors, Venue: strings.TrimSpace(hint.Venue), Year: hint.Year}
+					if author := strings.TrimSpace(hint.Author); len(metadata.Authors) == 0 && author != "" {
 						metadata.Authors = []string{author}
 					}
 					sizes, _ := importPageSizes(hint.Pages)
@@ -367,6 +380,14 @@ func (s *Server) runLocalPDFImport(
 			return importResult{Name: name}, restoreErr
 		}
 		result := importResult{Name: name, Document: &doc, Existing: true}
+		if progress != nil {
+			progress("metadata", "论文已在库中，正在联网补齐缺失的出版信息", 0, 1)
+		}
+		doc, result.Warning, restoreErr = s.completeExistingPDFMetadata(ctx, name, doc)
+		if restoreErr != nil {
+			return result, restoreErr
+		}
+		result.Document = &doc
 		if progress != nil {
 			progress("saving", "已恢复书库中的论文，复用原有处理结果", 1, 1)
 		}
@@ -717,7 +738,10 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 		name += ".pdf"
 	}
 	s.beginImportJob(key, name, 0, jobCancel)
-	metadata := recognizedPaperMetadata{Title: document.Title}
+	metadata := recognizedPaperMetadata{Title: document.Title, TranslatedTitle: document.TranslatedTitle, DOI: document.DOI, Authors: document.Authors, Venue: document.Venue}
+	if document.Year != nil {
+		metadata.Year = *document.Year
+	}
 	emit(map[string]any{"progress": map[string]any{"stage": "ocr", "message": "Lee 正在识别并处理论文", "completed": 0, "total": 0}})
 	_, err = s.runLeePDFImport(jobCtx, key, name, data, &metadata)
 	if err != nil {
@@ -797,6 +821,10 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 		emit(map[string]any{"error": "提交论文 OCR 译文失败: " + err.Error()})
 		return
 	}
+	if err = s.saveRecognizedPDFMetadata(r.Context(), key, document.Title, metadata); err != nil {
+		emit(map[string]any{"error": "PDF 已关联，但保存补齐的出版信息失败: " + err.Error()})
+		return
+	}
 	s.linkImportJobDocument(key, key)
 	s.jobStage(key, "memory", "running", "论文原文已入库，正在后台准备论文记忆", 0, 1)
 	memoryCtx, cancelMemory := context.WithTimeout(context.Background(), 6*time.Hour)
@@ -816,7 +844,7 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 		emit(map[string]any{"error": "PDF 已关联，但刷新书目信息失败: " + err.Error()})
 		return
 	}
-	emit(map[string]any{"result": map[string]any{"document": updated, "name": document.Title, "existing": false}})
+	emit(map[string]any{"result": map[string]any{"document": updated, "name": document.Title, "existing": false, "warning": metadata.MetadataWarning}})
 }
 
 // removeUnreferencedLibraryFile 只清理由 ReadX library 目录管理、且不再被 documents 引用的普通文件。
@@ -951,26 +979,6 @@ func (s *Server) handlePublicationURL(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(422, "链接未返回可读 PDF/EPUB；可能需要登录或是网页: "+err.Error())
 		return
-	}
-	if !result.Existing && result.Document != nil && result.Document.Format == "pdf" {
-		authors, _ := json.Marshal(body.Authors)
-		if len(body.Authors) == 0 {
-			authors = []byte("[]")
-		}
-		var year any
-		if body.Year > 0 {
-			year = body.Year
-		}
-		if _, err = s.handle.ExecContext(r.Context(), `UPDATE documents SET doi=?,authors=?,venue=?,year=? WHERE id=?`, strings.TrimPrefix(body.DOI, "https://doi.org/"), string(authors), body.Venue, year, result.Document.ID); err != nil {
-			fail(500, "文件已导入，但元数据保存失败")
-			return
-		}
-		doc, err := s.loadDocument(r.Context(), result.Document.Key)
-		if err != nil {
-			fail(500, err.Error())
-			return
-		}
-		result.Document = &doc
 	}
 	if stream {
 		emit(map[string]any{"result": result})

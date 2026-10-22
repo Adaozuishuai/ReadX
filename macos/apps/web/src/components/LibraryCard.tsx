@@ -40,6 +40,7 @@ export function LibraryCard({
   onSetShelves: (categories: string[]) => Promise<unknown>;
 }) {
   const cover = coverIndex(doc.key);
+  const displayTitle = doc.title || doc.translatedTitle || '（无标题）';
   const assigned = meta?.categories ?? [];
   return (
     <article
@@ -58,7 +59,7 @@ export function LibraryCard({
           <span>{doc.year ?? ''}</span>
         </span>
         <span className="cover-text">
-          <span className="cover-title">{doc.title || '（无标题）'}</span>
+          <span className="cover-title">{displayTitle}</span>
           <span className="cover-author">
             {doc.authors[0] ?? '作者未知'}
             {doc.authors.length > 1 ? ' 等' : ''}
@@ -72,7 +73,7 @@ export function LibraryCard({
       </div>
 
       <div className="book-meta">
-        <span className="book-title" title={doc.translatedTitle || doc.title}>{doc.translatedTitle || doc.title || '（无标题）'}</span>
+        <span className="book-title" title={displayTitle}>{displayTitle}</span>
         <span className="flex items-center gap-1">
           {meta?.favorite ? <span className="text-accent">★</span> : null}
           <button
