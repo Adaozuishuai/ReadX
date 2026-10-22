@@ -25,7 +25,7 @@ function connect(browser) {
       if (!entry) continue;
       pending.delete(message.id);
       clearTimeout(entry.timer);
-      if (message.error) entry.reject(new Error(JSON.stringify(message.error)));
+      if (message.error) entry.reject(new Error(`${entry.method}: ${JSON.stringify(message.error)}`));
       else entry.resolve(message.result);
     }
   });
@@ -49,7 +49,7 @@ function connect(browser) {
       pending.delete(id);
       reject(new Error(`Browser request timed out: ${method}`));
     }, 15000);
-    pending.set(id, { resolve, reject, timer });
+    pending.set(id, { resolve, reject, timer, method });
     browser.stdio[3].write(JSON.stringify({ id, method, params, sessionId }) + '\0', error => {
       if (!error) return;
       pending.delete(id);
@@ -103,15 +103,24 @@ async function main() {
     browser.stderr.on('data', chunk => { browserErrors = (browserErrors + chunk).slice(-2000); });
     cdp = connect(browser);
     await cdp('Browser.getVersion');
-    const { targetId } = await cdp('Target.createTarget', { url: 'about:blank' });
+    const page = path.relative(root, path.join(workspace, 'index.html')).replace(/\\/g, '/');
+    const url = `http://127.0.0.1:${server.httpServer.address().port}/${page}`;
+    // Let the initial navigation commit before attaching; Windows Chromium can
+    // invalidate an attached about:blank target when it changes renderer.
+    const { targetId } = await cdp('Target.createTarget', { url });
+    const navigationDeadline = Date.now() + 15000;
+    while (true) {
+      const { targetInfo } = await cdp('Target.getTargetInfo', { targetId });
+      if (targetInfo.url === url) break;
+      if (Date.now() >= navigationDeadline) throw new Error(`Regression target did not navigate: ${targetInfo.url}`);
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
     const { sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true });
     const evaluate = async (expression, awaitPromise = false) => {
       const result = await cdp('Runtime.evaluate', { expression, awaitPromise, returnByValue: true }, sessionId);
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
       return result.result.value;
     };
-    const page = path.relative(root, path.join(workspace, 'index.html')).replace(/\\/g, '/');
-    await cdp('Page.navigate', { url: `http://127.0.0.1:${server.httpServer.address().port}/${page}` }, sessionId);
     const deadline = Date.now() + 15000;
     while (!(await evaluate(`typeof window.${runner} === "function"`))) {
       if (Date.now() >= deadline) throw new Error(`Regression page did not load: ${await evaluate('document.body.innerText')}`);
