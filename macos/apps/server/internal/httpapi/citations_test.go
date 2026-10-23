@@ -152,8 +152,8 @@ func TestCitationPreviewDisclosesInferredTypes(t *testing.T) {
 		t.Fatalf("preview 返回 %d：%s", response.StatusCode, body)
 	}
 	var payload struct {
-		Count    int `json:"count"`
-		Items    []struct {
+		Count int `json:"count"`
+		Items []struct {
 			Key   string `json:"key"`
 			Kind  string `json:"kind"`
 			Basis string `json:"basis"`

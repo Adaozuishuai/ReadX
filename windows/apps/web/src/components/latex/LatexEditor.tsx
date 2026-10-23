@@ -1,0 +1,252 @@
+import { useEffect, useRef, useState } from 'react';
+import type * as Monaco from 'monaco-editor';
+import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import type { OpenFile } from '../../hooks/useLatexProject';
+import type { LatexCompletionIndex } from '../../lib/latex/latexCompletion';
+import { applyIndexMarkers, registerLatexCompletion } from '../../lib/latex/latexCompletion';
+import { LATEX_LANGUAGE_ID, registerLatexLanguage } from '../../lib/latex/latexLanguage';
+
+// LaTeX 只用基础编辑能力，不需要 JSON/TS 的语言服务：一个 editor worker 就够。
+// 这也让 Monaco 的加载体积只有编辑器本体，不带上各语言服务。
+self.MonacoEnvironment = {
+  getWorker: () => new editorWorker(),
+};
+
+type Editor = Monaco.editor.IStandaloneCodeEditor;
+
+/**
+ * Monaco 编辑器。
+ *
+ * 与文本域的版本保持同一套外部约定（打开多文件、自动保存、冲突提示都不变），
+ * 换掉的是编辑内核：每个打开的文件一个 model，切 Tab 只切 model——
+ * 这样撤销栈、光标位置、折叠状态都按文件各留一份，切回来还在原处。
+ */
+export function LatexEditor({
+  files,
+  active,
+  index,
+  reveal,
+  onActivate,
+  onClose,
+  onChange,
+  onSave,
+  onReload,
+  onForceSave,
+  readOnly = false,
+}: {
+  files: OpenFile[];
+  active: OpenFile | null;
+  index: LatexCompletionIndex & { missingCitations?: string[]; missingLabels?: string[] };
+  /** 诊断跳转请求：nonce 变化时滚到对应行并高亮。 */
+  reveal?: { path: string; line: number; nonce: number } | null;
+  onActivate: (path: string) => void;
+  onClose: (path: string) => void;
+  onChange: (path: string, content: string) => void;
+  onSave: (path: string) => void;
+  onReload: (path: string) => void;
+  onForceSave: (path: string) => void;
+  readOnly?: boolean;
+}) {
+  const host = useRef<HTMLDivElement>(null);
+  const editor = useRef<Editor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
+  const models = useRef(new Map<string, Monaco.editor.ITextModel>());
+  // 回调放 ref：它们每次渲染都会变，但不该导致重建编辑器。
+  const handlers = useRef({ onChange, onSave });
+  handlers.current = { onChange, onSave };
+  // 提供者跟随编辑器生命周期，索引在当前项目内始终读取最新值。
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  const [ready, setReady] = useState(false);
+  // 用户可能正在输入：用 ref 记住「程序化写入 model」的时刻，避免回环。
+  const applying = useRef(false);
+
+  // 建编辑器（只建一次）
+  useEffect(() => {
+    let disposed = false;
+    let completion: Monaco.IDisposable | undefined;
+    let observer: MutationObserver | undefined;
+    void (async () => {
+      const monaco = await import('monaco-editor');
+      if (disposed || !host.current) return;
+      monacoRef.current = monaco;
+      registerLatexLanguage(monaco);
+      completion = registerLatexCompletion(monaco, () => indexRef.current);
+
+      const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'vs-dark' : 'vs';
+      const instance = monaco.editor.create(host.current, {
+        value: '',
+        language: LATEX_LANGUAGE_ID,
+        theme,
+        automaticLayout: true,
+        fontSize: 16,
+        lineHeight: 21,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        renderWhitespace: 'selection',
+        tabSize: 2,
+        wordWrap: 'on',
+        folding: true,
+        bracketPairColorization: { enabled: true },
+        suggestOnTriggerCharacters: true,
+        quickSuggestions: { other: true, comments: false, strings: true },
+        fixedOverflowWidgets: true,
+      });
+      editor.current = instance;
+
+      // Ctrl/Cmd+S 交给上层保存：自动保存有防抖，用户主动按保存时不该等。
+      instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+        const path = instance.getModel()?.uri.path.replace(/^\//, '');
+        if (path) handlers.current.onSave(path);
+      });
+
+      // 主题跟随应用（浅色/纸张走浅色主题，深色走深色）。
+      observer = new MutationObserver(() => {
+        const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'vs-dark' : 'vs';
+        monaco.editor.setTheme(next);
+      });
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+      setReady(true);
+    })();
+    return () => {
+      disposed = true;
+      completion?.dispose();
+      observer?.disconnect();
+      for (const model of models.current.values()) model.dispose();
+      models.current.clear();
+      editor.current?.dispose();
+      editor.current = null;
+      setReady(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    editor.current?.updateOptions({ readOnly });
+  }, [readOnly]);
+
+  // 打开/切换文件：按路径建 model 并切换
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    const instance = editor.current;
+    if (!ready || !monaco || !instance) return;
+    if (!active) {
+      instance.setModel(null);
+      return;
+    }
+    let model = models.current.get(active.path);
+    if (!model) {
+      model = monaco.editor.createModel(active.content, LATEX_LANGUAGE_ID, monaco.Uri.parse(`file:///${active.path}`));
+      models.current.set(active.path, model);
+      model.onDidChangeContent(() => {
+        if (applying.current) return;
+        handlers.current.onChange(active.path, model!.getValue());
+      });
+    }
+    if (instance.getModel() !== model) instance.setModel(model);
+    // 容器可能刚从隐藏状态显示出来：强制重排一次，避免 Monaco 以 0 尺寸布局。
+    instance.layout();
+    instance.focus();
+  }, [active, ready]);
+
+  // 外部内容变化（重新加载、强制保存后的 revision 变化）要写回 model
+  useEffect(() => {
+    const model = active ? models.current.get(active.path) : null;
+    if (!model || !active) return;
+    if (model.getValue() !== active.content) {
+      applying.current = true;
+      model.setValue(active.content);
+      applying.current = false;
+    }
+  }, [active]);
+
+  // 关掉的 Tab 释放 model
+  useEffect(() => {
+    for (const [path, model] of models.current) {
+      if (!files.some((file) => file.path === path)) {
+        model.dispose();
+        models.current.delete(path);
+      }
+    }
+  }, [files]);
+
+  // 诊断跳转：滚到出错那一行并把光标停在那里。
+  useEffect(() => {
+    const instance = editor.current;
+    if (!ready || !instance || !reveal) return;
+    const model = models.current.get(reveal.path);
+    if (!model) return;
+    if (instance.getModel() !== model) instance.setModel(model);
+    const line = Math.max(1, Math.min(reveal.line, model.getLineCount()));
+    instance.revealLineInCenter(line);
+    instance.setPosition({ lineNumber: line, column: 1 });
+    instance.focus();
+  }, [ready, reveal]);
+
+  // 索引变化 → 刷新波浪线（引用了不存在的键）
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (!ready || !monaco || !active) return;
+    const model = models.current.get(active.path);
+    if (!model) return;
+    applyIndexMarkers(monaco, model, index);
+  }, [active, index, ready]);
+
+  // 结构在「有没有打开文件」两种状态下必须一致：Monaco 只在挂载时创建一次，
+// 容器位置一旦变化（React 会重挂那个 div），编辑器就留在了游离节点上——界面看着是空的。
+  return (
+    <div className="latex-editor">
+      <div className="latex-tabs" role="tablist">
+        {files.length ? (
+          files.map((file) => (
+            <div key={file.path} className={`latex-tab${active?.path === file.path ? ' active' : ''}`}>
+              <button type="button" role="tab" aria-selected={active?.path === file.path} onClick={() => onActivate(file.path)}>
+                <span className="latex-tab-name">{file.path.split('/').pop()}</span>
+                {file.dirty ? <span className="latex-tab-dot" title="未保存">●</span> : null}
+                {file.saving ? <span className="latex-tab-saving" title="保存中">…</span> : null}
+              </button>
+              <button type="button" className="latex-tab-close" title="关闭" onClick={() => onClose(file.path)}>
+                ×
+              </button>
+            </div>
+          ))
+        ) : (
+          <span className="latex-tabs-hint">没有打开的文件</span>
+        )}
+      </div>
+
+      {active ? (
+        <div className="latex-editor-head">
+          <span className="latex-editor-path">{active.path}</span>
+          <span className="latex-editor-state">
+            {active.conflict ? '与磁盘冲突' : active.saving ? '保存中…' : active.dirty ? '未保存' : `已保存 · ${active.revision.slice(0, 8)}`}
+          </span>
+        </div>
+      ) : null}
+
+      {active?.conflict ? (
+        <div className="latex-conflict" role="alert">
+          <p>{active.error}</p>
+          <button type="button" onClick={() => onReload(active.path)}>重新加载磁盘版本</button>
+          <button type="button" className="danger" onClick={() => onForceSave(active.path)}>以我的版本覆盖</button>
+        </div>
+      ) : active?.error ? (
+        <p className="latex-alert error">{active.error}</p>
+      ) : null}
+
+      <div className={`latex-monaco${active ? '' : ' hidden'}`} ref={host} data-testid="latex-editor" />
+
+      {active ? (
+        <p className="latex-editor-hint">
+          {index.missingCitations?.length || index.missingLabels?.length
+            ? `⚠ ${index.missingCitations?.length ?? 0} 个引用键、${index.missingLabels?.length ?? 0} 个标签在项目里找不到定义（已标波浪线）。`
+            : 'Ctrl/Cmd+S 立即保存；编辑后约 0.9 秒自动保存；\\cite 与 \\ref 会提示项目里真实存在的键。'}
+        </p>
+      ) : (
+        <div className="latex-editor-placeholder">
+          <p>从左侧打开一个 .tex 或 .bib 文件开始写作。</p>
+        </div>
+      )}
+    </div>
+  );
+}

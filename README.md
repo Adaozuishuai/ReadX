@@ -151,6 +151,26 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 - **对照表视图保留**：图形负责「看形状」，矩阵负责「读交集」（共有 / 仅各篇逐条列清楚），两种问题分别回答。
 - **实现说明**：点云用 three.js（WebGL）渲染，按主题切换混合模式（深色底走加色发光，浅色与纸张底走常规混合），并且随图谱工作区懒加载——不打开图谱就不会下载这部分代码。
 
+#### 13 · LaTeX Studio：在本机写论文并当场看到排版结果
+
+![LaTeX Studio：左侧项目文件树、中间 Monaco 编辑器、右上编译状态与诊断、右下是本机 TeX 编译出的真实 PDF](docs/images/promo/12-latex-studio.png)
+
+一个与书库并列的独立工作区，功能是「写 LaTeX 并编译」这件事本身，读写的是磁盘上真实的 `.tex` 文件：
+
+- **项目与文件**：新建项目会得到一份可直接编译的模板（`main.tex` / `references.bib` / `sections/` / `figures/`）；也可以把 Overleaf 导出的 ZIP 直接导进来（自动剥掉外层目录、跳过系统垃圾与编译副产物，并在报告里列出跳过了什么），或随时把源码导出成 ZIP（导出前剔除 `.aux`/`.log` 等副产物）。
+- **编辑**：编辑器是 Monaco（按需加载，不打开这个工作区就不会下载），带 LaTeX 语法高亮、`\begin`/`\end` 配对折叠、Ctrl/Cmd+S 立即保存与约 0.9 秒防抖的自动保存。`\cite` 与 `\ref` 的候选来自项目里真实的 `.bib` 条目与 `\label`；引用了不存在的键会直接标波浪线——那正是编译必然报 undefined 的地方。
+- **编译**：用**本机安装的 TeX 发行版**编译（MiKTeX / TeX Live），latexmk 可用时优先用它，不可用时走内置多趟（引擎 → 需要时跑 bibtex/biber → 交叉引用重跑，最多四趟）。工具链状态如实报告：哪个引擎可用、哪个不可用、为什么不可用（例如本机 `latexmk.exe` 在、但缺 Perl 跑不起来，界面就会这么写，并说明已改用内置多趟）。
+- **诊断**：编译错误与警告按「文件:行号 + 出错的那行源码」列出来，**点一下就跳到编辑器对应位置**；页数、退出码、错误/警告数一并显示，完整日志可随时打开。产物对应的是哪一版源码也被记住，改完源码还没重编译时会明确提示「当前 PDF 是上一次的产物」。
+- **预览**：右栏用 PDF.js 显示编译产物，支持翻页、缩放、适应宽度、下载，以及**在产物里查找**（扫描进度与「有页面读不出文字」都会如实说明）。
+- **AI 参与写作，两种力度由你选**：默认只有一个「建议」入口——AI 给出修复后的完整源码，你在「修改前 / 修改后」之间核对，点「应用并保存」才落盘，落盘走的是带内容指纹校验的正常保存路径。想要更省事，可以在工具栏打开**「AI 直接改文件」**（默认关闭，开启时会明确告知后果）：开启后 AI 可以直接改写项目内的 `.tex`，但每一次写入都被固定的护栏包住——**先快照 → 原子写入 → 强制真实重新编译 → 错误没减少就自动回滚**，并把「编译错误 N → M」「保留还是回滚」「快照编号」逐条摆给你看；被回滚时还能展开查看「AI 想改成什么」。快照列表随时可回滚，回滚是「回到那一刻」，之后新增的文件会被移除并逐条列出。
+- **LaTeX 可以单独指定模型**：AI 助手面板里的「模型」一栏能让 LaTeX 走自己的渠道（HTTP 提供方 + 地址 + 模型 + 推理强度），**不影响阅读与翻译用的全局渠道**——默认「跟随全局」，取消勾选即单独配置。密钥仍按「渠道 + 地址」隔离保存，同一渠道可直接复用已保存的 Key，绝不会被发到别的地址；只支持 HTTP 渠道（Codex/Claude Code/Kimi Code 这类 CLI 渠道靠拉起本机命令行进程，在后台服务里通常不可用，界面上会直说）。
+- **不把机器信息发出去**：编译日志在服务端**脱敏之后**才发给模型（操作系统用户名、家目录、项目绝对路径都会被替换），MiKTeX 那类与本项目无关的环境提示也会剔除；发什么、发多少在界面上写明，项目源码永远只在本机编译。
+
+![AI 直接改文件：写入前自动快照、写后强制编译验证；这次点了「回滚到修改前」，源码已恢复，编译面板如实提示当前 PDF 是上一次的产物](docs/images/promo/13-latex-ai-autofix.png)
+
+![LaTeX 单独指定模型：全局仍走 Codex 不动，LaTeX 自己的渠道修好了编译错误（1 → 0），密钥按渠道+地址隔离保存](docs/images/promo/14-latex-ai-model.png)
+- **隔离与安全**：项目源码放在独立目录，不改动书库的任何记录，也不影响阅读、OCR、翻译、演示稿的语义。文件路径一律按「项目内相对路径」校验：`..`、绝对路径、盘符、符号链接、Windows 保留设备名都会被拒绝；写入是原子的，并且带内容指纹校验——文件被外部程序改过时不会静默覆盖，而是让你选「重新加载」还是「以我的版本覆盖」。编译调用的可执行文件来自白名单，项目里的字符串永远不会被当作命令执行。
+
 ### 下载与开始使用
 
 从[最新 Release](https://github.com/Leechion/ReadX/releases/latest)下载 Windows 或 macOS 安装包。启动后，在 **AI 助手设置**中选择模型服务并配置连接；Codex Desktop 用户可先登录 Codex，再从 ReadX 中连接。
@@ -174,7 +194,7 @@ ReadX 将论文及阅读资料保存在本机。使用 AI 翻译或问答时，�
 
 ## English
 
-ReadX is a desktop workspace for research reading. Import papers, let recognition and translation run on your machine, then read bilingually page by page, highlight and annotate, ask a paper-aware AI assistant, split deep reading into five focused passes, and turn the results into an academic presentation. Papers and reading data stay on your computer by default. The numbered items below match the screenshots in the Chinese tour above.
+ReadX is a desktop workspace for research reading. Import papers, let recognition and translation run on your machine, then read bilingually page by page, highlight and annotate, ask a paper-aware AI assistant, split deep reading into five focused passes, turn the results into an academic presentation, and write your own LaTeX papers against the TeX distribution already installed on your machine. Papers and reading data stay on your computer by default. The numbered items below match the screenshots in the Chinese tour above.
 
 ### Features
 
@@ -190,6 +210,7 @@ ReadX is a desktop workspace for research reading. Import papers, let recognitio
 10. **Find, search & compare (10)** — In-document find with hit counts and next/previous (Ctrl/Cmd+F); library-wide full-text search over indexed page text with snippets, coverage disclosure, and jump-to-page; a cross-paper comparison table for 2–4 papers built from their experimental-setup extractions, with per-cell page links and an explicit "not extracted" vs "not reported" distinction.
 11. **Citations & stats (11)** — BibTeX / RIS export (single paper, shelf, or whole library) that discloses how each entry type was inferred; an OpenAlex-backed citation network showing which library papers this one cites and which cite it; and library statistics covering reading activity, annotations, per-stage processing durations, and year/shelf/topic distribution. Stay time is deliberately not reported — it is not collected.
 12. **Knowledge graph (12)** — cross-paper entities and relations rendered as a dual-ring point cloud: shared entities sit nearest the center, single-paper entities around them, papers on the outer shell, all interlinked. Drag to rotate, scroll to zoom, hover a node to light up every link, click for relations with verbatim, page-anchored evidence that jumps back to the source page. A matrix view stays available for reading exact overlaps. Rendered with three.js (WebGL), lazy-loaded with the graph workspace.
+13. **LaTeX Studio (13)** — a separate writing workspace that edits real `.tex` files on disk: create a compilable starter project or import an Overleaf ZIP, edit in a lazily loaded Monaco with LaTeX highlighting, `\cite`/`\ref` completion taken from the project's own `.bib` entries and `\label`s, and autosave with content-fingerprint conflict detection. Compilation uses the TeX distribution installed on your machine — latexmk when it actually runs, otherwise a built-in multi-pass (engine → bibtex/biber when needed → re-run until cross-references settle). Errors and warnings are listed as file:line plus the offending source line and jump straight to that spot in the editor; the resulting PDF is previewed with paging, zoom, in-document find, and download. Source paths are validated as project-relative (no `..`, absolute paths, drive letters, symlinks, or reserved device names), writes are atomic, and compiler binaries come from a fixed allowlist — never from project content.
 
 ### Download
 

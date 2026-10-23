@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Activity, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 const ReaderScreen = lazy(() => import('./components/ReaderScreen').then((module) => ({ default: module.ReaderScreen })));
 const ReproductionSection = lazy(() => import('./components/ReproductionSection').then((module) => ({ default: module.ReproductionSection })));
 import { LibraryScreen } from './components/LibraryScreen';
@@ -17,6 +17,21 @@ const DocumentJobDialog = lazy(() => import('./components/DocumentJobDialog').th
 const AISettingsDialog = lazy(() => import('./components/AISettingsDialog').then((module) => ({ default: module.AISettingsDialog })));
 const PresentationWorkspace = lazy(() => import('./components/PresentationWorkspace').then((module) => ({ default: module.PresentationWorkspace })));
 const CompareWorkspace = lazy(() => import('./components/CompareWorkspace').then((module) => ({ default: module.CompareWorkspace })));
+const LatexStudio = lazy(() => import('./components/latex/LatexStudio').then((module) => ({ default: module.LatexStudio })));
+const SlackWorkspace = lazy(() => import('./components/slack/SlackWorkspace').then((module) => ({ default: module.SlackWorkspace })));
+import { ModePendant, type WorkspaceMode } from './components/slack/ModePendant';
+import './components/slack/slack.css';
+type Screen = 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex';
+
+const MODE_KEY = 'cbct-v2-workspace-mode';
+
+function readWorkspaceMode(): WorkspaceMode {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'slack' ? 'slack' : 'research';
+  } catch {
+    return 'research';
+  }
+}
 
 /**
  * 视觉版式 v2（对齐 cynicalight/reader 的布局结构，token 映射到本仓库暖色系）：
@@ -37,9 +52,21 @@ export default function App() {
     setFilters,
     reload,
   } = useWorkspace();
-  const [screen, setScreen] = useState<
-    'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare'
-  >('library');
+  const [screen, commitScreen] = useState<Screen>('library');
+  const currentScreen = useRef(screen);
+  currentScreen.current = screen;
+  const latexBeforeLeave = useRef<(() => Promise<boolean>) | null>(null);
+  const registerLatexBeforeLeave = useCallback((guard: (() => Promise<boolean>) | null) => {
+    latexBeforeLeave.current = guard;
+  }, []);
+  const setScreen = useCallback((next: Screen) => {
+    const guard = latexBeforeLeave.current;
+    if (currentScreen.current === 'latex' && next !== 'latex' && guard) {
+      void guard().then((saved) => { if (saved) commitScreen(next); });
+    } else {
+      commitScreen(next);
+    }
+  }, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
   const [retranslateDocument, setRetranslateDocument] = useState<DocumentSummary | null>(null);
@@ -48,6 +75,50 @@ export default function App() {
   const [libraryView, setLibraryView] = useState<'all' | 'favorite' | 'trash' | 'shelves'>(
     'all',
   );
+  const [mode, setMode] = useState<WorkspaceMode>(readWorkspaceMode);
+  const [curtain, setCurtain] = useState<{ target: WorkspaceMode; phase: 'closing' | 'opening' } | null>(null);
+  const changingMode = useRef(false);
+
+  const switchMode = useCallback((next: WorkspaceMode) => {
+    if (changingMode.current || next === mode) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setMode(next);
+      return;
+    }
+    changingMode.current = true;
+    setCurtain({ target: next, phase: 'closing' });
+  }, [mode]);
+
+  const returnToResearch = useCallback(() => {
+    changingMode.current = false;
+    setCurtain(null);
+    setMode('research');
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      /* 隐私模式下写不了 localStorage：本次会话仍然生效。 */
+    }
+    document.documentElement.dataset.workspace = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && changingMode.current) {
+        event.preventDefault();
+        returnToResearch();
+        return;
+      }
+      if (event.ctrlKey && event.shiftKey && (event.key === 'M' || event.key === 'm')) {
+        event.preventDefault();
+        switchMode(mode === 'slack' ? 'research' : 'slack');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mode, returnToResearch, switchMode]);
 
   // documents 只用于书库列表渲染（跟随搜索/筛选）；跨页跳转必须用不受筛选影响的全集，
   // 否则搜索状态下从图谱点「原文依据」会找不到目标论文、继续用上一篇的 selectedId。
@@ -185,15 +256,27 @@ export default function App() {
     <div
       className="flex h-full min-h-0 flex-col"
       onDragOver={(event) => {
+        if (mode !== 'research') return;
         if (event.dataTransfer.types.includes('Files')) event.preventDefault();
       }}
       onDrop={(event) => {
+        if (mode !== 'research') return;
         if (event.dataTransfer.files.length) {
           event.preventDefault();
           setImportFiles(Array.from(event.dataTransfer.files));
         }
       }}
     >
+      {mode === 'slack' ? (
+        <Suspense fallback={<p className="p-6" role="status">加载中…</p>}>
+          <SlackWorkspace
+            onExit={returnToResearch}
+            theme={theme.choice}
+            onThemeChange={theme.setTheme}
+          />
+        </Suspense>
+      ) : null}
+      <Activity mode={mode === 'research' ? 'visible' : 'hidden'}>
       <HeaderBar
         phase={phase}
         screen={screen}
@@ -247,6 +330,8 @@ export default function App() {
           onOpenAtPage={openSearchHit}
           onOpenDocument={openDocument}
         />
+      ) : screen === 'latex' ? (
+        <LatexStudio registerBeforeLeave={registerLatexBeforeLeave} />
       ) : screen === 'reader' ? (
         <ReaderScreen
           key={selected?.id ?? 'empty'}
@@ -346,6 +431,26 @@ export default function App() {
           </p>
         </footer>
       ) : null}
+      </Activity>
+      <ModePendant mode={mode} onMode={switchMode} />
+      {curtain ? (
+        <div className={`mode-curtain mode-curtain--${curtain.phase}`} aria-hidden="true">
+          <div
+            className="mode-curtain__panel mode-curtain__panel--left"
+            onAnimationEnd={() => {
+              if (curtain.phase === 'closing') {
+                setMode(curtain.target);
+                setCurtain({ ...curtain, phase: 'opening' });
+              } else {
+                changingMode.current = false;
+                setCurtain(null);
+              }
+            }}
+          />
+          <div className="mode-curtain__panel mode-curtain__panel--right" />
+          <div className="mode-curtain__valance" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -364,8 +469,8 @@ function HeaderBar({
   onThemeChange,
 }: {
   phase: ReturnType<typeof useWorkspace>['phase'];
-  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare';
-  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare') => void;
+  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex';
+  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex') => void;
   onPresentation: () => void;
   onReload: () => void;
   onImport: () => void;
@@ -414,6 +519,15 @@ function HeaderBar({
       </button>
       <button type="button" onClick={onPresentation} aria-current={screen === 'presentation' ? 'page' : undefined} className={screen === 'presentation' ? 'active' : ''} title="从书库选择论文生成演示稿">
         <WorkspaceIcon name="file" size={16} /><span>PPT</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onScreen('latex')}
+        aria-current={screen === 'latex' ? 'page' : undefined}
+        className={screen === 'latex' ? 'active' : ''}
+        title="LaTeX Studio：本地论文写作工作区（项目、编辑、编译、PDF 预览）"
+      >
+        <WorkspaceIcon name="code" size={16} /><span>LaTex Studio</span>
       </button>
       </nav>
       <div className="app-header-actions">

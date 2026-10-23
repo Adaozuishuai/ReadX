@@ -173,3 +173,5 @@ export interface DesktopUpdateBridge {
 export * from './pdfLayout.js';
 
 export * from './outline.js';
+
+export * from './latex.js';

@@ -27,8 +27,13 @@ func TestOpenCreatesDirAndMigrates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 6 {
-		t.Fatalf("迁移版本应为 6，实际 %d", version)
+	// 期望值取自内嵌迁移本身：写死数字会让「加一次迁移」等于「测试失败一次」。
+	latest, err := LatestVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != latest {
+		t.Fatalf("迁移版本应为 %d，实际 %d", latest, version)
 	}
 	var count int
 	if err := handle.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'`).Scan(&count); err != nil {
@@ -62,8 +67,13 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err := second.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 6 {
-		t.Fatalf("重复 Open 不应追加迁移记录，实际 %d 条", applied)
+	// 幂等的判据是「等于迁移条数」，而不是某个写死的数字。
+	migrations, err := MigrationCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != migrations {
+		t.Fatalf("重复 Open 不应追加迁移记录，实际 %d 条（迁移共 %d 条）", applied, migrations)
 	}
 	var title string
 	if err := second.QueryRow(`SELECT title FROM documents WHERE id='a'`).Scan(&title); err != nil {

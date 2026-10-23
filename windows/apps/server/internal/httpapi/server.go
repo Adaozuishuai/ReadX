@@ -26,7 +26,7 @@ const appVersion = "0.0.0-s0"
 // staticCSP 由服务端下发而非写死在 index.html：dev 模式由 Vite 直接提供页面并注入
 // inline 的 HMR 脚本，若把 CSP 塞进 HTML 会让开发态立刻白屏，而生产态才是需要加固的那一份。
 const staticCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; " +
+	"img-src 'self' data: blob: https://www.gutenberg.org; font-src 'self' data:; worker-src 'self' blob:; " +
 	"connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; " +
 	"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 
@@ -64,6 +64,9 @@ func (s *Server) Handler() http.Handler {
 
 	withAuth := func(h http.HandlerFunc) http.Handler { return s.requireBearer(h) }
 	mux.Handle("/v1/meta", withAuth(s.handleMeta))
+	mux.Handle("GET /v1/books/search", withAuth(s.handleSlackBookSearch))
+	mux.Handle("GET /v1/books/download", withAuth(s.handleSlackBookDownload))
+	mux.Handle("GET /v1/books/fetch-web", withAuth(s.handleSlackWebSourceFetch))
 	mux.Handle("GET /v1/documents", withAuth(s.handleDocuments))
 	mux.Handle("POST /v1/import", withAuth(s.handleImport))
 	mux.Handle("POST /v1/import/files", withAuth(s.handlePublicationUpload))
@@ -92,6 +95,37 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/documents/{key}/job", withAuth(s.handleDocumentJob))
 	mux.Handle("POST /v1/documents/{key}/retranslate", withAuth(s.handleRetranslate))
 	mux.Handle("POST /v1/documents/{key}/job/cancel", withAuth(s.handleCancelDocumentJob))
+
+	// LaTeX Studio：独立命名空间，与阅读/翻译/PPT 的接口语义完全分开。
+	// 路径参数只接受项目编号；文件路径一律走 query，服务端再按「项目内相对路径」校验。
+	mux.Handle("GET /v1/latex/projects", withAuth(s.handleLatexProjects))
+	mux.Handle("POST /v1/latex/projects", withAuth(s.handleLatexProjects))
+	mux.Handle("GET /v1/latex/projects/{id}", withAuth(s.handleLatexProject))
+	mux.Handle("PATCH /v1/latex/projects/{id}", withAuth(s.handleLatexProject))
+	mux.Handle("DELETE /v1/latex/projects/{id}", withAuth(s.handleLatexProject))
+	mux.Handle("POST /v1/latex/projects/{id}/duplicate", withAuth(s.handleLatexProjectDuplicate))
+	mux.Handle("GET /v1/latex/projects/{id}/tree", withAuth(s.handleLatexTree))
+	mux.Handle("GET /v1/latex/projects/{id}/index", withAuth(s.handleLatexIndex))
+	mux.Handle("GET /v1/latex/projects/{id}/file", withAuth(s.handleLatexFile))
+	mux.Handle("PUT /v1/latex/projects/{id}/file", withAuth(s.handleLatexFile))
+	mux.Handle("DELETE /v1/latex/projects/{id}/file", withAuth(s.handleLatexFile))
+	mux.Handle("GET /v1/latex/projects/{id}/asset", withAuth(s.handleLatexAsset))
+	mux.Handle("POST /v1/latex/projects/{id}/asset", withAuth(s.handleLatexAsset))
+	mux.Handle("POST /v1/latex/projects/{id}/file-ops", withAuth(s.handleLatexFileOps))
+	mux.Handle("POST /v1/latex/projects/{id}/import-zip", withAuth(s.handleLatexImportZip))
+	mux.Handle("GET /v1/latex/projects/{id}/export-zip", withAuth(s.handleLatexExportZip))
+	mux.Handle("GET /v1/latex/toolchains", withAuth(s.handleLatexToolchains))
+	mux.Handle("GET /v1/latex/projects/{id}/builds", withAuth(s.handleLatexBuilds))
+	mux.Handle("POST /v1/latex/projects/{id}/builds", withAuth(s.handleLatexBuilds))
+	mux.Handle("GET /v1/latex/builds/{id}", withAuth(s.handleLatexBuild))
+	mux.Handle("GET /v1/latex/builds/{id}/{action}", withAuth(s.handleLatexBuild))
+	mux.Handle("POST /v1/latex/builds/{id}/{action}", withAuth(s.handleLatexBuild))
+	// 源码快照：AI 直接写盘前会自动留一份，用户也可以手动打快照与回滚。
+	mux.Handle("GET /v1/latex/projects/{id}/snapshots", withAuth(s.handleLatexSnapshots))
+	mux.Handle("POST /v1/latex/projects/{id}/snapshots", withAuth(s.handleLatexSnapshots))
+	mux.Handle("GET /v1/latex/snapshots/{id}", withAuth(s.handleLatexSnapshot))
+	mux.Handle("POST /v1/latex/snapshots/{id}", withAuth(s.handleLatexSnapshot))
+	mux.Handle("DELETE /v1/latex/snapshots/{id}", withAuth(s.handleLatexSnapshot))
 	mux.Handle("GET /v1/ai/status", withAuth(s.handleAIStatus))
 	mux.Handle("GET /v1/ai/settings", withAuth(s.handleAISettings))
 	mux.Handle("PUT /v1/ai/settings", withAuth(s.handleAISettings))
@@ -101,6 +135,14 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/ai/workbuddy/login", withAuth(s.handleWorkBuddyLoginStatus))
 	mux.Handle("DELETE /v1/ai/workbuddy/login", withAuth(s.handleWorkBuddyLogout))
 	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
+	mux.Handle("POST /v1/ai/latex-chat", withAuth(s.handleLatexAIChat))
+	mux.Handle("POST /v1/ai/latex-fix", withAuth(s.handleLatexAIFix))
+	// 直接写盘：与 latex-fix 分开，因为它的副作用完全不同（会改源码），
+	// 需要项目显式开启开关，并且走「快照 → 写入 → 强制编译验证 → 未改善回滚」。
+	mux.Handle("POST /v1/ai/latex-autofix", withAuth(s.handleLatexAutoFix))
+	// LaTeX 工作区可以单独指定模型渠道，不影响全局阅读/翻译用的渠道。
+	mux.Handle("GET /v1/ai/latex-settings", withAuth(s.handleLatexAISettings))
+	mux.Handle("PUT /v1/ai/latex-settings", withAuth(s.handleLatexAISettings))
 	mux.Handle("POST /v1/ai/presentation-theme", withAuth(s.handleAIPresentationTheme))
 	mux.Handle("POST /v1/ai/presentation-plan", withAuth(s.handleAIPresentationPlan))
 	mux.Handle("POST /v1/ai/generate", withAuth(s.handleAIGenerate))

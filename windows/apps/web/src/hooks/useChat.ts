@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, streamChat } from '../api/client';
+import { api, streamChat, type ChatChunk } from '../api/client';
+
+type ChatTransport = (
+  request: { key: string; mode?: string; question: string; scope?: string; history?: Array<{ role: string; text: string }>; images?: string[] },
+  onChunk: (chunk: ChatChunk) => void,
+  signal?: AbortSignal,
+) => Promise<void>;
 
 export interface ChatTurn {
   id: string;
@@ -27,7 +33,7 @@ function load(key: string | null): { conversations: Conversation[]; active: stri
   return { conversations: [conversation], active: conversation.id };
 }
 
-export function useChat(key: string | null) {
+export function useChat(key: string | null, transport: ChatTransport = streamChat, trackDocumentStatus = true) {
   const [data, setData] = useState(() => load(key));
   const [dataKey, setDataKey] = useState(key);
   const dataRef = useRef(data);
@@ -49,9 +55,9 @@ export function useChat(key: string | null) {
     conversation.turns.some((turn) => turn.role === 'user' && !!turn.text.trim()),
   );
   useEffect(() => {
-    if (!key || dataKey !== key) return;
+    if (!trackDocumentStatus || !key || dataKey !== key) return;
     void api.setStatus(key, hasConversationHistory ? 'reading' : 'queue').catch(() => {});
-  }, [key, dataKey, hasConversationHistory]);
+  }, [key, dataKey, hasConversationHistory, trackDocumentStatus]);
   useEffect(() => {
     if (!key || documentRef.current !== key || busy) return;
     try { localStorage.setItem(storageKey(key), JSON.stringify(data)); setStorageError(''); }
@@ -86,7 +92,7 @@ export function useChat(key: string | null) {
     let streaming = '';
     let finished = false;
     try {
-      await streamChat({ key, question, mode, history, images: images.length ? images : undefined }, (chunk) => {
+      await transport({ key, question, mode, history, images: images.length ? images : undefined }, (chunk) => {
         if (epoch.current !== requestEpoch) return;
         if (chunk.meta) patch({ scope: { included: chunk.meta.included, total: chunk.meta.total, unit: chunk.meta.unit }, provider: chunk.meta.provider, model: chunk.meta.model, reasoningEffort: chunk.meta.reasoningEffort });
         if (chunk.delta) { streaming += chunk.delta; patch({ text: streaming }); }
@@ -99,7 +105,7 @@ export function useChat(key: string | null) {
     } finally {
       if (epoch.current === requestEpoch) { controller.current = null; setBusy(false); }
     }
-  }, [key, commit]);
+  }, [key, commit, transport]);
   const stop = useCallback(() => controller.current?.abort(), []);
   const newConversation = () => {
     if (controller.current) return;

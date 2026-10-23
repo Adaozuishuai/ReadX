@@ -10,7 +10,7 @@ const ignored = new Set(['node_modules', '__pycache__']);
 const trees = ['apps/server', 'apps/web', 'apps/desktop/src', 'apps/desktop/test', 'packages/shared', 'resources', 'vendor'];
 const files = ['apps/desktop/tsconfig.json', 'config.example.json', 'package-lock.json',
   ...['build-server.mjs', 'dev.mjs', 'ensure-built.mjs', 'gen-fixtures.mjs', 'go.mjs',
-    'prepare-pdf.mjs', 'render-translated-pdf.cjs', 'server-runtime.mjs', 'import-smoke.cjs', 'update-smoke.jsx',
+    'prepare-pdf.mjs', 'render-translated-pdf.cjs', 'server-runtime.mjs', 'import-smoke.cjs', 'update-smoke.jsx', 'latex-state.test.cjs',
     'desktop-smoke.cjs', 'run-desktop-smoke.mjs', 'import-smoke.jsx', 'platform-runtime.mjs', 'runtime-check.mjs'].map(name => `scripts/${name}`)];
 const differences = [];
 let checked = 0;

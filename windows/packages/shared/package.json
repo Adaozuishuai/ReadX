@@ -14,7 +14,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.json && node --test dist/text.test.js dist/annotate.test.js dist/pdfLayout.test.js dist/outline.test.js",
+    "test": "tsc -p tsconfig.json && node --test dist/text.test.js dist/annotate.test.js dist/pdfLayout.test.js dist/outline.test.js dist/latex.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

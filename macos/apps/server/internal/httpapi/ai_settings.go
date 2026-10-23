@@ -152,7 +152,7 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg, _ := ai.LoadConfig(path)
-	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "reasoningEffort": cfg.ReasoningEffort, "codexFastMode": cfg.CodexFastMode, "translationPreparation": cfg.TranslationPreparation, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}, "codex": ai.CodexStatus(r.Context()), "workbuddy": s.workBuddyStatus(cfg)})
+	writeJSON(w, 200, map[string]any{"provider": cfg.ProviderName(), "baseURL": cfg.PublicBaseURL(), "model": cfg.Model, "reasoningEffort": cfg.ReasoningEffort, "codexFastMode": cfg.CodexFastMode, "translationPreparation": cfg.TranslationPreparation, "keyConfigured": cfg.APIKey != "", "status": cfg.Redact(), "latex": s.latexAISettingsView(cfg), "cli": map[string]bool{"codex": ai.CLIAvailable("codex"), "claude": ai.CLIAvailable("claude"), "kimi": ai.CLIAvailable("kimi")}, "codex": ai.CodexStatus(r.Context()), "workbuddy": s.workBuddyStatus(cfg)})
 }
 
 // handleAIModels 读取当前地址可用的模型列表：OpenAI 兼容与 Anthropic 都提供 GET /models。

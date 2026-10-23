@@ -23,10 +23,13 @@ const paths = {
   send: <path d="M12 20V4m-6 6 6-6 6 6" />,
   stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   close: <path d="m6 6 12 12M6 18 18 6" />,
+  copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></>,
+  download: <><path d="M12 3v12m-5-5 5 5 5-5" /><path d="M5 17v4h14v-4" /></>,
   arrow: <path d="M5 12h14m-5-5 5 5-5 5" />,
   file: <><path d="M14 3H5v18h14V8l-5-5ZM14 3v5h5M8 12h8M8 16h6" /></>,
   check: <path d="m5 12 4 4L19 6" />,
   sparkles: <><path d="m12 3 2.3 6.7L21 12l-6.7 2.3L12 21l-2.3-6.7L3 12l6.7-2.3L12 3Z" /></>,
+  code: <><path d="M9 7 4 12l5 5M15 7l5 5-5 5" /></>,
 } satisfies Record<string, ReactNode>;
 
 export type WorkspaceIconName = keyof typeof paths;

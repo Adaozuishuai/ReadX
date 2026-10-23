@@ -70,8 +70,14 @@ func TestStatsReportsLibraryReadingAndProcessing(t *testing.T) {
 			} `json:"stages"`
 		} `json:"processing"`
 		Distribution struct {
-			Years   []struct{ Name string; Count int } `json:"years"`
-			Shelves []struct{ Name string; Count int } `json:"shelves"`
+			Years []struct {
+				Name  string
+				Count int
+			} `json:"years"`
+			Shelves []struct {
+				Name  string
+				Count int
+			} `json:"shelves"`
 		} `json:"distribution"`
 		Basis []string `json:"basis"`
 	}

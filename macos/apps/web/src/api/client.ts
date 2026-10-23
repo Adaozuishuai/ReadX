@@ -5,6 +5,23 @@ import type {
   DocumentsResponse,
   HealthResponse,
   ImportReport,
+  LatexEngine,
+  LatexBuild,
+  LatexAutoFixEvent,
+  LatexBuildsResponse,
+  LatexDiagnostic,
+  LatexFileContent,
+  LatexFileOp,
+  LatexImportReport,
+  LatexIndexResponse,
+  LatexProject,
+  LatexProjectsResponse,
+  LatexRestoreReport,
+  LatexSaveResponse,
+  LatexSnapshot,
+  LatexSnapshotsResponse,
+  LatexToolchainReport,
+  LatexTreeResponse,
   MetaResponse,
   PageListResponse,
   PageText,
@@ -211,9 +228,14 @@ export async function streamChat(
     scope?: string;
     history?: Array<{ role: string; text: string }>;
     images?: string[];
+    projectId?: string;
+    projectTitle?: string;
+    filePath?: string;
+    source?: string;
   },
   onChunk: (chunk: ChatChunk) => void,
   signal?: AbortSignal,
+  endpoint = '/v1/ai/chat',
 ): Promise<void> {
   const { apiBase, token } = bootstrap();
   const headers = new Headers({
@@ -222,7 +244,7 @@ export async function streamChat(
   });
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
-  const response = await fetch(`${apiBase}/v1/ai/chat`, {
+  const response = await fetch(`${apiBase}${endpoint}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(request),
@@ -271,6 +293,87 @@ export async function streamChat(
   }
   processLine(buffer + decoder.decode());
   if (!terminal) throw new ApiError('连接中断，回答未完成，未保存。', 502);
+}
+
+export function streamLatexChat(
+  request: { key: string; projectId: string; projectTitle: string; filePath: string; source: string; question: string; history?: Array<{ role: string; text: string }> },
+  onChunk: (chunk: ChatChunk) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamChat(request, onChunk, signal, '/v1/ai/latex-chat');
+}
+
+export function latexAIFix(requestBody: {
+  projectId: string;
+  projectTitle: string;
+  filePath: string;
+  source: string;
+  diagnostics: LatexDiagnostic[];
+  buildLog: string;
+}): Promise<{ summary: string; content: string }> {
+  return request('/v1/ai/latex-fix', { method: 'POST', body: requestBody });
+}
+
+/**
+ * AI 直接写盘（会改源码）。
+ *
+ * 服务端会先打快照、写入、强制重新编译，再按「错误有没有减少」决定保留还是回滚；
+ * 阶段变化与最终结果都通过 SSE 回来，界面据此逐步显示，而不是转圈等一个黑盒结果。
+ * 编译日志在服务端脱敏后才发给模型（客户端无从绕过）。
+ */
+export async function streamLatexAutoFix(
+  requestBody: { projectId: string; projectTitle: string; filePath: string; question?: string },
+  onEvent: (event: LatexAutoFixEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { apiBase, token } = bootstrap();
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${apiBase}/v1/ai/latex-autofix`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(requestBody),
+    signal,
+    credentials: 'omit',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let message = `HTTP ${response.status}`;
+    try {
+      message = (JSON.parse(text) as ApiFailure).error || message;
+    } catch {
+      if (text) message = text.slice(0, 200);
+    }
+    throw new ApiError(message, response.status);
+  }
+  if (!response.body) throw new ApiError('自动修复服务没有返回流式内容。', response.status);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let terminal = false;
+  const processLine = (raw: string) => {
+    const line = raw.trim();
+    if (!line.startsWith('data:')) return;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === '[DONE]') return;
+    try {
+      const event = JSON.parse(payload) as LatexAutoFixEvent;
+      if (event.done || event.error) terminal = true;
+      onEvent(event);
+    } catch {
+      /* 单帧解析失败不影响整体：缺终止帧会在下面统一报错。 */
+    }
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    lines.forEach(processLine);
+  }
+  processLine(buffer + decoder.decode());
+  if (!terminal) throw new ApiError('自动修复连接中断，未确认结果。', 502);
 }
 
 /** 使用已配置的助教模型分析 PPT 模板摘要，不附带论文正文。 */
@@ -639,6 +742,23 @@ export interface EPUBSection {
   text: string;
   blocks: { kind: string; text?: string; src?: string; id?: string }[];
 }
+/**
+ * LaTeX 工作区自己的模型渠道。
+ *
+ * 独立于全局设置：全局可能是一个只适合阅读/翻译的渠道（例如 Codex 桥），
+ * 而 LaTeX 的写作助手需要在后台服务里真正可用。密钥仍然按「渠道|地址」隔离保存，
+ * 这里只回状态，永远不回 Key。
+ */
+export interface LatexAISettings {
+  followGlobal: boolean;
+  provider: string;
+  baseURL: string;
+  model: string;
+  reasoningEffort: string;
+  keyConfigured: boolean;
+  status: AIStatus;
+}
+
 export interface AISettings {
   provider: string;
   baseURL: string;
@@ -648,6 +768,8 @@ export interface AISettings {
   translationPreparation?: 'off' | 'artifacts_only' | 'terms' | 'terms+style' | 'editorial';
   keyConfigured: boolean;
   status: AIStatus;
+  /** LaTeX 工作区的模型渠道状态（与全局分开）。 */
+  latex?: LatexAISettings;
   cli: Record<string, boolean>;
   codex?: { available: boolean; authenticated: boolean; source: string; message: string };
   workbuddy?: { authenticated: boolean; nickname?: string; expiresAt?: number; login?: { state?: string; url?: string; pending: boolean; error?: string } };
@@ -1056,6 +1178,47 @@ export interface CitationNetworkResponse {
 }
 
 export const api = {
+  searchFreeBooks: (pageURL: string, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ page: pageURL });
+    return request<{
+      count: number;
+      next: string | null;
+      previous: string | null;
+      results: {
+        id: number;
+        title: string;
+        authors: { name: string }[];
+        summaries?: string[];
+        languages: string[];
+        download_count: number;
+        formats: Record<string, string>;
+      }[];
+    }>(`/v1/books/search?${params}`, { signal });
+  },
+  downloadFreeBook: async (url: string, signal?: AbortSignal) => {
+    const response = await authenticatedFetch(`/v1/books/download?${new URLSearchParams({ url })}`, { signal });
+    return response.blob();
+  },
+  /** Legado 书源页面经本地 Go 服务抓取并校验公网 HTTPS 地址。 */
+  fetchWebSourcePage: async (url: string, signal?: AbortSignal) => {
+    const response = await authenticatedFetch(
+      `/v1/books/fetch-web?mode=page&url=${encodeURIComponent(url)}`,
+      { signal },
+    );
+    if (!response.ok) throw new Error(await response.text());
+    return {
+      bytes: await response.arrayBuffer(),
+      contentType: response.headers.get('content-type') ?? '',
+    };
+  },
+  fetchWebSourceImage: async (url: string, signal?: AbortSignal) => {
+    const response = await authenticatedFetch(
+      `/v1/books/fetch-web?mode=image&url=${encodeURIComponent(url)}`,
+      { signal },
+    );
+    if (!response.ok) throw new Error(await response.text());
+    return response.blob();
+  },
   settings: () => request<AISettings>('/v1/ai/settings'),
   saveSettings: (body: {
     provider: string;
@@ -1067,6 +1230,16 @@ export const api = {
     apiKey?: string;
     clearKey?: boolean;
   }) => request<AISettings>('/v1/ai/settings', { method: 'PUT', body }),
+  /** LaTeX 工作区的模型渠道（与全局分开；followGlobal=true 表示跟随全局）。 */
+  latexAISettings: () => request<LatexAISettings>('/v1/ai/latex-settings'),
+  saveLatexAISettings: (body: {
+    followGlobal: boolean;
+    provider?: string;
+    baseURL?: string;
+    model?: string;
+    reasoningEffort?: string;
+    apiKey?: string;
+  }) => request<LatexAISettings>('/v1/ai/latex-settings', { method: 'PUT', body }),
   testAI: () =>
     request<{ ok: boolean; answer: string }>('/v1/ai/test', {
       method: 'POST',
@@ -1571,4 +1744,168 @@ export const api = {
       `/v1/graph/${encodeURIComponent(key)}`,
       { method: 'DELETE' },
     ),
+
+  // ---- LaTeX Studio：独立命名空间，与阅读/翻译接口互不影响 ----
+
+  latexProjects: (signal?: AbortSignal) =>
+    request<LatexProjectsResponse>('/v1/latex/projects', { signal }),
+  latexCreateProject: (body: { title: string; engine: LatexEngine; mainFile?: string }) =>
+    request<LatexProject>('/v1/latex/projects', { method: 'POST', body }),
+  latexProject: (id: string, signal?: AbortSignal) =>
+    request<LatexProject>(`/v1/latex/projects/${encodeURIComponent(id)}`, { signal }),
+  latexUpdateProject: (
+    id: string,
+    patch: { title?: string; mainFile?: string; engine?: LatexEngine; autoCompile?: boolean },
+  ) =>
+    request<LatexProject>(`/v1/latex/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: patch,
+    }),
+  latexDeleteProject: (id: string) =>
+    request<{ deleted: boolean }>(`/v1/latex/projects/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  latexDuplicateProject: (id: string) =>
+    request<LatexProject>(`/v1/latex/projects/${encodeURIComponent(id)}/duplicate`, { method: 'POST' }),
+  latexTree: (id: string, signal?: AbortSignal) =>
+    request<LatexTreeResponse>(`/v1/latex/projects/${encodeURIComponent(id)}/tree`, { signal }),
+  /** 项目索引：补全用的引用键/标签，以及「用了但没定义」的键。 */
+  latexIndex: (id: string, signal?: AbortSignal) =>
+    request<LatexIndexResponse>(`/v1/latex/projects/${encodeURIComponent(id)}/index`, { signal }),
+  /** 读文本文件；二进制资源通过独立的 asset API 预览或下载。 */
+  latexFile: (id: string, path: string, signal?: AbortSignal) =>
+    request<LatexFileContent>(
+      `/v1/latex/projects/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`,
+      { signal },
+    ),
+  latexAsset: async (id: string, path: string, signal?: AbortSignal): Promise<Blob> => {
+    const response = await authenticatedFetch(
+      `/v1/latex/projects/${encodeURIComponent(id)}/asset?path=${encodeURIComponent(path)}`,
+      { signal },
+    );
+    return response.blob();
+  },
+  latexUploadAsset: async (id: string, path: string, file: File): Promise<void> => {
+    await authenticatedFetch(
+      `/v1/latex/projects/${encodeURIComponent(id)}/asset?path=${encodeURIComponent(path)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      },
+    );
+  },
+  latexSaveFile: (id: string, path: string, content: string, revision: string) =>
+    request<LatexSaveResponse>(
+      `/v1/latex/projects/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`,
+      { method: 'PUT', body: { content, revision } },
+    ),
+  latexDeleteFile: (id: string, path: string) =>
+    request<{ deleted: boolean }>(
+      `/v1/latex/projects/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`,
+      { method: 'DELETE' },
+    ),
+  latexFileOp: (id: string, op: LatexFileOp) =>
+    request<{ ok: boolean }>(`/v1/latex/projects/${encodeURIComponent(id)}/file-ops`, {
+      method: 'POST',
+      body: op,
+    }),
+  /** 导入 ZIP：整个压缩包就是请求体（服务端自己卡条目数、体积、Zip Slip）。 */
+  latexImportZip: async (id: string, file: File): Promise<LatexImportReport> => {
+    const response = await authenticatedFetch(
+      `/v1/latex/projects/${encodeURIComponent(id)}/import-zip`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/zip' },
+        body: file,
+      },
+    );
+    return (await response.json()) as LatexImportReport;
+  },
+  /** 导出源码 ZIP（排除编译副产物），直接触发浏览器下载。 */
+  latexExportZip: async (id: string): Promise<string> => {
+    const response = await authenticatedFetch(
+      `/v1/latex/projects/${encodeURIComponent(id)}/export-zip`,
+    );
+    const disposition = response.headers.get('Content-Disposition') ?? '';
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'readx-latex-project.zip';
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return filename;
+  },
+
+  // ---- 编译（PR3）----
+
+  /** 本机 TeX 工具链的真实状态；refresh=true 重新探测（装完 TeX 后不必重启应用）。 */
+  latexToolchains: (refresh = false, signal?: AbortSignal) =>
+    request<LatexToolchainReport>(`/v1/latex/toolchains${refresh ? '?refresh=1' : ''}`, { signal }),
+  /** 发起一次编译；服务端异步执行，返回可轮询的记录。 */
+  latexStartBuild: (id: string, body: { engine?: string; timeoutSeconds?: number } = {}) =>
+    request<LatexBuild>(`/v1/latex/projects/${encodeURIComponent(id)}/builds`, {
+      method: 'POST',
+      body,
+    }),
+  latexBuilds: (id: string, signal?: AbortSignal) =>
+    request<LatexBuildsResponse>(`/v1/latex/projects/${encodeURIComponent(id)}/builds`, { signal }),
+  latexBuild: (buildId: string, signal?: AbortSignal) =>
+    request<LatexBuild>(`/v1/latex/builds/${encodeURIComponent(buildId)}`, { signal }),
+  latexBuildLog: (buildId: string) =>
+    request<{ log: string }>(`/v1/latex/builds/${encodeURIComponent(buildId)}/log`),
+  latexCancelBuild: (buildId: string) =>
+    request<{ cancelled: boolean }>(`/v1/latex/builds/${encodeURIComponent(buildId)}/cancel`, {
+      method: 'POST',
+    }),
+  /** 取编译产物的字节流：PDF.js 要数据，普通 URL 带不上 token。 */
+  latexBuildPdf: async (buildId: string, signal?: AbortSignal): Promise<ArrayBuffer> => {
+    const response = await authenticatedFetch(
+      `/v1/latex/builds/${encodeURIComponent(buildId)}/pdf`,
+      { signal },
+    );
+    return response.arrayBuffer();
+  },
+
+  // ---- 源码快照（AI 直接写盘的安全网）----
+
+  latexSnapshots: (projectId: string, signal?: AbortSignal) =>
+    request<LatexSnapshotsResponse>(
+      `/v1/latex/projects/${encodeURIComponent(projectId)}/snapshots`,
+      { signal },
+    ),
+  /** 手动打一份快照（AI 写盘前后端也会自动打）。 */
+  latexCreateSnapshot: (projectId: string, note: string) =>
+    request<LatexSnapshot>(`/v1/latex/projects/${encodeURIComponent(projectId)}/snapshots`, {
+      method: 'POST',
+      body: { note },
+    }),
+  /** 回滚：会把源码恢复到快照状态，之后新增的文件会被移除（报告里逐条列出）。 */
+  latexRestoreSnapshot: (snapshotId: string) =>
+    request<LatexRestoreReport>(`/v1/latex/snapshots/${encodeURIComponent(snapshotId)}`, {
+      method: 'POST',
+    }),
+  latexDeleteSnapshot: (snapshotId: string) =>
+    request<{ deleted: boolean }>(`/v1/latex/snapshots/${encodeURIComponent(snapshotId)}`, {
+      method: 'DELETE',
+    }),
+  /** 下载 PDF 到本地。 */
+  latexDownloadPdf: async (buildId: string, filename: string): Promise<void> => {
+    const response = await authenticatedFetch(
+      `/v1/latex/builds/${encodeURIComponent(buildId)}/pdf?download=1`,
+    );
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  },
 };

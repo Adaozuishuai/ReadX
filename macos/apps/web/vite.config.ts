@@ -1,13 +1,84 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type { ReadyInfo } from '@cbct/shared';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const devInfoPath = path.resolve(here, '../server/dev-info.json');
+const execFileAsync = promisify(execFile);
+
+interface UpstreamResult {
+  ok: boolean;
+  status: number;
+  contentType: string;
+  body: Buffer;
+}
+
+async function fetchBookSource(url: string): Promise<UpstreamResult> {
+  if (process.platform === 'win32') {
+    const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$response = Invoke-WebRequest -Uri $env:READX_UPSTREAM_URL -TimeoutSec 120 -UseBasicParsing
+$stream = $response.RawContentStream
+$memory = [System.IO.MemoryStream]::new()
+$buffer = [byte[]]::new(65536)
+while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+  if ($memory.Length + $read -gt 67108864) { throw '书籍文件超过 64 MiB' }
+  $memory.Write($buffer, 0, $read)
+}
+$contentType = if ($response.Headers['Content-Type']) { $response.Headers['Content-Type'] } else { 'application/octet-stream' }
+$payload = @{ status = [int]$response.StatusCode; contentType = $contentType; body = [Convert]::ToBase64String($memory.ToArray()) } | ConvertTo-Json -Compress
+[Console]::Out.Write($payload)
+`;
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      {
+        env: { ...process.env, READX_UPSTREAM_URL: url },
+        windowsHide: true,
+        maxBuffer: 90 * 1024 * 1024,
+        encoding: 'utf8',
+      },
+    );
+    const payload = JSON.parse(stdout) as { status: number; contentType: string; body: string };
+    return {
+      ok: payload.status >= 200 && payload.status < 300,
+      status: payload.status,
+      contentType: payload.contentType,
+      body: Buffer.from(payload.body, 'base64'),
+    };
+  }
+
+  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+  const declaredSize = Number(response.headers.get('content-length') || 0);
+  if (declaredSize > 64 * 1024 * 1024) throw new Error('书籍文件超过 64 MiB');
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 64 * 1024 * 1024) {
+        await reader.cancel();
+        throw new Error('书籍文件超过 64 MiB');
+      }
+      chunks.push(value);
+    }
+  }
+  return {
+    ok: response.ok,
+    status: response.status,
+    contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+    body: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), size),
+  };
+}
 
 /**
  * 读取 Go server 写出的 dev-info.json：Vite dev proxy 用它把 /v1 转到本机 server，
@@ -26,8 +97,83 @@ function readDevInfo(): ReadyInfo | null {
 
 const info = readDevInfo();
 
+function booksDevelopmentProxy(): Plugin {
+  return {
+    name: 'readx-books-development-proxy',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const requestURL = new URL(req.url ?? '/', 'http://127.0.0.1');
+        if (requestURL.pathname !== '/v1/books/search' && requestURL.pathname !== '/v1/books/download') {
+          next();
+          return;
+        }
+        if (req.method !== 'GET') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+
+        const upstreamURL = requestURL.pathname.endsWith('/search')
+          ? checkedGutendexPage(requestURL.searchParams.get('page') ?? '')
+          : checkedGutenbergDownload(requestURL.searchParams.get('url') ?? '');
+        if (!upstreamURL) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ error: '书籍来源地址无效' }));
+          return;
+        }
+
+        void fetchBookSource(upstreamURL)
+          .then((response) => {
+            res.statusCode = response.ok ? 200 : 502;
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Content-Type', requestURL.pathname.endsWith('/search')
+              ? 'application/json; charset=utf-8'
+              : response.contentType || 'application/octet-stream');
+            if (response.ok) {
+              res.end(response.body);
+              return;
+            }
+            res.end(JSON.stringify({ error: `书籍服务返回 HTTP ${response.status}` }));
+          })
+          .catch(() => {
+            if (res.writableEnded) return;
+            res.statusCode = 502;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ error: '书籍服务暂时无法连接，请检查网络代理或稍后重试' }));
+          });
+      });
+    },
+  };
+}
+
+function checkedGutendexPage(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const search = url.searchParams.get('search') ?? '';
+    if (url.protocol !== 'https:' || url.hostname !== 'gutendex.com' || url.pathname !== '/books/' ||
+      url.username || url.password || !search || search.length > 120) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function checkedGutenbergDownload(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const validPath = url.pathname.startsWith('/ebooks/') &&
+      (url.pathname.endsWith('.epub3.images') || url.pathname.endsWith('.txt.utf-8'));
+    if (url.protocol !== 'https:' || !['www.gutenberg.org', 'gutenberg.org'].includes(url.hostname) ||
+      url.username || url.password || url.search || url.hash || !validPath) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), booksDevelopmentProxy()],
   server: {
     port: 5183,
     strictPort: true,

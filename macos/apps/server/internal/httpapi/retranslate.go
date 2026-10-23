@@ -94,9 +94,9 @@ func (s *Server) handleRetranslate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// 原文用书库目录定位，而不是信 documents.pdf_path 那一列：
-// 旧数据里这列可能为空，但库里的 PDF 是真实存在的（documentHasPDF 也是这么判断的）。
-pdfPath, found := paths.PDFFile(key)
-if !found {
+	// 旧数据里这列可能为空，但库里的 PDF 是真实存在的（documentHasPDF 也是这么判断的）。
+	pdfPath, found := paths.PDFFile(key)
+	if !found {
 		writeError(w, http.StatusConflict, "书库里找不到这篇论文的 PDF 文件，无法重新翻译")
 		return
 	}

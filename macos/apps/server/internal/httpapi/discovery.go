@@ -133,11 +133,11 @@ func (s *Server) handleDailyRecommendations(w http.ResponseWriter, r *http.Reque
 func parseDailyRecommendationRules(r *http.Request) (dailyRecommendationRules, error) {
 	values := r.URL.Query()
 	rules := dailyRecommendationRules{
-		Field: strings.TrimSpace(values.Get("field")),
+		Field:    strings.TrimSpace(values.Get("field")),
 		Keywords: splitDailyRuleValues(values.Get("keywords")),
-		Exclude: splitDailyRuleValues(values.Get("exclude")),
-		Venues: splitDailyRuleValues(values.Get("venues")),
-		Years: 2,
+		Exclude:  splitDailyRuleValues(values.Get("exclude")),
+		Venues:   splitDailyRuleValues(values.Get("venues")),
+		Years:    2,
 	}
 	if raw := strings.TrimSpace(values.Get("years")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {

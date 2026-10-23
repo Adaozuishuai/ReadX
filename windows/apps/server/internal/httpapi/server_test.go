@@ -103,6 +103,19 @@ func decode(t *testing.T, res *http.Response) map[string]any {
 	return payload
 }
 
+// latestSchemaVersion 取内嵌迁移的真实最高版本号。
+//
+// 这里刻意不写字面量：写死数字会让「加一次迁移」就等于「测试失败一次」，
+// 而失败信息只说「内容异常」，看的人会以为是功能坏了（真发生过）。
+func latestSchemaVersion(t *testing.T) int {
+	t.Helper()
+	version, err := db.LatestVersion()
+	if err != nil {
+		t.Fatalf("读取迁移版本号失败: %v", err)
+	}
+	return version
+}
+
 func TestHealthzNeedsNoToken(t *testing.T) {
 	frontend, _, _ := newTestServer(t, nil)
 	res := do(t, frontend, http.MethodGet, "/healthz", "")
@@ -110,7 +123,7 @@ func TestHealthzNeedsNoToken(t *testing.T) {
 		t.Fatalf("healthz 应公开可访问，实际 %d", res.StatusCode)
 	}
 	payload := decode(t, res)
-	if payload["ok"] != true || payload["schemaVersion"] != float64(6) {
+	if payload["ok"] != true || payload["schemaVersion"] != float64(latestSchemaVersion(t)) {
 		t.Fatalf("healthz 内容异常: %v", payload)
 	}
 }
@@ -154,7 +167,7 @@ func TestMetaWithToken(t *testing.T) {
 	if payload["dbPath"] != cfg.DBPath() {
 		t.Fatalf("meta.dbPath 异常: %v", payload["dbPath"])
 	}
-	if payload["schemaVersion"] != float64(6) || payload["documentsTotal"] != float64(0) {
+	if payload["schemaVersion"] != float64(latestSchemaVersion(t)) || payload["documentsTotal"] != float64(0) {
 		t.Fatalf("meta 计数异常: %v", payload)
 	}
 	if started, _ := payload["startedAt"].(string); started == "" {

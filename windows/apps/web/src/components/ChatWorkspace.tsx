@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useChat } from '../hooks/useChat';
+import type { ChatChunk } from '../api/client';
 import type { AIPreferences } from '../hooks/useAIPreferences';
 import type { ParagraphQuestion } from './ParagraphActions';
 import { MathText } from './FormulaContent';
@@ -107,11 +108,16 @@ export function AssistantMessage({ text, onCite }: { text: string; onCite: (page
   })}{notice && <small role="status">{notice}</small>}</div>;
 }
 
-export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQuestion, followup, preferences, onCite, onReading }: {
+export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQuestion, followup, preferences, onCite, onReading, transport, trackDocumentStatus, supportsImages = true, welcomeHeading, welcomeQuestions }: {
   documentKey: string | null; title: string; disabled: boolean; quote: { text: string; nonce: number } | null; paragraphQuestion?: ParagraphQuestion | null;
   followup?: { text: string; nonce: number } | null; preferences: AIPreferences; onCite: (page: number) => void; onReading?: () => void;
+  transport?: (request: { key: string; mode?: string; question: string; scope?: string; history?: Array<{ role: string; text: string }>; images?: string[] }, onChunk: (chunk: ChatChunk) => void, signal?: AbortSignal) => Promise<void>;
+  trackDocumentStatus?: boolean;
+  supportsImages?: boolean;
+  welcomeHeading?: string;
+  welcomeQuestions?: string[];
 }) {
-  const chat = useChat(documentKey);
+  const chat = useChat(documentKey, transport, trackDocumentStatus);
   const [draft, setDraft] = useState('');
   const [paragraph, setParagraph] = useState<ParagraphQuestion | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -201,7 +207,7 @@ export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQu
       <header className="codex-conversation-head"><button className="codex-history-toggle precision-button" onClick={() => setHistoryOpen((v) => !v)} aria-expanded={historyOpen}>历史</button><div><strong>与论文一起思考</strong><small title={title}>{title || '当前文献'}</small></div>{onReading && <button className="precision-button" onClick={onReading}>精读五重奏</button>}</header>
       <div ref={scroller} className="codex-scroll" onScroll={() => { const el = scroller.current; if (el) nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
         <div className="codex-messages" aria-live="polite" aria-relevant="additions">
-          {!chat.turns.length && <div className="codex-welcome"><span className="codex-emblem">◈</span><h2>从一个好问题开始</h2><div>{['作者的研究假设是什么，实验支持到什么范围？', '按输入、模块、输出解释方法，并指出关键公式。', '哪些复现参数缺失？帮我列出核对步骤。'].map((q) => <button key={q} onClick={() => { setDraft(q); input.current?.focus(); }}>{q}<span>↗</span></button>)}</div></div>}
+          {!chat.turns.length && <div className="codex-welcome"><span className="codex-emblem">◈</span><h2>{welcomeHeading || '从一个好问题开始'}</h2><div>{(welcomeQuestions || ['作者的研究假设是什么，实验支持到什么范围？', '按输入、模块、输出解释方法，并指出关键公式。', '哪些复现参数缺失？帮我列出核对步骤。']).map((q) => <button key={q} onClick={() => { setDraft(q); input.current?.focus(); }}>{q}<span>↗</span></button>)}</div></div>}
           {chat.turns.map((turn, index) => <article key={turn.id} className={`codex-turn ${turn.role === 'user' ? 'user' : 'assistant'}`}>
             {turn.role === 'ai' && <header>◈ AI 助教 <span>{turn.model || turn.provider || '默认模型'}{turn.reasoningEffort ? ` / ${effortLabel(turn.reasoningEffort)}` : ' / 默认强度'}</span></header>}
             {turn.text ? turn.role === 'ai' ? <AssistantMessage text={turn.text} onCite={onCite} /> : <div className="assistant-paragraph">{turn.text}</div> : chat.busy && index === chat.turns.length - 1 ? <p className="codex-wait" role="status"><span />正在结合原文分析 · {elapsed}s</p> : null}
@@ -221,7 +227,7 @@ export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQu
           <div className="composer-context-tools" ref={tools}>
             <button type="button" className="composer-icon-button composer-add" aria-label="添加上下文或附件" aria-expanded={addOpen} aria-haspopup="dialog" disabled={disabled || !documentKey || chat.busy} onClick={() => { setAddOpen(!addOpen); setContextOpen(false); }}><WorkspaceIcon name="plus" size={22} /></button>
             <button type="button" className="composer-context-trigger" aria-label="查看论文上下文" aria-expanded={contextOpen} aria-haspopup="dialog" disabled={!documentKey} onClick={() => { setContextOpen(!contextOpen); setAddOpen(false); }}><WorkspaceIcon name="shield" size={17} /><span>论文上下文</span></button>
-            {addOpen && <div className="composer-tools-menu" role="dialog" aria-label="添加上下文"><button type="button" onClick={() => { fileInput.current?.click(); setAddOpen(false); }}><WorkspaceIcon name="file" size={17} />附加文本文件</button><button type="button" onClick={() => { imageInput.current?.click(); setAddOpen(false); }}><WorkspaceIcon name="file" size={17} />附加图片</button><button type="button" onClick={() => { setDraft((value) => `${value}${value ? '\n' : ''}请结合《${title || '当前论文'}》分析：`); setAddOpen(false); input.current?.focus(); }}><WorkspaceIcon name="plus" size={17} />引用当前论文</button>{onReading && <button type="button" onClick={() => { setAddOpen(false); onReading(); }}><WorkspaceIcon name="sparkles" size={17} />打开精读五重奏</button>}</div>}
+            {addOpen && <div className="composer-tools-menu" role="dialog" aria-label="添加上下文"><button type="button" onClick={() => { fileInput.current?.click(); setAddOpen(false); }}><WorkspaceIcon name="file" size={17} />附加文本文件</button>{supportsImages && <button type="button" onClick={() => { imageInput.current?.click(); setAddOpen(false); }}><WorkspaceIcon name="file" size={17} />附加图片</button>}<button type="button" onClick={() => { setDraft((value) => `${value}${value ? '\n' : ''}请结合《${title || '当前论文'}》分析：`); setAddOpen(false); input.current?.focus(); }}><WorkspaceIcon name="plus" size={17} />引用当前论文</button>{onReading && <button type="button" onClick={() => { setAddOpen(false); onReading(); }}><WorkspaceIcon name="sparkles" size={17} />打开精读五重奏</button>}</div>}
             {contextOpen && <div className="composer-tools-menu composer-paper-context" role="dialog" aria-label="论文上下文"><strong>当前论文</strong><p>{title || '当前文献'}</p>{paragraph && <button type="button" onClick={() => { setContextOpen(false); onCite(paragraph.position); }}>查看 {paragraph.kind === 'pdf' ? 'Page' : 'Chapter'} {paragraph.position} ↗</button>}</div>}
           </div>
           <div className="composer-trailing-tools"><AIModelControls preferences={preferences} variant="composer" />
@@ -230,7 +236,7 @@ export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQu
           </div>
         </div>
         <input ref={fileInput} className="sr-only" type="file" tabIndex={-1} accept=".txt,.md,.csv,.json,.log,text/plain,text/markdown,text/csv,application/json" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void attachText(file); }} />
-        <input ref={imageInput} className="sr-only" type="file" tabIndex={-1} accept="image/png,image/jpeg,image/webp" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void attachImage(file); }} />
+        {supportsImages && <input ref={imageInput} className="sr-only" type="file" tabIndex={-1} accept="image/png,image/jpeg,image/webp" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void attachImage(file); }} />}
       </div>{(notice || chat.storageError || voice.error) && <div className="codex-composer-foot">{notice && <span role="status">{notice}</span>}{voice.error && <span role="alert">{voice.error}</span>}{chat.storageError && <span role="alert" className="text-bad">{chat.storageError}</span>}</div>}</div>
     </section>
   </div>;

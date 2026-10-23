@@ -1,0 +1,483 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { LatexAutoFixResult, LatexBuild, LatexSnapshot } from '@cbct/shared';
+import { api, latexAIFix, streamLatexChat, type LatexAISettings } from '../../api/client';
+import { useAIPreferences } from '../../hooks/useAIPreferences';
+import { ChatWorkspace } from '../ChatWorkspace';
+
+export function LatexAIAssistant({
+  projectId,
+  projectTitle,
+  filePath,
+  source,
+  build,
+  aiAutoFix,
+  autoFixRunning,
+  autoFixStages,
+  autoFixResult,
+  autoFixError,
+  snapshots,
+  onClose,
+  onApplyFix,
+  onCompile,
+  compiling,
+  onAutoFix,
+  onRollbackSnapshot,
+  onRefreshSnapshots,
+}: {
+  projectId: string;
+  projectTitle: string;
+  filePath: string;
+  source: string;
+  build: LatexBuild | null;
+  /** 「AI 直接改文件」总开关：关着就不提供直接写盘入口。 */
+  aiAutoFix: boolean;
+  autoFixRunning: boolean;
+  autoFixStages: string[];
+  autoFixResult: LatexAutoFixResult | null;
+  autoFixError: string;
+  snapshots: LatexSnapshot[];
+  onClose: () => void;
+  onApplyFix: (proposal: { filePath: string; original: string; content: string }) => Promise<string>;
+  onCompile: () => void;
+  compiling: boolean;
+  onAutoFix: (question: string) => void;
+  onRollbackSnapshot: (snapshotId: string) => void;
+  onRefreshSnapshots: () => void;
+}) {
+  const preferences = useAIPreferences();
+  const chatKey = `latex-project:${projectId}`;
+  const [fixing, setFixing] = useState(false);
+  const [fixError, setFixError] = useState('');
+  const [fixNotice, setFixNotice] = useState('');
+  const [proposal, setProposal] = useState<{ filePath: string; original: string; content: string; summary: string } | null>(null);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [autoFixNote, setAutoFixNote] = useState('');
+
+  // ---- LaTeX 自己的模型渠道（与全局分开） ----
+  const [modelSettings, setModelSettings] = useState<LatexAISettings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [draft, setDraft] = useState({
+    followGlobal: true,
+    provider: 'openai',
+    baseURL: '',
+    model: '',
+    reasoningEffort: '',
+    apiKey: '',
+  });
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
+  const [settingsNotice, setSettingsNotice] = useState('');
+
+  const loadModelSettings = useCallback(async () => {
+    try {
+      const view = await api.latexAISettings();
+      setModelSettings(view);
+      setDraft((current) => ({
+        ...current,
+        followGlobal: view.followGlobal,
+        provider: view.provider === 'anthropic' ? 'anthropic' : 'openai',
+        baseURL: view.baseURL,
+        model: view.model,
+        reasoningEffort: view.reasoningEffort,
+      }));
+    } catch (cause) {
+      setSettingsError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadModelSettings();
+  }, [loadModelSettings]);
+
+  const saveModelSettings = async () => {
+    setSettingsBusy(true);
+    setSettingsError('');
+    setSettingsNotice('');
+    try {
+      const view = await api.saveLatexAISettings({
+        followGlobal: draft.followGlobal,
+        provider: draft.provider,
+        baseURL: draft.baseURL,
+        model: draft.model,
+        reasoningEffort: draft.reasoningEffort,
+        apiKey: draft.apiKey.trim() || undefined,
+      });
+      setModelSettings(view);
+      setDraft((current) => ({ ...current, apiKey: '' }));
+      setSettingsNotice(
+        view.followGlobal
+          ? '已改为跟随全局 AI 助手设置。'
+          : view.keyConfigured
+            ? '已保存：LaTeX 的 AI 助手将使用这条渠道（全局设置未改动）。'
+            : '已保存渠道，但这条地址还没有 Key：请在上面填入 Key 再保存一次。',
+      );
+      // 让「是否可用」等状态立刻跟上。
+      await preferences.reload();
+    } catch (cause) {
+      setSettingsError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  const fetchModels = async () => {
+    setSettingsBusy(true);
+    setSettingsError('');
+    try {
+      const result = await api.listModels({
+        provider: draft.provider,
+        baseURL: draft.baseURL,
+        apiKey: draft.apiKey.trim() || undefined,
+        refresh: true,
+      });
+      setModelOptions(result.models ?? []);
+      setSettingsNotice(
+        (result.models ?? []).length
+          ? `拿到 ${result.models.length} 个模型，点上面输入框即可选择。`
+          : result.notice || '这个地址没有返回模型列表，请手动填写模型名。',
+      );
+    } catch (cause) {
+      setSettingsError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  // 按钮的可用性必须看 LaTeX 的**生效**渠道，而不是全局状态：
+  // 只单独配了 LaTeX 渠道、全局仍是 codex 时，这些入口照样要能用。
+  const effective = modelSettings?.status;
+  /**
+   * 给聊天面板看的偏好：把渠道信息换成 LaTeX **实际生效**的那条。
+   *
+   * 不这么做的话，底部会写着「和 Codex 一起工作」，而请求其实发往 LaTeX 自己的渠道——
+   * 界面说的和真正发生的不一致，这类小事最容易让人误判走了哪个模型。
+   */
+  const chatPreferences = useMemo(() => {
+    if (!modelSettings || modelSettings.followGlobal) return preferences;
+    return {
+      ...preferences,
+      settings: preferences.settings
+        ? {
+            ...preferences.settings,
+            provider: modelSettings.provider,
+            model: modelSettings.model,
+            status: modelSettings.status,
+          }
+        : preferences.settings,
+    };
+  }, [modelSettings, preferences]);
+  const effectiveReady = effective?.configured ?? false;
+  const transport = useCallback(
+    (request: { key: string; question: string; history?: Array<{ role: string; text: string }> }, onChunk: Parameters<typeof streamLatexChat>[1], signal?: AbortSignal) =>
+      streamLatexChat(
+        { key: request.key, projectId, projectTitle, filePath, source, question: request.question, history: request.history },
+        onChunk,
+        signal,
+      ),
+    [filePath, projectId, projectTitle, source],
+  );
+
+  const generateFix = async () => {
+    if (!build || build.stale || fixing || !effectiveReady || !/\.tex$/i.test(filePath)) return;
+    const normalize = (path: string) => path.replace(/\\/g, '/').replace(/^\.\//, '');
+    const relevantDiagnostics = build.diagnostics.filter((diagnostic) => !diagnostic.file || normalize(diagnostic.file) === normalize(filePath));
+    if (build.errorCount > 0 && build.diagnostics.some((diagnostic) => diagnostic.file && normalize(diagnostic.file) !== normalize(filePath)) && !relevantDiagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+      setFixError('错误位于其他文件。请先在编译诊断中点击对应错误，打开该 .tex 文件后再修复。');
+      return;
+    }
+    setFixing(true);
+    setFixError('');
+    setFixNotice('');
+    setProposal(null);
+    try {
+      const log = build.hasLog ? (await api.latexBuildLog(build.id)).log : '';
+      const result = await latexAIFix({
+        projectId,
+        projectTitle,
+        filePath,
+        source,
+        diagnostics: relevantDiagnostics,
+        buildLog: log.slice(-200_000),
+      });
+      setProposal({ filePath, original: source, content: result.content, summary: result.summary });
+    } catch (cause) {
+      setFixError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setFixing(false);
+    }
+  };
+
+  const applyProposal = async () => {
+    if (!proposal || proposal.content === proposal.original) return;
+    setFixNotice('');
+    const notice = await onApplyFix(proposal);
+    setFixNotice(notice);
+    if (notice.startsWith('已应用并保存')) setProposal(null);
+  };
+
+  return (
+    <aside className="latex-ai-column" aria-label="LaTeX AI 助手">
+      <header className="latex-ai-column-head">
+        <div>
+          <strong>LaTeX AI 助手</strong>
+          <span title={modelSettings?.followGlobal ? '当前跟随全局 AI 助手设置' : '当前使用 LaTeX 单独的模型渠道'}>
+            {effective?.configured
+              ? `${effective.model || effective.provider}${modelSettings?.followGlobal ? '（跟随全局）' : '（LaTeX 单独）'}`
+              : '尚未配置可用渠道'}
+          </span>
+        </div>
+        <div className="latex-ai-head-actions">
+          <button type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)} title="LaTeX 的 AI 助手可以单独指定模型，不影响阅读与翻译用的渠道">
+            模型
+          </button>
+          <button type="button" onClick={onClose} aria-label="关闭 AI 助手">×</button>
+        </div>
+      </header>
+
+      {settingsOpen ? (
+        <section className="latex-ai-models" aria-label="LaTeX 的模型设置">
+          <label className="latex-ai-model-toggle">
+            <input
+              type="checkbox"
+              checked={draft.followGlobal}
+              onChange={(event) => setDraft((current) => ({ ...current, followGlobal: event.target.checked }))}
+            />
+            跟随全局 AI 助手设置
+          </label>
+          {draft.followGlobal ? (
+            <p className="latex-ai-models-hint">
+              当前使用全局渠道（
+              {effective?.model || effective?.provider || '未配置'}）。想让 LaTeX 单独走别的模型，
+              取消勾选后填一条 HTTP 渠道即可——阅读与翻译用的渠道不会被动。
+            </p>
+          ) : (
+            <>
+              <div className="latex-ai-model-row">
+                <select
+                  value={draft.provider}
+                  onChange={(event) => setDraft((current) => ({ ...current, provider: event.target.value }))}
+                  aria-label="接入方式"
+                >
+                  <option value="openai">OpenAI 兼容</option>
+                  <option value="anthropic">Anthropic</option>
+                </select>
+                <input
+                  value={draft.baseURL}
+                  onChange={(event) => setDraft((current) => ({ ...current, baseURL: event.target.value }))}
+                  placeholder="https://api.example.com/v1"
+                  aria-label="API 地址"
+                />
+              </div>
+              <div className="latex-ai-model-row">
+                <input
+                  value={draft.model}
+                  onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
+                  placeholder="模型名，例如 deepseek-v4-flash"
+                  list="latex-ai-model-options"
+                  aria-label="模型"
+                />
+                <datalist id="latex-ai-model-options">
+                  {modelOptions.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+                <button type="button" disabled={settingsBusy || !draft.baseURL} onClick={() => void fetchModels()}>
+                  拉取模型
+                </button>
+              </div>
+              <div className="latex-ai-model-row">
+                <input
+                  type="password"
+                  value={draft.apiKey}
+                  onChange={(event) => setDraft((current) => ({ ...current, apiKey: event.target.value }))}
+                  placeholder={modelSettings?.keyConfigured ? '这条地址已保存 Key（留空则沿用）' : '填这条地址的 API Key'}
+                  aria-label="API Key"
+                />
+                <select
+                  value={draft.reasoningEffort}
+                  onChange={(event) => setDraft((current) => ({ ...current, reasoningEffort: event.target.value }))}
+                  aria-label="推理强度"
+                >
+                  <option value="">推理强度：默认</option>
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                </select>
+              </div>
+              <p className="latex-ai-models-hint">
+                只支持 HTTP 渠道：CLI 渠道（Codex/Claude Code/Kimi Code）靠拉起本机命令行进程，
+                在后台服务里通常不可用。Key 按「渠道 + 地址」单独保存，绝不会被发到别的地址。
+              </p>
+            </>
+          )}
+          {settingsError ? <p className="latex-ai-fix-error" role="alert">{settingsError}</p> : null}
+          {settingsNotice ? <p className="latex-ai-fix-notice" role="status">{settingsNotice}</p> : null}
+          <div className="latex-ai-model-actions">
+            <button type="button" onClick={() => void saveModelSettings()} disabled={settingsBusy}>
+              {settingsBusy ? '处理中…' : '保存模型设置'}
+            </button>
+            <button type="button" onClick={() => void loadModelSettings()} disabled={settingsBusy}>
+              重新读取
+            </button>
+          </div>
+        </section>
+      ) : null}
+      {!preferences.loading && modelSettings && !effectiveReady ? (
+        <p className="latex-ai-unconfigured">这个项目还没有可用的 AI 渠道：点上面的「模型」为 LaTeX 指定一条 HTTP 渠道（不影响阅读与翻译用的渠道），或在 AI 设置里配置全局渠道。</p>
+      ) : null}
+      <section className="latex-ai-fix" aria-label="AI 编译修复">
+        {/* 直接写盘：默认关闭，开启后由服务端保证「快照 → 写入 → 强制编译 → 未改善回滚」。 */}
+        <div className="latex-ai-autofix">
+          <div className="latex-ai-fix-actions">
+            <button
+              type="button"
+              className={aiAutoFix ? 'primary' : ''}
+              onClick={() => onAutoFix(autoFixNote)}
+              disabled={
+                !aiAutoFix || autoFixRunning || compiling || !effectiveReady || !build || build.stale || !/\.tex$/i.test(filePath)
+              }
+              title={
+                !aiAutoFix
+                  ? '需要在工具栏打开「AI 直接改文件」'
+                  : 'AI 会直接改写这个文件：写前自动快照，写后强制重新编译，错误没减少就自动回滚'
+              }
+            >
+              {autoFixRunning ? '正在自动修复…' : '自动修复（直接改文件）'}
+            </button>
+            <span>
+              {!aiAutoFix
+                ? '未开启「AI 直接改文件」：当前只能给建议，由你确认后应用'
+                : !build
+                  ? '先编译一次，AI 才知道要修什么'
+                  : build.stale
+                    ? '源码已变更，请先重新编译'
+                    : `${build.errorCount} 个错误 · ${filePath}`}
+            </span>
+          </div>
+          <input
+            className="latex-ai-autofix-note"
+            value={autoFixNote}
+            placeholder="可选：对这次修复的附加要求（例如「不要动参考文献」）"
+            onChange={(event) => setAutoFixNote(event.target.value)}
+          />
+          {autoFixRunning && autoFixStages.length ? (
+            <ol className="latex-ai-autofix-stages">
+              {autoFixStages.map((stage, index) => (
+                <li key={`${index}-${stage}`} className={index === autoFixStages.length - 1 ? 'current' : ''}>
+                  {stage}
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          {autoFixError ? (
+            <p className="latex-ai-fix-error" role="alert">
+              {autoFixError}
+            </p>
+          ) : null}
+          {autoFixResult ? (
+            <div className={`latex-ai-autofix-result outcome-${autoFixResult.outcome}`} role="status">
+              <strong>
+                {autoFixResult.outcome === 'kept' ? '已应用修改' : '已自动回滚'}
+                {' · '}
+                {autoFixResult.filePath}
+              </strong>
+              <p>{autoFixResult.reason}</p>
+              <p className="latex-ai-autofix-counts">
+                编译错误 {autoFixResult.beforeErrors} → {autoFixResult.afterErrors}
+                {autoFixResult.baselineRecompiled ? '（基线是本次现编译的）' : ''}
+                {' · '}
+                {Math.round(autoFixResult.durationMs / 1000)} 秒
+                {autoFixResult.bytesChanged ? ` · ${autoFixResult.bytesChanged > 0 ? '+' : ''}${autoFixResult.bytesChanged} 字节` : ''}
+              </p>
+              {autoFixResult.summary ? <p className="latex-ai-autofix-summary">{autoFixResult.summary}</p> : null}
+              <div className="latex-ai-fix-review-actions">
+                <button type="button" onClick={onCompile} disabled={compiling}>
+                  {compiling ? '正在编译…' : '重新编译'}
+                </button>
+                {autoFixResult.snapshotId ? (
+                  <button type="button" onClick={() => onRollbackSnapshot(autoFixResult.snapshotId)}>
+                    回滚到修改前
+                  </button>
+                ) : null}
+              </div>
+              {autoFixResult.outcome === 'rolled-back' && autoFixResult.rejectedContent ? (
+                <details className="latex-ai-autofix-rejected">
+                  <summary>看看 AI 想改成什么（已回滚，未生效）</summary>
+                  <pre>{autoFixResult.rejectedContent}</pre>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+          {snapshots.length ? (
+            <details className="latex-ai-snapshots" onToggle={(event) => {
+              if ((event.target as HTMLDetailsElement).open) onRefreshSnapshots();
+            }}>
+              <summary>源码快照（{snapshots.length}）· 可回滚</summary>
+              <ul>
+                {snapshots.slice(0, 6).map((snapshot) => (
+                  <li key={snapshot.id}>
+                    <span>
+                      {snapshot.createdAt.replace('T', ' ').replace('Z', '')} · {snapshot.note || '快照'} · {snapshot.fileCount} 个文件
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm('回滚会把项目源码恢复到这份快照的状态，快照之后新增的文件会被移除。继续？')) {
+                          onRollbackSnapshot(snapshot.id);
+                        }
+                      }}
+                    >
+                      回滚
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="latex-ai-snapshots-hint">回滚是「回到那一刻」：之后新增的文件会被移除，之后的所有改动都会丢失。</p>
+            </details>
+          ) : null}
+        </div>
+
+        <div className="latex-ai-fix-actions">
+          <button type="button" onClick={() => void generateFix()} disabled={!effectiveReady || !build || build.stale || fixing || !/\.tex$/i.test(filePath)}>
+            {fixing ? '正在分析编译错误…' : 'AI 修复建议（我先看）'}
+          </button>
+          <span>{!build ? '先编译一次，再让 AI 修复' : build.stale ? '源码已变更，请先重新编译' : `${build.errorCount} 个错误 · ${filePath}`}</span>
+        </div>
+        {fixError ? <p className="latex-ai-fix-error" role="alert">{fixError}</p> : null}
+        {fixNotice ? <p className="latex-ai-fix-notice" role="status">{fixNotice}{fixNotice.startsWith('已应用并保存') ? <button type="button" onClick={onCompile} disabled={compiling}>{compiling ? '正在编译…' : '重新编译'}</button> : null}</p> : null}
+        {proposal ? (
+          <div className="latex-ai-fix-review">
+            <div className="latex-ai-fix-summary"><strong>修改建议 · {proposal.filePath}</strong><p>{proposal.summary || 'AI 已生成当前文件的完整修改版本。'}</p></div>
+            <div className="latex-ai-fix-review-actions">
+              <div>
+                <button type="button" className={!showOriginal ? 'active' : ''} onClick={() => setShowOriginal(false)}>修改后</button>
+                <button type="button" className={showOriginal ? 'active' : ''} onClick={() => setShowOriginal(true)}>修改前</button>
+              </div>
+              <button type="button" onClick={() => void applyProposal()} disabled={proposal.content === proposal.original}>应用并保存</button>
+              <button type="button" onClick={() => setProposal(null)}>丢弃</button>
+            </div>
+            <pre className={showOriginal ? 'original' : 'proposed'}>{showOriginal ? proposal.original : proposal.content}</pre>
+          </div>
+        ) : null}
+      </section>
+      <ChatWorkspace
+        documentKey={chatKey}
+        title={projectTitle}
+        disabled={!effectiveReady}
+        quote={null}
+        preferences={chatPreferences}
+        onCite={() => {}}
+        transport={transport}
+        trackDocumentStatus={false}
+        supportsImages={false}
+        welcomeHeading="和 AI 一起写论文"
+        welcomeQuestions={[
+          '检查当前 LaTeX 源码中的错误，并给出修复建议。',
+          '帮我润色这一段论文文字，保留原意并返回 LaTeX。',
+          '为当前章节补充一个结构清晰的写作提纲。',
+        ]}
+      />
+    </aside>
+  );
+}

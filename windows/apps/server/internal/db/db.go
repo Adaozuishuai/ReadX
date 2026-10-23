@@ -80,6 +80,63 @@ type migration struct {
 	name    string
 }
 
+// LatestVersion 返回内嵌迁移里的最高版本号（没有迁移时为 0）。
+//
+// 对外暴露它是为了让「schemaVersion 是多少」这件事只有一个来源：
+// 测试里写死一个数字，每加一次迁移就会失败一次，而失败信息只说「内容异常」，
+// 看起来像功能坏了（真发生过）。调用方应当拿它做期望值，而不是抄一个字面量。
+func LatestVersion() (int, error) {
+	entries, err := migrationEntries()
+	if err != nil {
+		return 0, err
+	}
+	latest := 0
+	for _, entry := range entries {
+		if entry.version > latest {
+			latest = entry.version
+		}
+	}
+	return latest, nil
+}
+
+// MigrationCount 返回内嵌迁移的条数。
+//
+// 与 LatestVersion 分开是刻意的：版本号与条数只有在「编号连续」时才相等，
+// 用版本号冒充条数会让测试在编号出现空洞时给出误导性的结论。
+func MigrationCount() (int, error) {
+	entries, err := migrationEntries()
+	if err != nil {
+		return 0, err
+	}
+	return len(entries), nil
+}
+
+// migrationEntries 解析内嵌迁移目录，按版本号升序返回；版本号重复直接报错。
+func migrationEntries() ([]migration, error) {
+	entries, err := fs.ReadDir(migrationFS, "migrations")
+	if err != nil {
+		return nil, fmt.Errorf("读取内嵌迁移失败: %w", err)
+	}
+	parsed := make([]migration, 0, len(entries))
+	seen := map[int]string{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		version, convErr := parseVersion(entry.Name())
+		if convErr != nil {
+			return nil, convErr
+		}
+		if dup, ok := seen[version]; ok {
+			return nil, fmt.Errorf("迁移版本号重复：%s 与 %s", dup, entry.Name())
+		}
+		seen[version] = entry.Name()
+		parsed = append(parsed, migration{version: version, name: entry.Name()})
+	}
+	sort.Slice(parsed, func(i, j int) bool { return parsed[i].version < parsed[j].version })
+	return parsed, nil
+}
+
 // Migrate 幂等：已记录的版本号跳过，未应用的按序在事务内执行。
 func Migrate(ctx context.Context, handle *sql.DB) error {
 	if _, err := handle.ExecContext(ctx,
@@ -91,27 +148,10 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 		return fmt.Errorf("创建迁移记录表失败: %w", err)
 	}
 
-	entries, err := fs.ReadDir(migrationFS, "migrations")
+	list, err := migrationEntries()
 	if err != nil {
-		return fmt.Errorf("读取内嵌迁移失败: %w", err)
+		return err
 	}
-	var list []migration
-	seen := map[int]string{}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
-		}
-		version, err := parseVersion(entry.Name())
-		if err != nil {
-			return err
-		}
-		if dup, ok := seen[version]; ok {
-			return fmt.Errorf("迁移版本号重复：%s 与 %s", dup, entry.Name())
-		}
-		seen[version] = entry.Name()
-		list = append(list, migration{version: version, name: entry.Name()})
-	}
-	sort.Slice(list, func(i, j int) bool { return list[i].version < list[j].version })
 
 	for _, m := range list {
 		var applied int
