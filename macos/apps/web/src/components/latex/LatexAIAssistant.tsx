@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LatexAutoFixResult, LatexBuild, LatexSnapshot } from '@cbct/shared';
 import { api, latexAIFix, streamLatexChat, type LatexAISettings } from '../../api/client';
 import { useAIPreferences } from '../../hooks/useAIPreferences';
 import { ChatWorkspace } from '../ChatWorkspace';
+import { runLatexChat } from '../../lib/latex/latexChatTransport';
 
 export function LatexAIAssistant({
   projectId,
@@ -37,7 +38,7 @@ export function LatexAIAssistant({
   autoFixError: string;
   snapshots: LatexSnapshot[];
   onClose: () => void;
-  onApplyFix: (proposal: { filePath: string; original: string; content: string }) => Promise<string>;
+  onApplyFix: (proposal: { filePath: string; original: string; content: string }, signal?: AbortSignal) => Promise<string>;
   onCompile: () => void;
   compiling: boolean;
   onAutoFix: (question: string) => void;
@@ -47,11 +48,17 @@ export function LatexAIAssistant({
   const preferences = useAIPreferences();
   const chatKey = `latex-project:${projectId}`;
   const [fixing, setFixing] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [fixError, setFixError] = useState('');
   const [fixNotice, setFixNotice] = useState('');
   const [proposal, setProposal] = useState<{ filePath: string; original: string; content: string; summary: string } | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [fixPanelOpen, setFixPanelOpen] = useState(false);
   const [autoFixNote, setAutoFixNote] = useState('');
+
+  useEffect(() => {
+    if (proposal || autoFixRunning) setFixPanelOpen(true);
+  }, [autoFixRunning, proposal]);
 
   // ---- LaTeX 自己的模型渠道（与全局分开） ----
   const [modelSettings, setModelSettings] = useState<LatexAISettings | null>(null);
@@ -65,6 +72,9 @@ export function LatexAIAssistant({
     apiKey: '',
   });
   const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelQuery, setModelQuery] = useState('');
+  const modelBox = useRef<HTMLDivElement>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState('');
   const [settingsNotice, setSettingsNotice] = useState('');
@@ -76,10 +86,19 @@ export function LatexAIAssistant({
       setDraft((current) => ({
         ...current,
         followGlobal: view.followGlobal,
-        provider: view.provider === 'anthropic' ? 'anthropic' : 'openai',
-        baseURL: view.baseURL,
-        model: view.model,
-        reasoningEffort: view.reasoningEffort,
+        // The settings view reports the effective global channel while following
+        // global settings. Keep that model out of the independent draft.
+        ...(view.followGlobal ? {
+          provider: 'openai',
+          baseURL: '',
+          model: '',
+          reasoningEffort: '',
+        } : {
+          provider: view.provider === 'anthropic' ? 'anthropic' : 'openai',
+          baseURL: view.baseURL,
+          model: view.model,
+          reasoningEffort: view.reasoningEffort,
+        }),
       }));
     } catch (cause) {
       setSettingsError(cause instanceof Error ? cause.message : String(cause));
@@ -89,6 +108,22 @@ export function LatexAIAssistant({
   useEffect(() => {
     void loadModelSettings();
   }, [loadModelSettings]);
+
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    const closeOnOutside = (event: PointerEvent) => {
+      if (!modelBox.current?.contains(event.target as Node)) setModelMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setModelMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [modelMenuOpen]);
 
   const saveModelSettings = async () => {
     setSettingsBusy(true);
@@ -132,9 +167,11 @@ export function LatexAIAssistant({
         refresh: true,
       });
       setModelOptions(result.models ?? []);
+      setModelQuery('');
+      setModelMenuOpen((result.models ?? []).length > 0);
       setSettingsNotice(
         (result.models ?? []).length
-          ? `拿到 ${result.models.length} 个模型，点上面输入框即可选择。`
+          ? `拿到 ${result.models.length} 个模型，可从模型列表中选择。`
           : result.notice || '这个地址没有返回模型列表，请手动填写模型名。',
       );
     } catch (cause) {
@@ -157,6 +194,11 @@ export function LatexAIAssistant({
     if (!modelSettings || modelSettings.followGlobal) return preferences;
     return {
       ...preferences,
+      // `preferences.model` is resolved from the global Codex catalog. Leaving it
+      // here makes the composer display that stale global model ahead of the
+      // actual LaTeX model in settings.
+      model: undefined,
+      catalog: [],
       settings: preferences.settings
         ? {
             ...preferences.settings,
@@ -170,7 +212,7 @@ export function LatexAIAssistant({
   const effectiveReady = effective?.configured ?? false;
   const transport = useCallback(
     (request: { key: string; question: string; history?: Array<{ role: string; text: string }> }, onChunk: Parameters<typeof streamLatexChat>[1], signal?: AbortSignal) =>
-      streamLatexChat(
+      runLatexChat(
         { key: request.key, projectId, projectTitle, filePath, source, question: request.question, history: request.history },
         onChunk,
         signal,
@@ -209,11 +251,19 @@ export function LatexAIAssistant({
   };
 
   const applyProposal = async () => {
-    if (!proposal || proposal.content === proposal.original) return;
+    if (!proposal || proposal.content === proposal.original || applying) return;
+    setApplying(true);
     setFixNotice('');
-    const notice = await onApplyFix(proposal);
-    setFixNotice(notice);
-    if (notice.startsWith('已应用并保存')) setProposal(null);
+    setFixError('');
+    try {
+      const notice = await onApplyFix(proposal);
+      setFixNotice(notice);
+      if (notice.startsWith('已应用并保存')) setProposal(null);
+    } catch (cause) {
+      setFixError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setApplying(false);
+    }
   };
 
   return (
@@ -229,7 +279,7 @@ export function LatexAIAssistant({
         </div>
         <div className="latex-ai-head-actions">
           <button type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)} title="LaTeX 的 AI 助手可以单独指定模型，不影响阅读与翻译用的渠道">
-            模型
+            模型设置
           </button>
           <button type="button" onClick={onClose} aria-label="关闭 AI 助手">×</button>
         </div>
@@ -269,19 +319,68 @@ export function LatexAIAssistant({
                   aria-label="API 地址"
                 />
               </div>
-              <div className="latex-ai-model-row">
+              <div className="latex-ai-model-row latex-ai-model-picker" ref={modelBox}>
                 <input
                   value={draft.model}
-                  onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
+                  onFocus={() => setModelMenuOpen(true)}
+                  onChange={(event) => {
+                    setDraft((current) => ({ ...current, model: event.target.value }));
+                    setModelQuery(event.target.value);
+                    setModelMenuOpen(true);
+                  }}
                   placeholder="模型名，例如 deepseek-v4-flash"
-                  list="latex-ai-model-options"
                   aria-label="模型"
+                  aria-expanded={modelMenuOpen}
+                  aria-controls="latex-ai-model-list"
+                  role="combobox"
+                  aria-autocomplete="list"
                 />
-                <datalist id="latex-ai-model-options">
-                  {modelOptions.map((name) => (
-                    <option key={name} value={name} />
-                  ))}
-                </datalist>
+                {modelOptions.length ? (
+                  <button
+                    type="button"
+                    className="ai-model-caret"
+                    onClick={() => setModelMenuOpen((open) => !open)}
+                    aria-label="展开模型列表"
+                    aria-expanded={modelMenuOpen}
+                    title={`共 ${modelOptions.length} 个模型`}
+                  >
+                    ⌄
+                  </button>
+                ) : null}
+                {modelMenuOpen && modelOptions.length ? (
+                  <div className="ai-model-menu" id="latex-ai-model-list">
+                    <input
+                      className="ai-model-search"
+                      value={modelQuery}
+                      onChange={(event) => setModelQuery(event.target.value)}
+                      placeholder={`筛选 ${modelOptions.length} 个模型`}
+                      aria-label="筛选模型名"
+                    />
+                    <div className="ai-model-scroll" role="listbox" aria-label="模型列表">
+                      {modelOptions
+                        .filter((name) => name.toLowerCase().includes(modelQuery.trim().toLowerCase()))
+                        .map((name) => (
+                          <button
+                            key={name}
+                            type="button"
+                            role="option"
+                            aria-selected={name === draft.model}
+                            className={`ai-model-item${name === draft.model ? ' active' : ''}`}
+                            onClick={() => {
+                              setDraft((current) => ({ ...current, model: name }));
+                              setModelQuery('');
+                              setModelMenuOpen(false);
+                            }}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      {!modelOptions.some((name) => name.toLowerCase().includes(modelQuery.trim().toLowerCase())) ? (
+                        <p className="ai-model-empty">没有匹配的模型名</p>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
                 <button type="button" disabled={settingsBusy || !draft.baseURL} onClick={() => void fetchModels()}>
                   拉取模型
                 </button>
@@ -326,6 +425,8 @@ export function LatexAIAssistant({
       {!preferences.loading && modelSettings && !effectiveReady ? (
         <p className="latex-ai-unconfigured">这个项目还没有可用的 AI 渠道：点上面的「模型」为 LaTeX 指定一条 HTTP 渠道（不影响阅读与翻译用的渠道），或在 AI 设置里配置全局渠道。</p>
       ) : null}
+      <details className="latex-ai-tools" open={fixPanelOpen} onToggle={(event) => setFixPanelOpen(event.currentTarget.open)}>
+      <summary>编译修复与源码快照</summary>
       <section className="latex-ai-fix" aria-label="AI 编译修复">
         {/* 直接写盘：默认关闭，开启后由服务端保证「快照 → 写入 → 强制编译 → 未改善回滚」。 */}
         <div className="latex-ai-autofix">
@@ -339,7 +440,7 @@ export function LatexAIAssistant({
               }
               title={
                 !aiAutoFix
-                  ? '需要在工具栏打开「AI 直接改文件」'
+                  ? '需要在工具栏打开「自动修复写入」'
                   : 'AI 会直接改写这个文件：写前自动快照，写后强制重新编译，错误没减少就自动回滚'
               }
             >
@@ -347,7 +448,7 @@ export function LatexAIAssistant({
             </button>
             <span>
               {!aiAutoFix
-                ? '未开启「AI 直接改文件」：当前只能给建议，由你确认后应用'
+                ? '未开启「自动修复写入」：可先生成修复建议，再确认应用'
                 : !build
                   ? '先编译一次，AI 才知道要修什么'
                   : build.stale
@@ -454,13 +555,14 @@ export function LatexAIAssistant({
                 <button type="button" className={!showOriginal ? 'active' : ''} onClick={() => setShowOriginal(false)}>修改后</button>
                 <button type="button" className={showOriginal ? 'active' : ''} onClick={() => setShowOriginal(true)}>修改前</button>
               </div>
-              <button type="button" onClick={() => void applyProposal()} disabled={proposal.content === proposal.original}>应用并保存</button>
+              <button type="button" onClick={() => void applyProposal()} disabled={applying || proposal.content === proposal.original}>{applying ? '正在保存…' : '应用并保存'}</button>
               <button type="button" onClick={() => setProposal(null)}>丢弃</button>
             </div>
             <pre className={showOriginal ? 'original' : 'proposed'}>{showOriginal ? proposal.original : proposal.content}</pre>
           </div>
         ) : null}
       </section>
+      </details>
       <ChatWorkspace
         documentKey={chatKey}
         title={projectTitle}
@@ -477,6 +579,8 @@ export function LatexAIAssistant({
           '帮我润色这一段论文文字，保留原意并返回 LaTeX。',
           '为当前章节补充一个结构清晰的写作提纲。',
         ]}
+        onApplyEdit={onApplyFix}
+        composerHint="发送修改要求，确认对话中的卡片后保存"
       />
     </aside>
   );

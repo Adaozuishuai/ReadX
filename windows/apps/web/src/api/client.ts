@@ -204,6 +204,13 @@ export interface GenerateProgress {
   message: string;
 }
 
+export interface LatexAIEditProposal {
+  summary: string;
+  filePath: string;
+  original: string;
+  content: string;
+}
+
 export interface ChatChunk {
   meta?: { included: number; total: number; scope: string; unit?: string; provider?: string; model?: string; reasoningEffort?: string };
   progress?: string;
@@ -212,6 +219,7 @@ export interface ChatChunk {
   text?: string;
   error?: string;
   partial?: string;
+  edit?: LatexAIEditProposal | null;
 }
 
 /**
@@ -301,6 +309,16 @@ export function streamLatexChat(
   signal?: AbortSignal,
 ): Promise<void> {
   return streamChat(request, onChunk, signal, '/v1/ai/latex-chat');
+}
+
+export function latexAIEdit(requestBody: {
+  projectId: string;
+  projectTitle: string;
+  filePath: string;
+  source: string;
+  question: string;
+}): Promise<{ summary: string; filePath: string; original: string; content: string }> {
+  return request('/v1/ai/latex-edit', { method: 'POST', body: requestBody });
 }
 
 export function latexAIFix(requestBody: {

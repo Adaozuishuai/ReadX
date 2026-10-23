@@ -40,8 +40,14 @@ export function LatexWorkspace({
   const [assetError, setAssetError] = useState('');
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [paneWeights, setPaneWeights] = useState<[number, number, number]>([0.5, 0.5, 0]);
+  const [treeWidth, setTreeWidth] = useState(() => {
+    if (typeof window === 'undefined') return 250;
+    const saved = Number(window.localStorage.getItem('readx-latex-tree-width'));
+    return Number.isFinite(saved) && saved >= 180 ? Math.min(saved, 900) : 250;
+  });
   const panesRef = useRef<HTMLDivElement>(null);
   const resizeGesture = useRef<{ divider: 0 | 1; startX: number; weights: [number, number, number] } | null>(null);
+  const treeResizeGesture = useRef<{ startX: number; startWidth: number } | null>(null);
   const assetRequest = useRef(0);
   const lastCompiledSignature = useRef('');
   const assetUrl = assetPreview?.url;
@@ -63,11 +69,17 @@ export function LatexWorkspace({
   }, []);
 
   const resizePanes = useCallback((event: PointerEvent) => {
+    const treeGesture = treeResizeGesture.current;
+    if (treeGesture) {
+      const nextWidth = Math.max(180, Math.min(900, treeGesture.startWidth + event.clientX - treeGesture.startX));
+      setTreeWidth(nextWidth);
+      return;
+    }
     const gesture = resizeGesture.current;
     if (!gesture || !panesRef.current) return;
     const bounds = panesRef.current.getBoundingClientRect();
     const contentWidth = Math.max(bounds.width, panesRef.current.scrollWidth);
-    const fixedWidth = 250 + 6 * (assistantOpen ? 2 : 1) + 260 + 300 + (assistantOpen ? 320 : 0);
+    const fixedWidth = treeWidth + 6 * (assistantOpen ? 2 : 1) + 260 + 300 + (assistantOpen ? 320 : 0);
     const flexibleWidth = Math.max(1, contentWidth - fixedWidth);
     const left = gesture.divider;
     const pairTotal = gesture.weights[left]! + gesture.weights[left + 1]!;
@@ -79,13 +91,17 @@ export function LatexWorkspace({
       next[left + 1] = pairTotal - nextLeft;
       return next;
     });
-  }, [assistantOpen]);
+  }, [assistantOpen, treeWidth]);
 
   const stopResize = useCallback(() => {
+    if (treeResizeGesture.current) {
+      treeResizeGesture.current = null;
+      window.localStorage.setItem('readx-latex-tree-width', String(treeWidth));
+    }
     resizeGesture.current = null;
     document.body.style.removeProperty('cursor');
     document.body.style.removeProperty('user-select');
-  }, []);
+  }, [treeWidth]);
 
   useEffect(() => {
     window.addEventListener('pointermove', resizePanes);
@@ -106,13 +122,20 @@ export function LatexWorkspace({
     document.body.style.userSelect = 'none';
   };
 
+  const beginTreeResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    treeResizeGesture.current = { startX: event.clientX, startWidth: treeWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
   const nudgeDivider = (divider: 0 | 1, direction: -1 | 1) => {
     setPaneWeights((weights) => {
       const next: [number, number, number] = [...weights];
       const pairTotal = weights[divider]! + weights[divider + 1]!;
       const bounds = panesRef.current?.getBoundingClientRect();
       const contentWidth = Math.max(bounds?.width ?? 1200, panesRef.current?.scrollWidth ?? 0);
-      const fixedWidth = 250 + 6 * (assistantOpen ? 2 : 1) + 260 + 300 + (assistantOpen ? 320 : 0);
+      const fixedWidth = treeWidth + 6 * (assistantOpen ? 2 : 1) + 260 + 300 + (assistantOpen ? 320 : 0);
       const flexibleWidth = Math.max(1, contentWidth - fixedWidth);
       const step = Math.min(pairTotal / 2, 18 / flexibleWidth);
       next[divider] = Math.max(0, Math.min(pairTotal, weights[divider]! + direction * step));
@@ -147,18 +170,6 @@ export function LatexWorkspace({
     await compiler.start();
   }, [compiler, state]);
 
-  const applyAIFix = useCallback(async (proposal: { filePath: string; original: string; content: string }) => {
-    const currentFile = state.files.find((file) => file.path === proposal.filePath);
-    if (state.activePath !== proposal.filePath || currentFile?.content !== proposal.original) {
-      return '源码在 AI 生成期间发生了变化，未应用修改。请重新生成修复建议。';
-    }
-    state.updateContent(proposal.filePath, proposal.content);
-    const saved = await state.saveFile(proposal.filePath);
-    return saved
-      ? `已应用并保存：${proposal.filePath}`
-      : `修改已放入编辑器，但保存失败。请处理编辑器中的保存提示后再编译。`;
-  }, [state.activePath, state.files, state.saveFile, state.updateContent]);
-
   // ---- AI 直接写盘 + 源码快照 ----
   const [snapshots, setSnapshots] = useState<LatexSnapshot[]>([]);
   const [autoFixRunning, setAutoFixRunning] = useState(false);
@@ -174,6 +185,12 @@ export function LatexWorkspace({
       // 快照列表只是辅助信息：拉不到不该打断写作。
     }
   }, [project.id]);
+
+  const applyAIFix = useCallback(async (proposal: { filePath: string; original: string; content: string }, signal?: AbortSignal) => {
+    const notice = await state.applyAIEdit(proposal, signal);
+    void refreshSnapshots();
+    return notice;
+  }, [refreshSnapshots, state.applyAIEdit]);
 
   useEffect(() => {
     void refreshSnapshots();
@@ -455,8 +472,8 @@ export function LatexWorkspace({
         ref={panesRef}
         style={{
           gridTemplateColumns: assistantOpen
-            ? `250px minmax(260px, ${paneWeights[0]}fr) 6px minmax(300px, ${paneWeights[1]}fr) 6px minmax(320px, ${paneWeights[2]}fr)`
-            : `250px minmax(260px, ${paneWeights[0]}fr) 6px minmax(300px, ${paneWeights[1]}fr)`,
+            ? `${treeWidth}px 6px minmax(260px, ${paneWeights[0]}fr) 6px minmax(300px, ${paneWeights[1]}fr) 6px minmax(320px, ${paneWeights[2]}fr)`
+            : `${treeWidth}px 6px minmax(260px, ${paneWeights[0]}fr) 6px minmax(300px, ${paneWeights[1]}fr)`,
         }}
       >
         <aside className="latex-pane-tree">
@@ -473,6 +490,27 @@ export function LatexWorkspace({
             onExportZip={() => void exportZip()}
           />
         </aside>
+        <div
+          className="latex-pane-resizer"
+          role="separator"
+          aria-label="调整项目目录宽度"
+          aria-orientation="vertical"
+          aria-valuenow={Math.round(treeWidth)}
+          aria-valuemin={180}
+          aria-valuemax={900}
+          tabIndex={0}
+          onPointerDown={beginTreeResize}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              setTreeWidth((width) => {
+                const nextWidth = Math.max(180, Math.min(900, width + (event.key === 'ArrowRight' ? 18 : -18)));
+                window.localStorage.setItem('readx-latex-tree-width', String(nextWidth));
+                return nextWidth;
+              });
+            }
+          }}
+        />
         <div className="latex-pane-editor">
           <div className={`latex-editor-host${activeAssetPath ? ' hidden' : ''}`}>
             <LatexEditor

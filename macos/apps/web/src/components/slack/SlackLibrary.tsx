@@ -113,12 +113,7 @@ export function SlackLibrary({
     <main className="slack-library">
       <section className="slack-hero">
         <div className="slack-hero__copy">
-          <p className="slack-eyebrow">LOCAL SHELF · 只存本机</p>
-          <h1>我的资料</h1>
-          <p>
-            把 TXT、EPUB、图片或 CBZ 拖进来。正文和图片都保存在本机浏览器，不上传服务器，
-            随时点「返回工作区」或按 Esc 一键切回去。
-          </p>
+          <h1>我的焚决</h1>
           <div className="slack-hero__stats">
             <span><strong>{items.length}</strong> 份资料</span>
             <span><strong>{novels}</strong> 本小说</span>

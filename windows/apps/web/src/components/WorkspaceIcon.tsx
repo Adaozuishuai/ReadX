@@ -20,6 +20,7 @@ const paths = {
   microphone: <><rect x="9" y="3" width="6" height="12" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M9 22h6" /></>,
   waveform: <path d="M5 10v4M9 6v12M13 3v18M17 7v10M21 10v4" />,
   shield: <><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z" /><path d="M12 8v5M12 16h.01" /></>,
+  hand: <><path d="M8 13V5a2 2 0 0 1 4 0v7M12 6a2 2 0 0 1 4 0v6M16 8a2 2 0 0 1 4 0v7a7 7 0 0 1-12 5l-5-6a2 2 0 0 1 3-3l2 2Z" /><path d="M8 8V7a2 2 0 0 0-4 0v5" /></>,
   send: <path d="M12 20V4m-6 6 6-6 6 6" />,
   stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   close: <path d="m6 6 12 12M6 18 18 6" />,
@@ -30,6 +31,10 @@ const paths = {
   check: <path d="m5 12 4 4L19 6" />,
   sparkles: <><path d="m12 3 2.3 6.7L21 12l-6.7 2.3L12 21l-2.3-6.7L3 12l6.7-2.3L12 3Z" /></>,
   code: <><path d="M9 7 4 12l5 5M15 7l5 5-5 5" /></>,
+  filePlus: <><path d="M14 3H5v18h14V8l-5-5ZM14 3v5h5" /><path d="M12 12v6M9 15h6" /></>,
+  folderPlus: <><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v11H3V6Z" /><path d="M12 10v6M9 13h6" /></>,
+  upload: <><path d="M12 16V4m-5 5 5-5 5 5" /><path d="M4 15v5h16v-5" /></>,
+  archive: <><path d="M3 5h18v4H3zM5 9v11h14V9" /><path d="M9 13h6m-3-3v7m-3-3 3 3 3-3" /></>,
 } satisfies Record<string, ReactNode>;
 
 export type WorkspaceIconName = keyof typeof paths;

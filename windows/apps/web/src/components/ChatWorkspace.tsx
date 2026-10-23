@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useChat } from '../hooks/useChat';
-import type { ChatChunk } from '../api/client';
+import type { ChatChunk, LatexAIEditProposal } from '../api/client';
 import type { AIPreferences } from '../hooks/useAIPreferences';
 import type { ParagraphQuestion } from './ParagraphActions';
 import { MathText } from './FormulaContent';
 import { AIModelControls, effortLabel } from './AIModelControls';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { useVoiceInput } from '../hooks/useVoiceInput';
+import { ChatEditCard } from './ChatEditCard';
 
 export async function copyText(text: string): Promise<string> {
   try { await navigator.clipboard.writeText(text); return '已复制'; }
@@ -108,7 +109,7 @@ export function AssistantMessage({ text, onCite }: { text: string; onCite: (page
   })}{notice && <small role="status">{notice}</small>}</div>;
 }
 
-export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQuestion, followup, preferences, onCite, onReading, transport, trackDocumentStatus, supportsImages = true, welcomeHeading, welcomeQuestions }: {
+export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQuestion, followup, preferences, onCite, onReading, transport, trackDocumentStatus, supportsImages = true, welcomeHeading, welcomeQuestions, onApplyEdit, composerHint }: {
   documentKey: string | null; title: string; disabled: boolean; quote: { text: string; nonce: number } | null; paragraphQuestion?: ParagraphQuestion | null;
   followup?: { text: string; nonce: number } | null; preferences: AIPreferences; onCite: (page: number) => void; onReading?: () => void;
   transport?: (request: { key: string; mode?: string; question: string; scope?: string; history?: Array<{ role: string; text: string }>; images?: string[] }, onChunk: (chunk: ChatChunk) => void, signal?: AbortSignal) => Promise<void>;
@@ -116,6 +117,8 @@ export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQu
   supportsImages?: boolean;
   welcomeHeading?: string;
   welcomeQuestions?: string[];
+  onApplyEdit?: (proposal: LatexAIEditProposal, signal?: AbortSignal) => Promise<string>;
+  composerHint?: string;
 }) {
   const chat = useChat(documentKey, transport, trackDocumentStatus);
   const [draft, setDraft] = useState('');
@@ -213,6 +216,7 @@ export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQu
             {turn.text ? turn.role === 'ai' ? <AssistantMessage text={turn.text} onCite={onCite} /> : <div className="assistant-paragraph">{turn.text}</div> : chat.busy && index === chat.turns.length - 1 ? <p className="codex-wait" role="status"><span />正在结合原文分析 · {elapsed}s</p> : null}
             {turn.scope && <small className="codex-scope">原文范围：{turn.scope.included}/{turn.scope.total} {turn.scope.unit || '页'}{turn.scope.included < turn.scope.total ? ' · 仅相关片段' : ''}</small>}
             {turn.error && <p role="alert" className="precision-alert">{turn.error}</p>}
+            {turn.edit && onApplyEdit && <ChatEditCard request={turn.edit} disabled={chat.busy || disabled} onApprove={() => void chat.approveEdit(turn.id, onApplyEdit)} onReject={() => chat.rejectEdit(turn.id)} />}
             {(turn.text || turn.error) && <footer>{turn.text && <button onClick={() => void copyText(turn.text).then(setNotice)}>复制{turn.role === 'ai' ? '回答' : '问题'}</button>}{turn.role === 'ai' && index === chat.turns.length - 1 && lastUser && <button disabled={chat.busy || disabled || preferences.saving} onClick={() => { nearBottom.current = true; void chat.send(lastUser.text, '', true); }}>重新回答</button>}</footer>}
           </article>)}
         </div>
@@ -226,9 +230,11 @@ export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQu
         <div className="codex-composer-actions">
           <div className="composer-context-tools" ref={tools}>
             <button type="button" className="composer-icon-button composer-add" aria-label="添加上下文或附件" aria-expanded={addOpen} aria-haspopup="dialog" disabled={disabled || !documentKey || chat.busy} onClick={() => { setAddOpen(!addOpen); setContextOpen(false); }}><WorkspaceIcon name="plus" size={22} /></button>
-            <button type="button" className="composer-context-trigger" aria-label="查看论文上下文" aria-expanded={contextOpen} aria-haspopup="dialog" disabled={!documentKey} onClick={() => { setContextOpen(!contextOpen); setAddOpen(false); }}><WorkspaceIcon name="shield" size={17} /><span>论文上下文</span></button>
+            <button type="button" className="composer-context-trigger" aria-label={onApplyEdit ? '请求批准' : '查看论文上下文'} aria-expanded={contextOpen} aria-haspopup="dialog" disabled={!documentKey} onClick={() => { setContextOpen(!contextOpen); setAddOpen(false); }}><WorkspaceIcon name={onApplyEdit ? 'hand' : 'shield'} size={17} /><span>{onApplyEdit ? '请求批准' : '论文上下文'}</span></button>
             {addOpen && <div className="composer-tools-menu" role="dialog" aria-label="添加上下文"><button type="button" onClick={() => { fileInput.current?.click(); setAddOpen(false); }}><WorkspaceIcon name="file" size={17} />附加文本文件</button>{supportsImages && <button type="button" onClick={() => { imageInput.current?.click(); setAddOpen(false); }}><WorkspaceIcon name="file" size={17} />附加图片</button>}<button type="button" onClick={() => { setDraft((value) => `${value}${value ? '\n' : ''}请结合《${title || '当前论文'}》分析：`); setAddOpen(false); input.current?.focus(); }}><WorkspaceIcon name="plus" size={17} />引用当前论文</button>{onReading && <button type="button" onClick={() => { setAddOpen(false); onReading(); }}><WorkspaceIcon name="sparkles" size={17} />打开精读五重奏</button>}</div>}
-            {contextOpen && <div className="composer-tools-menu composer-paper-context" role="dialog" aria-label="论文上下文"><strong>当前论文</strong><p>{title || '当前文献'}</p>{paragraph && <button type="button" onClick={() => { setContextOpen(false); onCite(paragraph.position); }}>查看 {paragraph.kind === 'pdf' ? 'Page' : 'Chapter'} {paragraph.position} ↗</button>}</div>}
+            {contextOpen && (onApplyEdit
+              ? <div className="composer-tools-menu composer-paper-context" role="dialog" aria-label="请求批准"><strong><WorkspaceIcon name="hand" size={17} /> 请求批准</strong><p>编辑项目文件前，先在对话中请求你的确认。</p></div>
+              : <div className="composer-tools-menu composer-paper-context" role="dialog" aria-label="论文上下文"><strong>当前论文</strong><p>{title || '当前文献'}</p>{paragraph && <button type="button" onClick={() => { setContextOpen(false); onCite(paragraph.position); }}>查看 {paragraph.kind === 'pdf' ? 'Page' : 'Chapter'} {paragraph.position} ↗</button>}</div>)}
           </div>
           <div className="composer-trailing-tools"><AIModelControls preferences={preferences} variant="composer" />
             <button type="button" className={`composer-icon-button composer-microphone${voice.listening ? ' active' : ''}`} aria-label={voice.listening ? '停止语音输入' : '语音听写'} aria-pressed={voice.listening} title={voice.supported ? '语音听写' : '当前浏览器不支持语音输入'} disabled={voiceBlocked} onClick={() => voice.toggle(draft)}><WorkspaceIcon name="microphone" size={20} /></button>
@@ -237,7 +243,7 @@ export function ChatWorkspace({ documentKey, title, disabled, quote, paragraphQu
         </div>
         <input ref={fileInput} className="sr-only" type="file" tabIndex={-1} accept=".txt,.md,.csv,.json,.log,text/plain,text/markdown,text/csv,application/json" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void attachText(file); }} />
         {supportsImages && <input ref={imageInput} className="sr-only" type="file" tabIndex={-1} accept="image/png,image/jpeg,image/webp" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void attachImage(file); }} />}
-      </div>{(notice || chat.storageError || voice.error) && <div className="codex-composer-foot">{notice && <span role="status">{notice}</span>}{voice.error && <span role="alert">{voice.error}</span>}{chat.storageError && <span role="alert" className="text-bad">{chat.storageError}</span>}</div>}</div>
+      </div>{(composerHint || notice || chat.storageError || voice.error) && <div className="codex-composer-foot">{composerHint && <span>{composerHint}</span>}{notice && <span role="status">{notice}</span>}{voice.error && <span role="alert">{voice.error}</span>}{chat.storageError && <span role="alert" className="text-bad">{chat.storageError}</span>}</div>}</div>
     </section>
   </div>;
 }

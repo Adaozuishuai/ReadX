@@ -136,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /v1/ai/workbuddy/login", withAuth(s.handleWorkBuddyLogout))
 	mux.Handle("POST /v1/ai/chat", withAuth(s.handleAIChat))
 	mux.Handle("POST /v1/ai/latex-chat", withAuth(s.handleLatexAIChat))
+	mux.Handle("POST /v1/ai/latex-edit", withAuth(s.handleLatexAIEdit))
 	mux.Handle("POST /v1/ai/latex-fix", withAuth(s.handleLatexAIFix))
 	// 直接写盘：与 latex-fix 分开，因为它的副作用完全不同（会改源码），
 	// 需要项目显式开启开关，并且走「快照 → 写入 → 强制编译验证 → 未改善回滚」。

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { LatexBuild, LatexDiagnostic, LatexToolchainReport } from '@cbct/shared';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -42,6 +43,17 @@ export function LatexBuildPanel({
   // 而崩溃现场（React 卸载整棵子树）看起来像「编译卡住了」，极难自查。
   const missingCitations = build?.missingCitations ?? [];
   const missingReferences = build?.missingReferences ?? [];
+  const [diagnosticsHidden, setDiagnosticsHidden] = useState(() =>
+    typeof window !== 'undefined' && window.localStorage.getItem('readx-latex-diagnostics-hidden') === 'true',
+  );
+
+  const toggleDiagnostics = () => {
+    setDiagnosticsHidden((hidden) => {
+      const next = !hidden;
+      window.localStorage.setItem('readx-latex-diagnostics-hidden', String(next));
+      return next;
+    });
+  };
 
   return (
     <div className="latex-build-panel">
@@ -51,6 +63,16 @@ export function LatexBuildPanel({
           {build ? STATUS_LABEL[build.status] ?? build.status : '尚未编译'}
         </span>
         <div className="latex-build-actions">
+          {diagnostics.length ? (
+            <button
+              type="button"
+              onClick={toggleDiagnostics}
+              aria-expanded={!diagnosticsHidden}
+              aria-controls="latex-diagnostics-list"
+            >
+              {diagnosticsHidden ? `显示诊断（${diagnostics.length}）` : '隐藏诊断'}
+            </button>
+          ) : null}
           {running ? (
             <button type="button" onClick={onCancel} className="danger">
               停止
@@ -109,28 +131,41 @@ export function LatexBuildPanel({
       ) : null}
 
       {diagnostics.length ? (
-        <ul className="latex-diagnostics">
-          {diagnostics.map((diagnostic, index) => (
-            <li key={`${diagnostic.file ?? ''}:${diagnostic.line ?? 0}:${index}`} className={`severity-${diagnostic.severity}`}>
-              <button
-                type="button"
-                onClick={() => onOpenDiagnostic(diagnostic)}
-                disabled={!diagnostic.file || !diagnostic.line}
-                title={diagnostic.file && diagnostic.line ? '跳到源码这一行' : '日志里没有给出位置'}
-              >
-                <span className="latex-diagnostic-where">
-                  {diagnostic.file ? `${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ''}` : '（无位置）'}
-                </span>
-                <span className="latex-diagnostic-message">{diagnostic.message}</span>
-                {diagnostic.snippet ? <code className="latex-diagnostic-snippet">{diagnostic.snippet}</code> : null}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : build && !running ? (
-        <p className="latex-build-clean">
-          {build.status === 'succeeded' ? '没有错误或警告。' : '这次编译没有产生可定位的诊断，请查看日志。'}
-        </p>
+        diagnosticsHidden ? null : (
+          <ul className="latex-diagnostics" id="latex-diagnostics-list">
+            {diagnostics.map((diagnostic, index) => (
+              <li key={`${diagnostic.file ?? ''}:${diagnostic.line ?? 0}:${index}`} className={`severity-${diagnostic.severity}`}>
+                <button
+                  type="button"
+                  onClick={() => onOpenDiagnostic(diagnostic)}
+                  disabled={!diagnostic.file || !diagnostic.line}
+                  title={
+                    diagnostic.file && diagnostic.line
+                      ? diagnostic.locationSource === 'search'
+                        ? '在项目源码里找到了这个引用键：点它跳到那一行'
+                        : '跳到源码这一行（位置来自日志）'
+                      : '日志里没有给出文件位置——它可能是整篇级的警告，宁可不给也不猜错'
+                  }
+                >
+                  <span className="latex-diagnostic-where">
+                    {diagnostic.file
+                      ? `${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ''}`
+                      : diagnostic.line
+                        ? `全文 · 第 ${diagnostic.line} 行`
+                        : '（日志未给出位置）'}
+                  </span>
+                  {diagnostic.source ? (
+                    <span className="latex-diagnostic-source" title="这条诊断是谁报的">
+                      {diagnostic.source}
+                    </span>
+                  ) : null}
+                  <span className="latex-diagnostic-message">{diagnostic.message}</span>
+                  {diagnostic.snippet ? <code className="latex-diagnostic-snippet">{diagnostic.snippet}</code> : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )
       ) : null}
 
       {build && (missingCitations.length || missingReferences.length) ? (

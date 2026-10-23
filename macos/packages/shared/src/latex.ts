@@ -140,6 +140,15 @@ export interface LatexDiagnostic {
   file?: string;
   line?: number;
   message: string;
+  /** 谁报的这条诊断：LaTeX、Package lineno、Class IEEEtran… */
+  source?: string;
+  /**
+   * 位置是怎么来的：
+   * - `log`：日志行直接给出的文件与行号；
+   * - `search`：在项目源码里找到了这个引用键（\cite/\ref 的键），位置确定；
+   * - 空：没有位置（警告常常说不出文件，宁可不给也不猜错）。
+   */
+  locationSource?: 'log' | 'search';
   /** 出错处的源码片段（TeX 日志的 l.NN 行）。 */
   snippet?: string;
   raw?: string;

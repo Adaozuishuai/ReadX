@@ -179,10 +179,10 @@ export function useLatexProject(projectId: string | null) {
   }, [saveFile]);
 
   const openFile = useCallback(
-    async (path: string) => {
-      if (!projectId) return;
+    async (path: string): Promise<boolean> => {
+      if (!projectId) return false;
       setActivePath(path);
-      if (files.some((file) => file.path === path)) return;
+      if (filesRef.current.some((file) => file.path === path)) return true;
       try {
         const content = await api.latexFile(projectId, path);
         updateFiles((current) =>
@@ -201,11 +201,13 @@ export function useLatexProject(projectId: string | null) {
                 },
               ],
         );
+        return true;
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
+        return false;
       }
     },
-    [files, projectId, updateFiles],
+    [projectId, updateFiles],
   );
 
   const closeFile = useCallback(
@@ -239,6 +241,40 @@ export function useLatexProject(projectId: string | null) {
     },
     [scheduleSave, setFile],
   );
+
+  /** Check the live buffer after asynchronous snapshot creation. */
+  const replaceContentIfUnchanged = useCallback((path: string, original: string, content: string) => {
+    const file = filesRef.current.find((candidate) => candidate.path === path);
+    if (!file || file.content !== original) return false;
+    updateContent(path, content);
+    return true;
+  }, [updateContent]);
+
+  const applyAIEdit = useCallback(async (
+    proposal: { filePath: string; original: string; content: string },
+    signal?: AbortSignal,
+  ): Promise<string> => {
+    if (!projectId) return '项目已关闭，未保存修改。';
+    signal?.throwIfAborted();
+    if (!(await openFile(proposal.filePath))) return '无法打开目标文件，未保存修改。';
+    const current = filesRef.current.find((file) => file.path === proposal.filePath);
+    if (current?.content !== proposal.original) {
+      return '源码在 AI 生成期间发生了变化，未应用修改。请重新发送修改要求。';
+    }
+    signal?.throwIfAborted();
+    try {
+      await api.latexCreateSnapshot(projectId, `AI 修改前：${proposal.filePath}`);
+    } catch (cause) {
+      return cause instanceof Error ? `创建修改前快照失败，未保存文件：${cause.message}` : '创建修改前快照失败，未保存文件。';
+    }
+    signal?.throwIfAborted();
+    if (!replaceContentIfUnchanged(proposal.filePath, proposal.original, proposal.content)) {
+      return '源码在创建快照期间发生了变化，未应用修改。请重新发送修改要求。';
+    }
+    return await saveFile(proposal.filePath)
+      ? `已应用并保存：${proposal.filePath}`
+      : '保存失败；修改前快照已保留。请处理编辑器中的保存提示。';
+  }, [openFile, projectId, replaceContentIfUnchanged, saveFile]);
 
   /** 冲突时用户的第二种选择：以本地内容覆盖远端（重新取 revision 后再写）。 */
   const forceSave = useCallback(
@@ -354,6 +390,7 @@ export function useLatexProject(projectId: string | null) {
     openFile,
     closeFile,
     updateContent,
+    applyAIEdit,
     saveFile,
     forceSave,
     reloadFile,

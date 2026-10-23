@@ -59,17 +59,22 @@ function mount(relative, exported, api, dependencies = {}, args = ['p']) {
     },
     lazy: (loader) => ({ loader }),
     Suspense: 'suspense',
+    Activity: 'activity',
   };
   const window_ = {
     setTimeout(callback) { const id = ++nextTimer; timers.set(id, callback); return id; },
     clearTimeout(id) { timers.delete(id); },
+    addEventListener() {},
+    removeEventListener() {},
   };
   const filename = path.join(__dirname, '..', relative);
   const source = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const sandbox = {
-    exports: {}, window: window_,
+    exports: {}, window: window_, document: { documentElement: { dataset: {} } },
+    crypto: require('node:crypto'), AbortController,
+    localStorage: (() => { const values = new Map(); return { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }; })(),
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
@@ -286,15 +291,23 @@ test('the application keeps LaTeX mounted until its leave guard succeeds', async
   const hook = mount('apps/web/src/App.tsx', 'default', {}, {
     './components/LibraryScreen': { LibraryScreen: 'library' },
     './components/WorkspaceIcon': { WorkspaceIcon: 'icon' },
+    './components/slack/ModePendant': { ModePendant: 'pendant' },
+    './components/slack/slack.css': {},
     './hooks/useWorkspace': { useWorkspace: () => ({ phase: { kind: 'ready', documents: { documents: [] } }, allDocuments: [], filters: {} }) },
     './hooks/useDocument': { useDocument: () => ({ phase: { kind: 'idle' } }) },
     './hooks/useAnnotations': { useAnnotations: () => ({}) },
     './hooks/useLibraryMeta': { useLibraryMeta: () => ({ items: {} }) },
     './hooks/useTheme': { useTheme: () => ({ choice: 'light' }) },
   }, []);
-  const header = () => hook.render().props.children[0].props;
+  const findNode = (node, predicate) => {
+    if (!node || typeof node !== 'object') return null;
+    if (Array.isArray(node)) return node.map((child) => findNode(child, predicate)).find(Boolean);
+    if (predicate(node)) return node;
+    return findNode(node.props?.children, predicate);
+  };
+  const header = () => findNode(hook.render(), (node) => typeof node.props?.onScreen === 'function').props;
   header().onScreen('latex');
-  const studio = hook.render().props.children[1].props.children;
+  const studio = findNode(hook.render(), (node) => typeof node.props?.registerBeforeLeave === 'function');
   const gate = deferred();
   studio.props.registerBeforeLeave(() => gate.promise);
   header().onScreen('library');
@@ -306,5 +319,115 @@ test('the application keeps LaTeX mounted until its leave guard succeeds', async
   header().onScreen('graph');
   await new Promise(setImmediate);
   assert.equal(header().screen, 'graph');
+  hook.unmount();
+});
+
+function latexChatWithResult(result) {
+  return loadModule('apps/web/src/lib/latex/latexChatTransport.ts', {
+    '../../api/client': {
+      streamLatexChat: async (_request, emit) => {
+        emit({ meta: { provider: 'openai', model: 'project-model', included: 2, total: 2, scope: 'project' } });
+        emit({ done: true, ...result });
+      },
+    },
+  }).runLatexChat;
+}
+const latexChatRequest = { key: 'p', projectId: 'p', projectTitle: 'Paper', filePath: 'main.tex', source: 'original', question: '将 abstract 里的数字删掉' };
+const abstractProposal = { filePath: 'sec/0_abstract.tex', original: 'Accuracy is 95 percent.', content: 'Accuracy is measured.', summary: '删除摘要中的数字' };
+
+async function openLatexChat(result) {
+  const run = latexChatWithResult(result);
+  const transport = (request, emit, signal) => run({ ...latexChatRequest, ...request }, emit, signal);
+  const chat = mount('apps/web/src/hooks/useChat.ts', 'useChat', {}, {}, ['latex-project:p', transport, false]);
+  chat.render();
+  await chat.settle();
+  await chat.render().send(latexChatRequest.question);
+  await chat.settle();
+  return chat;
+}
+
+test('sending creates a card and only explicit approval saves the referenced file', async () => {
+  const { api, disk } = projectApi();
+  disk.set(abstractProposal.filePath, { content: abstractProposal.original, revision: 'a0' });
+  const snapshots = [];
+  api.latexCreateSnapshot = async () => { snapshots.push(new Map(disk)); };
+  const hook = await openProject(api);
+  const chat = await openLatexChat({ text: '修改已生成', edit: abstractProposal });
+  const turn = chat.render().turns.find((item) => item.role === 'ai');
+  assert.equal(turn.edit.status, 'pending');
+  assert.equal(disk.get(abstractProposal.filePath).content, abstractProposal.original);
+  assert.equal(snapshots.length, 0);
+  const apply = (proposal, signal) => hook.render().applyAIEdit(proposal, signal);
+  await chat.render().approveEdit(turn.id, apply);
+  assert.equal(disk.get(abstractProposal.filePath).content, abstractProposal.content);
+  assert.equal(hook.render().activePath, abstractProposal.filePath);
+  assert.equal(snapshots[0].get(abstractProposal.filePath).content, abstractProposal.original);
+  const saved = chat.render().turns.find((item) => item.id === turn.id);
+  assert.match(saved.text, /已应用并保存：sec\/0_abstract.tex/);
+  assert.equal(saved.edit.status, 'applied');
+  await chat.render().approveEdit(turn.id, apply);
+  assert.equal(snapshots.length, 1, 'an approved card cannot be applied twice');
+  chat.unmount();
+  hook.unmount();
+});
+
+test('rejecting a card prevents saving and records the decision in conversation history', async () => {
+  const chat = await openLatexChat({ edit: abstractProposal });
+  const turn = chat.render().turns.find((item) => item.role === 'ai');
+  chat.render().rejectEdit(turn.id);
+  await chat.render().approveEdit(turn.id, () => { assert.fail('a rejected edit must not save'); });
+  const rejected = chat.render().turns.find((item) => item.id === turn.id);
+  assert.equal(rejected.edit.status, 'rejected');
+  assert.match(rejected.text, /用户已取消/);
+  assert.doesNotMatch(rejected.text, /已应用并保存/);
+  chat.unmount();
+});
+
+test('chat never reports success when the real file save fails', async () => {
+  const { api, disk } = projectApi();
+  disk.set(abstractProposal.filePath, { content: abstractProposal.original, revision: 'a0' });
+  api.latexCreateSnapshot = async () => {};
+  api.latexSaveFile = async () => { throw new ApiError('disk write failed', 500); };
+  const hook = await openProject(api);
+  const chat = await openLatexChat({ edit: abstractProposal });
+  const turn = chat.render().turns.find((item) => item.role === 'ai');
+  await chat.render().approveEdit(turn.id, (proposal) => hook.render().applyAIEdit(proposal));
+  const failed = chat.render().turns.find((item) => item.id === turn.id);
+  assert.match(failed.edit.notice, /保存失败/);
+  assert.equal(failed.edit.status, 'pending');
+  assert.doesNotMatch(failed.text, /已应用并保存/);
+  assert.equal(disk.get(abstractProposal.filePath).content, abstractProposal.original);
+  chat.unmount();
+  hook.unmount();
+});
+
+test('AI edit does not overwrite typing that happens while its snapshot is pending', async () => {
+  const { api, disk } = projectApi();
+  const gate = deferred();
+  api.latexCreateSnapshot = () => gate.promise;
+  const hook = await openProject(api);
+  const pending = hook.render().applyAIEdit({ filePath: 'main.tex', original: 'original', content: 'AI replacement' });
+  await new Promise(setImmediate);
+  hook.render().updateContent('main.tex', 'new user typing');
+  gate.resolve();
+  assert.match(await pending, /创建快照期间发生了变化/);
+  assert.equal(hook.render().active.content, 'new user typing');
+  assert.equal(disk.get('main.tex').content, 'original');
+  hook.unmount();
+});
+
+test('stopping chat during snapshot creation prevents the subsequent file write', async () => {
+  const { api, disk } = projectApi();
+  const gate = deferred();
+  api.latexCreateSnapshot = () => gate.promise;
+  const hook = await openProject(api);
+  const controller = new AbortController();
+  const pending = hook.render().applyAIEdit({ filePath: 'main.tex', original: 'original', content: 'AI replacement' }, controller.signal);
+  await new Promise(setImmediate);
+  controller.abort();
+  gate.resolve();
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(disk.get('main.tex').content, 'original');
+  assert.equal(hook.render().active.content, 'original');
   hook.unmount();
 });

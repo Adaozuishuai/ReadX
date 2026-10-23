@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import type { LatexNode } from '@cbct/shared';
+import { WorkspaceIcon } from '../WorkspaceIcon';
 
 /**
  * 文件树。服务端返回的是深度优先的扁平列表，这里按 `/` 层级缩进渲染，
@@ -57,23 +58,23 @@ export function LatexFileTree({
       <div className="latex-tree-head">
         <span>项目文件</span>
         <div className="latex-tree-actions">
-          <button type="button" disabled={busy} title="新建 .tex 文件" onClick={() => {
+          <button type="button" disabled={busy} aria-label="新建 .tex 文件" title="新建 .tex 文件" onClick={() => {
             const name = window.prompt('新文件名（可带相对路径，如 sections/related.tex）', 'sections/related.tex');
             if (name) onOp({ op: 'new-file', to: name.trim() });
           }}>
-            ＋文件
+            <WorkspaceIcon name="filePlus" size={15} />
           </button>
-          <button type="button" disabled={busy} title="新建目录" onClick={() => {
+          <button type="button" disabled={busy} aria-label="新建目录" title="新建目录" onClick={() => {
             const name = window.prompt('新目录名（可带相对路径）', 'sections');
             if (name) onOp({ op: 'new-dir', to: name.trim() });
           }}>
-            ＋目录
+            <WorkspaceIcon name="folderPlus" size={15} />
           </button>
-          <button type="button" disabled={busy} title="上传图片等资源到 figures/" onClick={() => assetInput.current?.click()}>
-            上传资源
+          <button type="button" disabled={busy} aria-label="上传资源" title="上传图片等资源到 figures/" onClick={() => assetInput.current?.click()}>
+            <WorkspaceIcon name="upload" size={15} />
           </button>
-          <button type="button" disabled={busy} onClick={onExportZip} title="导出源码 ZIP（排除编译副产物）">
-            导出
+          <button type="button" disabled={busy} aria-label="导出源码 ZIP" onClick={onExportZip} title="导出源码 ZIP（排除编译副产物）">
+            <WorkspaceIcon name="archive" size={15} />
           </button>
           <input
             ref={assetInput}
@@ -164,9 +165,6 @@ export function LatexFileTree({
           );
         })}
       </ul>
-      <p className="latex-tree-hint">
-        图片可上传到 <code>figures/</code> 并直接预览；其它二进制文件也可通过导入 ZIP 加入项目。
-      </p>
     </div>
   );
 }

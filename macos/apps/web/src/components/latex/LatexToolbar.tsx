@@ -85,8 +85,8 @@ export function LatexToolbar({
           className={`latex-toggle${project.aiAutoFix ? ' danger' : ''}`}
           title={
             project.aiAutoFix
-              ? '已开启：AI 可以直接改写项目内的 .tex 文件。每次写入前自动打快照，写后强制重新编译，错误没减少就自动回滚。'
-              : '开启后 AI 可以直接改写项目内的 .tex 文件（默认关闭）。每次写入前自动快照、写后强制编译验证、未改善自动回滚。'
+              ? '允许「自动修复」按钮直接写入，编译错误未减少时自动回滚。聊天中的文件修改始终先请求批准。'
+              : '允许「自动修复」按钮直接写入源码；聊天中的文件修改始终先请求批准。'
           }
         >
           <input
@@ -96,8 +96,8 @@ export function LatexToolbar({
               if (
                 event.target.checked &&
                 !window.confirm(
-                  '开启后 AI 可以直接改写这个项目里的 .tex 文件。\n\n' +
-                    '每次写入前会自动保存源码快照，写完后强制重新编译：如果编译错误没有减少，会自动回滚到写入前，并如实告诉你。\n\n' +
+                  '开启后，「自动修复」按钮可以直接改写项目里的 .tex 文件。\n\n' +
+                    '写入前自动创建源码快照，并强制编译验证；错误没有减少就自动回滚。聊天中的修改仍需逐次确认。\n\n' +
                     '确定开启吗？',
                 )
               ) {
@@ -106,7 +106,7 @@ export function LatexToolbar({
               onPatch({ aiAutoFix: event.target.checked });
             }}
           />
-          AI 直接改文件{project.aiAutoFix ? '（已开启）' : ''}
+          自动修复写入{project.aiAutoFix ? '（已开启）' : ''}
         </label>
         <span className={`latex-save-state${dirtyCount ? ' dirty' : ''}`}>
           {busy ? '处理中…' : dirtyCount ? `${dirtyCount} 个文件未保存` : '全部已保存'}

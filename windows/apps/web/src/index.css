@@ -210,6 +210,27 @@
 .composer-context-tools,.composer-trailing-tools { display:flex; align-items:center; gap:8px; min-width:0; }
 .composer-context-tools { position:relative; }
 .composer-trailing-tools { margin-left:auto; gap:9px; }
+.chat-edit-card { min-width:0; margin:12px 0; padding:14px; border:1px solid var(--color-line); border-radius:14px; background:var(--color-surface); box-shadow:0 2px 8px rgb(0 0 0 / 3%); }
+.chat-edit-card > header { display:flex; align-items:center; gap:9px; }
+.chat-edit-icon { display:flex; align-items:center; justify-content:center; flex-shrink:0; width:32px; height:32px; border-radius:9px; background:var(--color-accent-soft); color:var(--color-accent); }
+.chat-edit-card > header > div { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
+.chat-edit-card strong { font-size:13px; color:var(--color-ink); }
+.chat-edit-card code { font-size:11px; overflow-wrap:anywhere; color:var(--color-ink-soft); }
+.chat-edit-status { flex-shrink:0; font-size:10px; color:var(--color-ink-faint); }
+.chat-edit-card > p { margin:12px 0; font-size:12px; line-height:1.65; color:var(--color-ink-soft); overflow-wrap:anywhere; }
+.chat-edit-preview { font-size:11px; color:var(--color-ink-soft); }
+.chat-edit-preview summary { cursor:pointer; }
+.chat-edit-preview > div { margin-top:10px; }
+.chat-edit-preview pre { margin:5px 0 0; max-height:220px; overflow:auto; padding:10px; border-radius:8px; background:var(--color-surface-sunk); font-size:11px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.chat-edit-card .chat-edit-notice { font-size:11px; color:var(--color-accent); }
+.chat-edit-card .chat-edit-notice.error { color:var(--color-warn); }
+.chat-edit-card > footer { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:14px; }
+.chat-edit-card > footer button { padding:7px 12px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-surface); color:var(--color-ink-soft); font:inherit; font-size:12px; cursor:pointer; }
+.chat-edit-card > footer button.primary { color:var(--color-on-accent); border-color:var(--color-accent); background:var(--color-accent); }
+.chat-edit-card > footer button:disabled { opacity:.5; cursor:default; }
+.chat-edit-card[data-status=applied] { border-color:color-mix(in srgb,var(--color-accent) 35%,var(--color-line)); }
+.latex-ai-column .codex-composer-actions { flex-wrap:wrap; }
+.latex-ai-column .composer-context-tools { flex-wrap:wrap; }
 .composer-icon-button { display:inline-flex; align-items:center; justify-content:center; width:32px; height:34px; flex-shrink:0; border:0; border-radius:9px; color:var(--color-ink); background:transparent; cursor:pointer; }
 .composer-icon-button:hover:not(:disabled),.composer-model-trigger:hover { background:var(--color-canvas); }
 .composer-icon-button:disabled { opacity:.35; cursor:default; }
@@ -2628,14 +2649,17 @@ button:disabled { opacity:.5;cursor:default; }
 .latex-toolbar-actions button { padding:5px 10px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-surface-sunk); color:var(--color-ink-soft); font-size:11.5px; }
 .latex-toolbar-actions button:hover:not(:disabled) { border-color:var(--color-accent); color:var(--color-accent); }
 .latex-toolbar-actions button:disabled { opacity:.55; }
-.latex-ai-column { display:flex; min-width:0; min-height:0; flex-direction:column; overflow:hidden; border-left:1px solid var(--color-line); background:var(--color-surface); }
-.latex-ai-column-head { display:flex; flex:none; align-items:center; justify-content:space-between; min-height:48px; padding:7px 12px; border-bottom:1px solid var(--color-line); }
-.latex-ai-column-head>div { display:flex; min-width:0; align-items:baseline; gap:9px; }
+.latex-ai-column { display:flex; min-width:0; min-height:0; flex-direction:column; overflow:hidden; border-left:1px solid var(--color-line); background:var(--color-surface); container:latex-ai-panel / inline-size; }
+.latex-ai-column-head { display:flex; flex:none; min-width:0; align-items:center; justify-content:space-between; gap:10px; min-height:56px; padding:8px 12px; border-bottom:1px solid var(--color-line); }
+.latex-ai-column-head>div:first-child { display:flex; min-width:0; flex:1; flex-direction:column; align-items:flex-start; gap:3px; }
 .latex-ai-column-head strong { color:var(--color-ink); font-size:12px; }
-.latex-ai-column-head span { overflow:hidden; color:var(--color-ink-faint); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
-.latex-ai-column-head button { width:28px; height:28px; border:1px solid var(--color-line); border-radius:7px; background:var(--color-surface-sunk); color:var(--color-ink-soft); font-size:18px; }
+.latex-ai-column-head span { display:block; max-width:100%; overflow:hidden; color:var(--color-ink-faint); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.latex-ai-column-head button { width:auto; min-width:30px; height:30px; flex:none; border:1px solid var(--color-line); border-radius:7px; background:var(--color-surface-sunk); color:var(--color-ink-soft); font-size:12px; white-space:nowrap; }
 .latex-ai-unconfigured { flex:none; margin:0; padding:8px 12px; border-bottom:1px solid var(--color-line); color:var(--color-warn); font-size:11px; }
 .latex-ai-fix { flex:none; max-height:48%; padding:8px 10px; overflow:auto; border-bottom:1px solid var(--color-line); background:var(--color-surface-sunk); }
+.latex-ai-tools { flex:none; max-height:48%; overflow:auto; border-bottom:1px solid var(--color-line); }
+.latex-ai-tools > summary { padding:9px 12px; font-size:11px; color:var(--color-ink-soft); cursor:pointer; }
+.latex-ai-tools .latex-ai-fix { max-height:none; border-bottom:0; }
 .latex-ai-fix-actions { display:flex; min-width:0; align-items:center; gap:8px; }
 .latex-ai-fix-actions>button,.latex-ai-fix-review-actions button { flex:none; padding:5px 8px; border:1px solid var(--color-line); border-radius:7px; background:var(--color-surface); color:var(--color-ink-soft); font-size:10.5px; }
 .latex-ai-fix-actions>button:not(:disabled):hover,.latex-ai-fix-review-actions button:hover { border-color:var(--color-accent); color:var(--color-accent); }
@@ -2653,7 +2677,7 @@ button:disabled { opacity:.5;cursor:default; }
 .latex-ai-fix-review>pre { max-height:220px; margin:0; padding:8px; overflow:auto; border-radius:6px; background:var(--color-canvas); color:var(--color-ink-soft); font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre; }
 .latex-ai-column>.codex-workspace { flex:1; min-width:0; min-height:0; }
 .latex-panes { display:grid; flex:1; min-width:0; min-height:0; overflow-x:auto; overflow-y:hidden; grid-template-columns:250px minmax(260px,1fr) 6px minmax(300px,1fr); }
-.latex-pane-tree { display:flex; min-height:0; flex-direction:column; border-right:1px solid var(--color-line); background:var(--color-surface); }
+.latex-pane-tree { display:flex; min-height:0; flex-direction:column; border-right:1px solid var(--color-line); background:var(--color-surface); container:latex-tree-panel / inline-size; }
 .latex-pane-editor { display:flex; min-width:0; min-height:0; box-sizing:border-box; flex-direction:column; overflow:hidden; }
 .latex-editor-host { display:flex; flex:1; min-width:0; min-height:0; overflow:hidden; }
 .latex-editor-host.hidden { display:none; }
@@ -2673,25 +2697,27 @@ button:disabled { opacity:.5;cursor:default; }
 .latex-pane-preview { display:flex; width:100%; min-width:0; min-height:0; box-sizing:border-box; flex-direction:column; background:var(--color-surface-sunk); overflow:hidden; }
 
 .latex-tree { display:flex; flex:1; min-height:0; flex-direction:column; }
-.latex-tree-head { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 10px; border-bottom:1px solid var(--color-line); color:var(--color-ink-faint); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; }
-.latex-tree-actions { display:flex; gap:4px; text-transform:none; letter-spacing:0; }
-.latex-tree-actions button { padding:3px 6px; border:1px solid var(--color-line); border-radius:6px; background:var(--color-surface); color:var(--color-ink-soft); font-size:10.5px; }
+.latex-tree-head { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 10px; border-bottom:1px solid var(--color-line); color:var(--color-ink-faint); font-size:13.5px; letter-spacing:.06em; text-transform:uppercase; }
+.latex-tree-head>span { flex:none; white-space:nowrap; }
+.latex-tree-actions { display:flex; flex:none; gap:4px; text-transform:none; letter-spacing:0; }
+.latex-tree-actions button { display:grid; flex:none; width:29px; height:29px; padding:0; place-items:center; border:1px solid var(--color-line); border-radius:7px; background:var(--color-surface); color:var(--color-ink-soft); cursor:pointer; }
 .latex-tree-actions button:hover:not(:disabled) { border-color:var(--color-accent); color:var(--color-accent); }
+.latex-tree-actions button:disabled { opacity:.5; cursor:default; }
+@container latex-tree-panel (max-width:220px) { .latex-tree-head { flex-direction:column; align-items:stretch; gap:7px; } .latex-tree-actions { width:100%; justify-content:space-between; } }
 .latex-tree-list { flex:1; min-height:0; margin:0; padding:6px 0; overflow:auto; list-style:none; }
 .latex-tree-list > li { position:relative; display:flex; align-items:center; }
-.latex-tree-item { display:flex; flex:1; min-width:0; align-items:center; gap:6px; padding:4px 6px; border:none; border-radius:7px; background:transparent; color:var(--color-ink-soft); font-size:11.5px; text-align:left; }
+.latex-tree-item { display:flex; flex:1; min-width:0; align-items:center; gap:6px; padding:5px 6px; border:none; border-radius:7px; background:transparent; color:var(--color-ink-soft); font-size:14.5px; text-align:left; }
 .latex-tree-item:hover { background:var(--color-surface-sunk); color:var(--color-ink); }
 .latex-tree-item.active { background:var(--color-accent-soft); color:var(--color-accent); }
 .latex-tree-item.kind-dir { color:var(--color-ink); font-weight:540; }
 .latex-tree-icon { flex:none; width:12px; color:var(--color-ink-faint); }
 .latex-tree-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.latex-tree-badge { flex:none; padding:0 5px; border-radius:999px; background:color-mix(in srgb,var(--color-accent) 16%,transparent); color:var(--color-accent); font-size:9.5px; }
-.latex-tree-note { flex:none; color:var(--color-ink-faint); font-size:9.5px; }
+.latex-tree-badge { flex:none; padding:0 5px; border-radius:999px; background:color-mix(in srgb,var(--color-accent) 16%,transparent); color:var(--color-accent); font-size:12px; }
+.latex-tree-note { flex:none; color:var(--color-ink-faint); font-size:12px; }
 .latex-tree-row-actions { display:none; gap:2px; padding-right:6px; }
 .latex-tree-list > li:hover .latex-tree-row-actions { display:flex; }
 .latex-tree-row-actions button { padding:1px 5px; border:none; border-radius:5px; background:transparent; color:var(--color-ink-faint); font-size:11px; }
 .latex-tree-row-actions button:hover { background:var(--color-surface-sunk); color:var(--color-ink); }
-.latex-tree-hint { margin:0; padding:8px 10px; border-top:1px solid var(--color-line); color:var(--color-ink-faint); font-size:10px; line-height:1.7; }
 
 .latex-editor { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; overflow:hidden; }
 .latex-editor.empty { align-items:center; justify-content:center; color:var(--color-ink-faint); font-size:12px; }
@@ -2800,13 +2826,15 @@ button:disabled { opacity:.5;cursor:default; }
 .latex-ai-snapshots-hint { margin:0; color:var(--color-ink-faint); font-size:10px; line-height:1.6; }
 
 /* LaTeX 的模型设置（与全局分开） */
-.latex-ai-head-actions { display:flex; align-items:center; gap:4px; }
+.latex-ai-head-actions { display:flex; flex:none; align-items:center; gap:5px; }
 .latex-ai-head-actions button { padding:3px 8px; border:1px solid var(--color-line); border-radius:7px; background:var(--color-surface); color:var(--color-ink-soft); font-size:10.5px; }
 .latex-ai-head-actions button[aria-expanded="true"] { border-color:var(--color-accent); color:var(--color-accent); }
-.latex-ai-head-actions button:last-child { padding:2px 8px; font-size:14px; }
+.latex-ai-head-actions button:first-child { min-width:max-content; padding:5px 10px; }
+.latex-ai-head-actions button:last-child { width:30px; min-width:30px; padding:2px 6px; font-size:14px; }
 .latex-ai-models { display:flex; flex-direction:column; gap:6px; padding:9px 10px; border-bottom:1px solid var(--color-line); background:var(--color-surface); }
 .latex-ai-model-toggle { display:flex; align-items:center; gap:6px; color:var(--color-ink-soft); font-size:11px; }
 .latex-ai-model-row { display:flex; gap:6px; align-items:center; }
+.latex-ai-model-picker { position:relative; }
 .latex-ai-model-row > input, .latex-ai-model-row > select { flex:1; min-width:0; padding:5px 8px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-canvas); color:var(--color-ink); font-size:11px; }
 .latex-ai-model-row > button { padding:5px 9px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-surface-sunk); color:var(--color-ink-soft); font-size:11px; }
 .latex-ai-model-row > button:disabled { opacity:.5; }
@@ -2814,6 +2842,13 @@ button:disabled { opacity:.5;cursor:default; }
 .latex-ai-model-actions button { padding:5px 10px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-surface-sunk); color:var(--color-ink-soft); font-size:11px; }
 .latex-ai-model-actions button:first-child { border-color:var(--color-accent); color:var(--color-accent); }
 .latex-ai-models-hint { margin:0; color:var(--color-ink-faint); font-size:10px; line-height:1.7; }
+@container latex-ai-panel (max-width:420px) {
+  .latex-ai-model-row { flex-direction:column; align-items:stretch; }
+  .latex-ai-model-row > input, .latex-ai-model-row > select { box-sizing:border-box; width:100%; }
+  .latex-ai-model-row > button { align-self:stretch; white-space:nowrap; }
+  .latex-ai-model-actions { flex-wrap:wrap; }
+  .latex-ai-model-actions button { flex:1 1 120px; }
+}
 
 /* 诊断的「谁报的」标签：有些警告来自宏包而不是正文 */
 .latex-diagnostic-source { flex:0 0 auto; padding:0 5px; border:1px solid var(--color-line); border-radius:5px; color:var(--color-ink-faint); font-size:9.5px; white-space:nowrap; }

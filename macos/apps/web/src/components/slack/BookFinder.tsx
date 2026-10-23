@@ -316,7 +316,6 @@ export function BookFinder({
       )}
 
       <div className="slack-finder__legal">
-        <p>ReadX 保留 MIT 许可；书源适配器由 ReadX 独立实现。</p>
         <button type="button" onClick={() => setLicenseOpen(true)}>许可信息</button>
       </div>
 

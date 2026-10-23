@@ -7,7 +7,7 @@
 .mode-pendant {
   position: fixed;
   top: 0;
-  right: 26px;
+  right: auto;
   z-index: 60;
   width: 68px;
   pointer-events: none;
@@ -1562,10 +1562,6 @@
 }
 
 @media (max-width: 640px) {
-  .mode-pendant {
-    right: 10px;
-  }
-
   .app-header {
     padding-right: 88px;
   }

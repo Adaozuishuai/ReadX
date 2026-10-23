@@ -106,7 +106,7 @@ func TestRealCVPRTemplateDiagnosticsAndPasses(t *testing.T) {
 	t.Logf("真实 CVPR 模板：%d 页、%d 个警告、%d 趟编译、诊断 %d 条",
 		finished.Pages, finished.WarningCount, passes, len(finished.Diagnostics))
 	finalSummary := ParseLogFile(filepath.Join(mustBuildDir(t, service, project.ID, finished.ID), "main.log"))
-	t.Logf("最后一趟日志单独解析：错误 %d / 警告 %d / 诊断 %d 条（warning 计数与列表来自同一次解析吗？）",
+	t.Logf("最后一趟日志单独解析：错误 %d / 警告 %d / 诊断 %d 条",
 		finalSummary.Errors, finalSummary.Warnings, len(finalSummary.Diagnostics))
 	var rowErrors, rowWarnings int
 	var rowMessage string
@@ -115,8 +115,17 @@ func TestRealCVPRTemplateDiagnosticsAndPasses(t *testing.T) {
 	).Scan(&rowErrors, &rowWarnings, &rowMessage); err != nil {
 		t.Fatalf("读构建行失败: %v", err)
 	}
-	t.Logf("数据库里的构建行：错误 %d / 警告 %d / message=%q（内存对象：错误 %d / 警告 %d）",
-		rowErrors, rowWarnings, rowMessage, finished.ErrorCount, finished.WarningCount)
+	// 界面上的数字与列表必须同源：库里的警告数要和诊断列表里的 warning 条数一致。
+	warningRows := 0
+	for _, diagnostic := range finished.Diagnostics {
+		if diagnostic.Severity == "warning" {
+			warningRows++
+		}
+	}
+	if rowWarnings != warningRows {
+		t.Fatalf("「%d 个警告」与列表里的 %d 条对不上", rowWarnings, warningRows)
+	}
+	t.Logf("数据库构建行：错误 %d / 警告 %d / message=%q", rowErrors, rowWarnings, rowMessage)
 	for _, diagnostic := range finished.Diagnostics {
 		t.Logf("  [%s] source=%q file=%q line=%d locationSource=%q msg=%q",
 			diagnostic.Severity, diagnostic.Source, diagnostic.File, diagnostic.Line, diagnostic.LocationSource, diagnostic.Message)
@@ -130,6 +139,78 @@ func mustBuildDir(t *testing.T, service *Service, projectID, buildID string) str
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// 关键回归：评审模式（lineno 页边行号）的参照要靠上一份 .aux，而每次编译都是新目录。
+// 沿用辅助文件之后，第二次编译应当不再报 lineno 警告——也就是行号终于算对了。
+//
+// 实测依据（同一个目录里手跑）：第 1、2 趟报，第 3 趟起对上，第 5 趟彻底稳定；
+// 每趟都换空目录则永远停在 “re-run to get it right”。
+func TestBuildReusesAuxiliaryFilesSoLineNumbersResolve(t *testing.T) {
+	requireTeX(t)
+	fixture := cvprFixtureDir()
+	if info, err := os.Stat(fixture); err != nil || !info.IsDir() {
+		t.Skipf("没有真实 CVPR 模板夹具（%s）", fixture)
+	}
+	service := newTestService(t)
+	ctx := context.Background()
+	project, err := service.Create(ctx, "CVPR 复用辅助文件", EnginePDFLaTeX, "main.tex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcDir, err := service.SrcDir(project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTree(fixture, srcDir); err != nil {
+		t.Fatal(err)
+	}
+
+	first := startAndWait(t, service, ctx, project.ID, 5*time.Minute)
+	if first.Status != BuildSucceeded {
+		t.Fatalf("第一次编译应当成功：%s %s", first.Status, first.Message)
+	}
+	// 第二次编译：新目录，但会沿用第一次的 .aux/.bbl/.brf…
+	second := startAndWait(t, service, ctx, project.ID, 5*time.Minute)
+	if second.Status != BuildSucceeded {
+		t.Fatalf("第二次编译应当成功：%s %s", second.Status, second.Message)
+	}
+	if second.Pages != first.Pages {
+		t.Fatalf("页数不该变：%d → %d", first.Pages, second.Pages)
+	}
+	for _, diagnostic := range second.Diagnostics {
+		if strings.Contains(diagnostic.Message, "Line number reference failed") {
+			t.Fatalf("第二次编译不该再报行号参照失败（说明 .aux 没沿用上）：%+v", diagnostic)
+		}
+	}
+
+	// 安全性：沿用的是辅助文件，绝不能把上一次的 PDF/日志搬过来。
+	secondDir := mustBuildDir(t, service, project.ID, second.ID)
+	firstPDF := filepath.Join(mustBuildDir(t, service, project.ID, first.ID), "main.pdf")
+	secondPDF := filepath.Join(secondDir, "main.pdf")
+	firstPDFInfo, err := os.Stat(firstPDF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPDFInfo, err := os.Stat(secondPDF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondPDFInfo.ModTime().Before(firstPDFInfo.ModTime()) {
+		t.Fatal("第二次的 PDF 不该是上一次的副本")
+	}
+	t.Logf("第二次编译：%d 页、%d 个警告、诊断 %d 条（lineno 警告已消失）",
+		second.Pages, second.WarningCount, len(second.Diagnostics))
+}
+
+// startAndWait 起一次编译并等它进入终态。
+func startAndWait(t *testing.T, service *Service, ctx context.Context, projectID string, timeout time.Duration) *Build {
+	t.Helper()
+	build, err := service.StartBuild(ctx, projectID, BuildOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return waitForBuild(t, service, build.ID, timeout)
 }
 
 // copyTree 递归复制目录（跳过符号链接），供夹具铺进项目使用。

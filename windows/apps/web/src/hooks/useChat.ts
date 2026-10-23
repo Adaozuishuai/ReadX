@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, streamChat, type ChatChunk } from '../api/client';
+import { api, streamChat, type ChatChunk, type LatexAIEditProposal } from '../api/client';
 
 type ChatTransport = (
   request: { key: string; mode?: string; question: string; scope?: string; history?: Array<{ role: string; text: string }>; images?: string[] },
   onChunk: (chunk: ChatChunk) => void,
   signal?: AbortSignal,
 ) => Promise<void>;
+
+export interface ChatEditRequest {
+  proposal: LatexAIEditProposal;
+  status: 'pending' | 'applying' | 'applied' | 'rejected';
+  notice?: string;
+}
 
 export interface ChatTurn {
   id: string;
@@ -17,6 +23,7 @@ export interface ChatTurn {
   provider?: string;
   model?: string;
   reasoningEffort?: string;
+  edit?: ChatEditRequest;
 }
 interface Conversation { id: string; title: string; updatedAt: string; turns: ChatTurn[] }
 const fresh = (): Conversation => ({ id: crypto.randomUUID(), title: '新对话', updatedAt: new Date().toISOString(), turns: [] });
@@ -96,7 +103,7 @@ export function useChat(key: string | null, transport: ChatTransport = streamCha
         if (epoch.current !== requestEpoch) return;
         if (chunk.meta) patch({ scope: { included: chunk.meta.included, total: chunk.meta.total, unit: chunk.meta.unit }, provider: chunk.meta.provider, model: chunk.meta.model, reasoningEffort: chunk.meta.reasoningEffort });
         if (chunk.delta) { streaming += chunk.delta; patch({ text: streaming }); }
-        if (chunk.done) { finished = true; streaming = chunk.text ?? streaming; patch({ text: streaming, completed: !!streaming }); }
+        if (chunk.done) { finished = true; streaming = chunk.text ?? streaming; patch({ text: streaming, completed: !!streaming, edit: chunk.edit ? { proposal: chunk.edit, status: 'pending' } : undefined }); }
         if (chunk.error) { finished = true; patch({ text: chunk.partial ?? streaming, error: chunk.error, completed: false }); }
       }, abort.signal);
       if (!finished || !streaming) patch({ error: '连接结束，未收到完整回答。可重新回答。', completed: false });
@@ -106,6 +113,48 @@ export function useChat(key: string | null, transport: ChatTransport = streamCha
       if (epoch.current === requestEpoch) { controller.current = null; setBusy(false); }
     }
   }, [key, commit, transport]);
+  const approveEdit = useCallback(async (
+    turnID: string,
+    apply: (proposal: LatexAIEditProposal, signal?: AbortSignal) => Promise<string>,
+  ) => {
+    if (controller.current) return;
+    const snapshot = dataRef.current;
+    const conversation = snapshot.conversations.find((item) => item.id === snapshot.active);
+    const turn = conversation?.turns.find((item) => item.id === turnID);
+    if (!conversation || !turn?.edit || turn.edit.status !== 'pending') return;
+    const requestEpoch = epoch.current;
+    const abort = new AbortController();
+    controller.current = abort;
+    setBusy(true);
+    const updateEdit = (edit: ChatEditRequest, receipt = '') => {
+      if (epoch.current !== requestEpoch) return;
+      const current = dataRef.current;
+      commit({ ...current, conversations: current.conversations.map((item) => item.id === conversation.id
+        ? { ...item, updatedAt: new Date().toISOString(), turns: item.turns.map((candidate) => candidate.id === turnID
+          ? { ...candidate, edit, text: receipt ? `${turn.text}\n\n${receipt}` : candidate.text }
+          : candidate) }
+        : item) });
+    };
+    updateEdit({ ...turn.edit, status: 'applying', notice: '' });
+    try {
+      const notice = await apply(turn.edit.proposal, abort.signal);
+      const saved = notice.startsWith('已应用并保存');
+      updateEdit({ ...turn.edit, status: saved ? 'applied' : 'pending', notice }, saved ? notice : '');
+    } catch (cause) {
+      updateEdit({ ...turn.edit, status: 'pending', notice: cause instanceof Error ? cause.message : String(cause) });
+    } finally {
+      if (epoch.current === requestEpoch) { controller.current = null; setBusy(false); }
+    }
+  }, [commit]);
+  const rejectEdit = useCallback((turnID: string) => {
+    if (controller.current) return;
+    const current = dataRef.current;
+    commit({ ...current, conversations: current.conversations.map((conversation) => conversation.id === current.active
+      ? { ...conversation, turns: conversation.turns.map((turn) => turn.id === turnID && turn.edit?.status === 'pending'
+        ? { ...turn, text: `${turn.text}\n\n用户已取消本次修改，文件未保存。`, edit: { ...turn.edit, status: 'rejected' as const, notice: '' } }
+        : turn) }
+      : conversation) });
+  }, [commit]);
   const stop = useCallback(() => controller.current?.abort(), []);
   const newConversation = () => {
     if (controller.current) return;
@@ -129,5 +178,5 @@ export function useChat(key: string | null, transport: ChatTransport = streamCha
     const current = dataRef.current;
     commit({ conversations: [deleted, ...current.conversations.filter((c) => c.id !== deleted.id)], active: deleted.id }); setDeleted(null);
   };
-  return { turns: data.conversations.find((c) => c.id === data.active)?.turns ?? [], conversations: data.conversations, active: data.active, busy, send, stop, newConversation, selectConversation, deleteConversation, undoDelete, canUndo: !!deleted, storageError };
+  return { turns: data.conversations.find((c) => c.id === data.active)?.turns ?? [], conversations: data.conversations, active: data.active, busy, send, stop, approveEdit, rejectEdit, newConversation, selectConversation, deleteConversation, undoDelete, canUndo: !!deleted, storageError };
 }

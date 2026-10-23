@@ -120,7 +120,6 @@ export function SlackWorkspace({
           <span className="slack-brand__mark" aria-hidden="true">◈</span>
           <span>
             <strong>ReadX</strong>
-            <small>资料速览</small>
           </span>
         </button>
 

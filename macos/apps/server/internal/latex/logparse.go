@@ -2,6 +2,7 @@ package latex
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,6 +14,14 @@ type Diagnostic struct {
 	File     string `json:"file,omitempty"`
 	Line     int    `json:"line,omitempty"`
 	Message  string `json:"message"`
+	// Source 是「谁报的」：LaTeX、Package lineno、Class IEEEtran…
+	// 有些警告来自宏包而不是用户正文，标出来能省掉「我这一行看着没问题」的困惑。
+	Source string `json:"source,omitempty"`
+	// LocationSource 说明位置是怎么来的：
+//   - "log"    —— 日志行直接给出的 file:line（最可信）；
+//   - "search" —— 在项目源码里找到了这个引用键（\cite/\ref 的键），位置是确定的；
+//   - "" —— 没有位置。警告常常说不出文件，硬猜会把人带错地方。
+	LocationSource string `json:"locationSource,omitempty"`
 	// Snippet 是出错处的源码片段（TeX 日志里的 l.NN 行，可能左边被截断）。
 	Snippet string `json:"snippet,omitempty"`
 	// Raw 是原始日志行：解析可能不完美，保留原文供用户自己判断。
@@ -47,13 +56,18 @@ var (
 	lineNumber = regexp.MustCompile(`^l\.(\d+)\s*(.*)$`)
 	// Output written on main.pdf (3 pages, 12345 bytes).
 	outputWritten = regexp.MustCompile(`Output written on .*?\((\d+) pages?`)
-	latexWarning  = regexp.MustCompile(`^(?:LaTeX|Package\s+\S+|Class\s+\S+|pdfTeX)\s+Warning:\s*(.*)$`)
+	// 警告要连「谁报的」一起取：Package lineno Warning: ...
+	latexWarning = regexp.MustCompile(`^((?:LaTeX|Package\s+\S+|Class\s+\S+|pdfTeX))\s+Warning:\s*(.*)$`)
+	// 警告自己带的输入行号：... undefined on input line 42.
+	onInputLine = regexp.MustCompile(`(?i)\bon input line (\d+)`)
 	// LaTeX Warning: Citation `foo' on page 1 undefined on input line 42.
 	undefinedCitation  = regexp.MustCompile("Citation `([^']+)' .*undefined")
 	undefinedReference = regexp.MustCompile("Reference `([^']+)' .*undefined")
 	// 「有未定义引用」同样意味着必须再跑一趟：这一趟刚生成的 .aux/.bbl 要等下一趟才生效。
 	rerunHint = regexp.MustCompile(`(?i)re-?run to get|there were undefined (?:references|citations)|label\(s\) may have changed`)
 	overfull  = regexp.MustCompile(`^(Overfull|Underfull) \\([hv])box`)
+	// 盒子溢出信息里的行号范围：Overfull \hbox ... at lines 40--42
+	overfullLines = regexp.MustCompile(`at lines (\d+)`)
 )
 
 // unwrapLogLines 还原 MiKTeX/TeX 按 79 列做的折行。
@@ -151,11 +165,14 @@ func ParseLogText(text string) LogSummary {
 			}
 		}
 
-		// 源码片段行：挂到正在等待的那条错误上，然后收尾。
+		// 源码片段行（l.NN）：只挂到**错误**上。
+		//
+		// 真实日志里 l.NN 是 TeX 对错误的上下文输出；曾经把警告也接上去，
+		// 于是给一条整篇级的宏包警告凭空造出了一个行号（用户看到的就是「行号移位」）。
 		if match := lineNumber.FindStringSubmatch(trimmed); match != nil {
 			number, _ := strconv.Atoi(match[1])
 			snippet := strings.TrimSpace(match[2])
-			if pending != nil {
+			if pending != nil && pending.Severity == "error" {
 				if pending.Line == 0 {
 					pending.Line = number
 				}
@@ -163,7 +180,7 @@ func ParseLogText(text string) LogSummary {
 				flush()
 				continue
 			}
-			// 没有对应的错误（例如 warning 的 l.NN）：不单独造一条诊断。
+			// 与任何错误都不对应：不单独造一条诊断，也不要污染警告。
 			continue
 		}
 
@@ -180,6 +197,8 @@ func ParseLogText(text string) LogSummary {
 				Line:     number,
 				Message:  message,
 				Raw:      trimmed,
+				// 位置直接写在日志行上，这是最可信的一种。
+				LocationSource: locationLog,
 			})
 			continue
 		}
@@ -192,15 +211,36 @@ func ParseLogText(text string) LogSummary {
 		}
 
 		if match := latexWarning.FindStringSubmatch(trimmed); match != nil {
-			message := strings.TrimSpace(match[1])
+			source := strings.TrimSpace(match[1])
+			message := strings.TrimSpace(match[2])
 			if message == "" {
 				continue
 			}
-			start(Diagnostic{Severity: "warning", File: currentFile, Message: message, Raw: trimmed})
+			diagnostic := Diagnostic{Severity: "warning", Source: source, Message: message, Raw: trimmed}
+			// 警告的位置只能来自它自己写的那句话，而且**只取行号，不认文件**：
+			//   - 「on input line N」说的是行号，可信；
+			//   - 文件却常常是错的：natbib/LaTeX 是把未定义引用攒到**跑完之后**统一打印的，
+			//     那时「最近打开过的文件」只是最后一个被读的 .tex（真实 CVPR 模板上，
+			//     引用明明在 sec/1_intro.tex，却被算到了 sec/0_abstract.tex）。
+			// 指错地方的危害大于不给地方：用户会去翻一个根本没错的文件。
+			if match := onInputLine.FindStringSubmatch(message); match != nil {
+				if number, convErr := strconv.Atoi(match[1]); convErr == nil {
+					diagnostic.Line = number
+				}
+			}
+			start(diagnostic)
 			continue
 		}
 		if overfull.MatchString(trimmed) {
-			start(Diagnostic{Severity: "info", File: currentFile, Message: trimmed, Raw: trimmed})
+			// 盒子溢出信息里自己带行号范围（"... at lines 40--42"），同样只取行号：
+			// 文件归属一样不可靠（同样是攒到跑完再打印）。
+			diagnostic := Diagnostic{Severity: "info", Source: "TeX", Message: trimmed, Raw: trimmed}
+			if match := overfullLines.FindStringSubmatch(trimmed); match != nil {
+				if number, convErr := strconv.Atoi(match[1]); convErr == nil {
+					diagnostic.Line = number
+				}
+			}
+			start(diagnostic)
 			continue
 		}
 
@@ -239,6 +279,119 @@ func classifyLogMessage(message string) string {
 	default:
 		return "error"
 	}
+}
+
+// 位置来源标记。
+const (
+	// locationLog：位置直接来自日志行。
+	locationLog = "log"
+	// locationSearch：位置来自在项目源码里查找引用键。
+	locationSearch = "search"
+)
+
+// resolveKeyLocations 把「未定义引用/引文」定位到真正使用这个键的文件与行。
+//
+// 为什么值得做：这类警告是 natbib/LaTeX 在**跑完之后**统一打印的，日志里既没有文件名，
+// 括号栈给的「最近打开的文件」也常常是错的（真实 CVPR 模板上，引用在 sec/1_intro.tex，
+// 却被算到 sec/0_abstract.tex）。与其猜，不如在项目源码里把这个键找出来——
+// \cite{key}/\ref{key} 写在哪一行是确定的事实。
+func resolveKeyLocations(srcDir string, diagnostics []Diagnostic) []Diagnostic {
+	patterns := []*regexp.Regexp{undefinedCitation, undefinedReference}
+	keys := map[string]bool{}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.File != "" {
+			continue
+		}
+		for _, pattern := range patterns {
+			if match := pattern.FindStringSubmatch(diagnostic.Message); match != nil {
+				keys[strings.TrimSpace(match[1])] = true
+			}
+		}
+	}
+	if len(keys) == 0 {
+		return diagnostics
+	}
+	locations := searchKeyLocations(srcDir, keys)
+	if len(locations) == 0 {
+		return diagnostics
+	}
+	resolved := make([]Diagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if diagnostic.File == "" {
+			for _, pattern := range patterns {
+				match := pattern.FindStringSubmatch(diagnostic.Message)
+				if match == nil {
+					continue
+				}
+				if location, ok := locations[strings.TrimSpace(match[1])]; ok {
+					diagnostic.File = location.File
+					diagnostic.Line = location.Line
+					diagnostic.LocationSource = locationSearch
+					break
+				}
+			}
+		}
+		resolved = append(resolved, diagnostic)
+	}
+	return resolved
+}
+
+type keyLocation struct {
+	File string
+	Line int
+}
+
+// searchKeyLocations 在项目内的 .tex 里找这些键第一次出现的位置。
+//
+// 只看 .tex：引用键本来就写在正文里；.bib 里的键是「被引用的对象」，不是使用位置。
+func searchKeyLocations(srcDir string, keys map[string]bool) map[string]keyLocation {
+	found := map[string]keyLocation{}
+	command := regexp.MustCompile(`\\(?:cite|citep|citet|citeauthor|citeyear|ref|eqref|pageref|autoref|nameref|[cC]ref|label)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}`)
+	_ = filepath.WalkDir(srcDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			// 编译产物与隐藏目录不看：那不是用户写的正文。
+			name := entry.Name()
+			if name == "build" || name == "snapshots" || strings.HasPrefix(name, ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(path), ".tex") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		relative, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return nil
+		}
+		relative = filepath.ToSlash(relative)
+		for index, line := range strings.Split(string(content), "\n") {
+			commentAt := strings.Index(line, "%")
+			for _, match := range command.FindAllStringSubmatchIndex(line, -1) {
+				// 注释里的引用不算使用位置。
+				if commentAt >= 0 && commentAt < match[0] {
+					continue
+				}
+				for _, key := range strings.Split(line[match[2]:match[3]], ",") {
+					trimmed := strings.TrimSpace(key)
+					if !keys[trimmed] {
+						continue
+					}
+					if _, exists := found[trimmed]; !exists {
+						found[trimmed] = keyLocation{File: relative, Line: index + 1}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	return found
 }
 
 // extractTexPath 从 "(./sections/method.tex" 这类片段里取出源文件路径。
