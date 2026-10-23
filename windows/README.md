@@ -65,6 +65,13 @@ npm run shortcut -- --browser  # 改用 start-browser.ps1 的浏览器回退入�
 
 点击顶部挂件，通过淡绿色漫画窗帘切换科研与摸鱼界面：平涂色块、描边褶皱、扇形帘头和少量网点，呈现纸上漫画的质感。挂件可沿顶部拖动并记住位置；`Ctrl+Shift+M` 快速切换，摸鱼界面按 `Esc` 返回。
 
+<p align="center">
+  <img src="../docs/images/promo/17-leisure-curtain.png" alt="淡绿色漫画窗帘转场截图" width="48%">
+  <img src="../docs/images/promo/18-leisure-shelf.png" alt="摸鱼书架与 Qwen 拉绳挂件截图" width="48%">
+</p>
+
+挂件入口的设计借鉴 [elysia395/dsh-wallpaper-engine](https://github.com/elysia395/dsh-wallpaper-engine)，Qwen 图片取自该插件的 `ROPE_IMG_QWEN`；上游为 AI 娘二创形象署名 [ZipZipPipe](https://space.bilibili.com/4168597)。ReadX 实现了双界面切换、拖动定位与漫画窗帘。完整素材来源和致谢见[主 README](../README.md#挂件来源与致谢)。
+
 本地书架支持 TXT、EPUB、图片和 CBZ；「找书」支持 Project Gutenberg 英文公版书搜索，下载后自动加入书架。中文连载可导入兼容的 Legado 书源 JSON，按需获取、缓存章节并更新目录。阅读数据保存在本机浏览器；在线搜索、下载和章节获取需要网络及可用书源。
 
 ## 导入文档

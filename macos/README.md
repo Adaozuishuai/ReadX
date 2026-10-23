@@ -46,6 +46,13 @@ LaTeX 可跟随全局模型，或在「模型设置」中指定自己的 HTTP �
 
 点击顶部挂件，以淡绿色漫画窗帘切换科研与摸鱼界面，采用平涂、描边褶皱、扇形帘头和少量网点；挂件可沿顶部拖动并记住位置。`Ctrl+Shift+M` 切换界面，摸鱼界面按 `Esc` 返回科研工作区。
 
+<p align="center">
+  <img src="../docs/images/promo/17-leisure-curtain.png" alt="淡绿色漫画窗帘转场截图（Windows 本地预览）" width="48%">
+  <img src="../docs/images/promo/18-leisure-shelf.png" alt="摸鱼书架与 Qwen 拉绳挂件截图（Windows 本地预览）" width="48%">
+</p>
+
+以上为 Windows 本地预览截图，两平台共用这套界面设计。挂件入口借鉴 [elysia395/dsh-wallpaper-engine](https://github.com/elysia395/dsh-wallpaper-engine)，Qwen 图片取自该插件的 `ROPE_IMG_QWEN`；上游为 AI 娘二创形象署名 [ZipZipPipe](https://space.bilibili.com/4168597)。ReadX 实现了双界面切换、拖动定位与漫画窗帘。完整来源和致谢见[主 README](../README.md#挂件来源与致谢)。
+
 独立书架支持本地 TXT、EPUB、图片与 CBZ。找书入口可搜索 Project Gutenberg 英文公版书并将下载内容加入书架；中文连载可导入兼容的 Legado 书源 JSON，按需获取和缓存章节。阅读数据保存在本机浏览器，在线检索和章节获取需要网络及可用书源。
 
 ## 数据与故障恢复

@@ -186,9 +186,23 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 
 #### 14 · 摸鱼界面：挂件拉幕切换，本地小说与漫画随手读
 
+<p align="center">
+  <img src="docs/images/promo/17-leisure-curtain.png" alt="真实界面截图：淡绿色漫画窗帘合拢中的一帧" width="48%">
+  <img src="docs/images/promo/18-leisure-shelf.png" alt="真实界面截图：揭幕后进入摸鱼书架，右上方是 Qwen 拉绳挂件" width="48%">
+</p>
+
+左图为窗帘转场中的截图，右图为切换后的本地书架。点击顶部挂件，合幕遮住当前页面，再揭幕进入另一个工作区；两个方向都使用这段动画。
+
 - **点击挂件切换**：科研与摸鱼界面之间以**淡绿色漫画窗帘**合拢、再展开，使用平涂色块、描边褶皱、扇形帘头和少量网点。按住挂件可沿窗口顶部拖动，位置会记住。也可按 `Ctrl+Shift+M` 切换，在摸鱼界面按 `Esc` 返回科研工作区。
 - **本地书架**：导入 TXT、EPUB、图片或 CBZ，在独立书架中阅读小说与漫画，阅读内容和进度保存在本机浏览器。
 - **找书并加入书架**：内建 Project Gutenberg 英文公版书搜索，下载 EPUB / TXT 后自动导入本地书架；中文连载支持导入兼容的 Legado 书源 JSON，按需获取并缓存章节，目录可更新。在线检索和章节获取需要网络及可用书源。
+
+##### 挂件来源与致谢
+
+- **借鉴的项目**：顶部悬挂角色、以拉绳作为入口的设计借鉴了 [elysia395/dsh-wallpaper-engine](https://github.com/elysia395/dsh-wallpaper-engine)（DSH Wallpaper Engine，npm 包名 `dsh-plugin-wallpaper-engine`）。感谢原项目作者与贡献者。
+- **图片来源**：当前 Qwen 挂件取自本机已安装的上述插件中的 `ROPE_IMG_QWEN` 图片，保存为 `windows/apps/web/public/slack/qwen.png`（macOS 使用同一素材）。
+- **角色创作致谢**：按[上游素材说明](https://github.com/elysia395/dsh-wallpaper-engine/blob/main/assets/readme/SOURCES.md)，AI 娘二创形象的创作基础来自 B 站 UP 主 [ZipZipPipe](https://space.bilibili.com/4168597)。角色与图片权利归各自权利人，ReadX 的 MIT 代码许可不改变这些素材的权利归属。
+- **ReadX 的适配**：科研 / 摸鱼双界面切换、挂件沿顶部拖动与位置保存，以及淡绿色漫画 SVG 窗帘和合幕换景动画，由 ReadX 实现。
 
 ### 下载与开始使用
 
@@ -233,6 +247,8 @@ ReadX is a desktop workspace for research reading. Import papers, let recognitio
 12. **Knowledge graph (12)** — cross-paper entities and relations rendered as a dual-ring point cloud: shared entities sit nearest the center, single-paper entities around them, papers on the outer shell, all interlinked. Drag to rotate, scroll to zoom, hover a node to light up every link, click for relations with verbatim, page-anchored evidence that jumps back to the source page. A matrix view stays available for reading exact overlaps. Rendered with three.js (WebGL), lazy-loaded with the graph workspace.
 13. **LaTeX Studio (13)** — Create a starter project or import an Overleaf ZIP, edit real `.tex` / `.bib` files with Monaco, and preview PDFs compiled by your local TeX distribution. Send an edit request in chat: the assistant uses project source context to locate the file and returns an approval card with a before/after preview. **Confirm modification** creates a snapshot and saves through the revision-checked file path; **Cancel modification** leaves the file as it was. Each card edits one project source file. LaTeX can use its own HTTP model settings, including a searchable model list. The file tree is resizable, diagnostics can be hidden, and compilation tools and snapshots are collapsed by default. The separate automatic compile-repair action requires its own write toggle and rolls back edits that do not reduce compile errors.
 14. **Leisure workspace (14)** — Click the draggable top pendant to switch between research and leisure with pale-green comic curtains: flat colors, outlined folds, scalloped valances, and subtle halftone dots. Read local TXT / EPUB novels and image / CBZ comics, search Project Gutenberg and import downloads into the local shelf, or add compatible Legado sources for serialized novels. `Ctrl+Shift+M` switches modes; `Esc` returns from leisure to research.
+
+**Pendant credits:** The hanging rope mascot design is inspired by [elysia395/dsh-wallpaper-engine](https://github.com/elysia395/dsh-wallpaper-engine); the Qwen image is taken from its `ROPE_IMG_QWEN` asset. [Upstream credits](https://github.com/elysia395/dsh-wallpaper-engine/blob/main/assets/readme/SOURCES.md) acknowledge [ZipZipPipe](https://space.bilibili.com/4168597) for the AI-girl character designs. Character and image rights remain with their respective owners. ReadX implements the workspace switch, pendant positioning, and pale-green comic curtain transition. See the [screenshots and Chinese credits above](#挂件来源与致谢).
 
 ### Download
 
