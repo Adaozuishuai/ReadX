@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="168" height="800" viewBox="0 0 168 800" preserveAspectRatio="none">
+  <defs>
+    <pattern id="print-dots" width="12" height="12" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="3" r="0.75" fill="#75966a"/>
+    </pattern>
+  </defs>
+  <path fill="#c9e2bb" d="M0 0h168v800H0z"/>
+  <path d="M15-4C9 139 23 267 16 406S10 657 18 804H61C53 650 67 519 59 371S65 109 59-4Z" fill="#dfedcf"/>
+  <path d="M104-4C114 149 99 290 108 440S101 676 111 804H144C135 642 148 525 140 368S147 108 141-4Z" fill="#b4d1a7"/>
+  <path d="M104-4C114 149 99 290 108 440S101 676 111 804H144C135 642 148 525 140 368S147 108 141-4Z" fill="url(#print-dots)" opacity=".3"/>
+  <g fill="none" stroke="#77966a" stroke-width="2.2" stroke-linecap="round" vector-effect="non-scaling-stroke">
+    <path d="M15-4C9 139 23 267 16 406S10 657 18 804"/>
+    <path d="M59-4C65 109 51 237 59 371S53 650 61 804"/>
+    <path d="M104-4C114 149 99 290 108 440S101 676 111 804"/>
+    <path d="M141-4C147 108 132 231 140 368S135 642 144 804"/>
+  </g>
+  <g fill="none" stroke="#94b184" stroke-width="1.6" stroke-linecap="round">
+    <path d="M80 34q-5 75-1 146M80 611q-4 66 1 148"/>
+    <path d="M39 282q-3 36-1 65M124 491q3 29 1 58"/>
+  </g>
+</svg>

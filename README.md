@@ -24,6 +24,8 @@ https://github.com/user-attachments/assets/1b377a2a-c36d-4e51-9923-feb28d1912d2
 
 ReadX 是一个面向科研阅读与论文写作的桌面工作区：导入论文、识别与翻译、逐页双语阅读、高亮批注、AI 精读与学术演示稿生成，都在同一个窗口里完成。LaTeX Studio 支持编辑真实项目文件、编译预览 PDF，并通过带确认卡片的 AI 对话修改源码。论文文件与阅读资料优先保存在本机。
 
+**v1.0.0**：新增 LaTeX 项目写作与对话内修改确认，完善编译诊断、模型配置和可调整布局；摸鱼界面使用淡绿色漫画窗帘切换。完整变更见 [v1.0.0 发布说明](windows/release-notes/v1.0.0.md)。
+
 ### 一眼看懂 ReadX
 
 ![ReadX 封面：读论文、做标注、写想法，也都在一处](docs/images/promo/01-cover.jpg)
@@ -184,13 +186,15 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 
 #### 14 · 摸鱼界面：挂件拉幕切换，本地小说与漫画随手读
 
-- **点击挂件切换**：科研与摸鱼界面之间以绿色舞台幕布合拢、再展开的动画过渡；按住挂件可沿窗口顶部拖动，位置会记住。也可按 `Ctrl+Shift+M` 切换，在摸鱼界面按 `Esc` 返回科研工作区。
+- **点击挂件切换**：科研与摸鱼界面之间以**淡绿色漫画窗帘**合拢、再展开，使用平涂色块、描边褶皱、扇形帘头和少量网点。按住挂件可沿窗口顶部拖动，位置会记住。也可按 `Ctrl+Shift+M` 切换，在摸鱼界面按 `Esc` 返回科研工作区。
 - **本地书架**：导入 TXT、EPUB、图片或 CBZ，在独立书架中阅读小说与漫画，阅读内容和进度保存在本机浏览器。
 - **找书并加入书架**：内建 Project Gutenberg 英文公版书搜索，下载 EPUB / TXT 后自动导入本地书架；中文连载支持导入兼容的 Legado 书源 JSON，按需获取并缓存章节，目录可更新。在线检索和章节获取需要网络及可用书源。
 
 ### 下载与开始使用
 
 从[最新 Release](https://github.com/Leechion/ReadX/releases/latest)下载 Windows 或 macOS 安装包。启动后，在 **AI 助手设置**中选择模型服务并配置连接；Codex Desktop 用户可先登录 Codex，再从 ReadX 中连接。
+
+v1.0.0 提供 [Windows x64 安装包 ReadX-Setup-1.0.0.exe](https://github.com/Leechion/ReadX/releases/download/v1.0.0/ReadX-Setup-1.0.0.exe)。Release 中的 `.blockmap` 和 `latest.yml` 用于应用内自动更新，手动安装只需下载 `.exe`。
 
 #### macOS 首次启动
 
@@ -228,7 +232,7 @@ ReadX is a desktop workspace for research reading. Import papers, let recognitio
 11. **Citations & stats (11)** — BibTeX / RIS export (single paper, shelf, or whole library) that discloses how each entry type was inferred; an OpenAlex-backed citation network showing which library papers this one cites and which cite it; and library statistics covering reading activity, annotations, per-stage processing durations, and year/shelf/topic distribution. Stay time is deliberately not reported — it is not collected.
 12. **Knowledge graph (12)** — cross-paper entities and relations rendered as a dual-ring point cloud: shared entities sit nearest the center, single-paper entities around them, papers on the outer shell, all interlinked. Drag to rotate, scroll to zoom, hover a node to light up every link, click for relations with verbatim, page-anchored evidence that jumps back to the source page. A matrix view stays available for reading exact overlaps. Rendered with three.js (WebGL), lazy-loaded with the graph workspace.
 13. **LaTeX Studio (13)** — Create a starter project or import an Overleaf ZIP, edit real `.tex` / `.bib` files with Monaco, and preview PDFs compiled by your local TeX distribution. Send an edit request in chat: the assistant uses project source context to locate the file and returns an approval card with a before/after preview. **Confirm modification** creates a snapshot and saves through the revision-checked file path; **Cancel modification** leaves the file as it was. Each card edits one project source file. LaTeX can use its own HTTP model settings, including a searchable model list. The file tree is resizable, diagnostics can be hidden, and compilation tools and snapshots are collapsed by default. The separate automatic compile-repair action requires its own write toggle and rolls back edits that do not reduce compile errors.
-14. **Leisure workspace (14)** — Click the draggable top pendant to switch between research and leisure with a green stage-curtain animation. Read local TXT / EPUB novels and image / CBZ comics, search Project Gutenberg and import downloads into the local shelf, or add compatible Legado sources for serialized novels. `Ctrl+Shift+M` switches modes; `Esc` returns from leisure to research.
+14. **Leisure workspace (14)** — Click the draggable top pendant to switch between research and leisure with pale-green comic curtains: flat colors, outlined folds, scalloped valances, and subtle halftone dots. Read local TXT / EPUB novels and image / CBZ comics, search Project Gutenberg and import downloads into the local shelf, or add compatible Legado sources for serialized novels. `Ctrl+Shift+M` switches modes; `Esc` returns from leisure to research.
 
 ### Download
 

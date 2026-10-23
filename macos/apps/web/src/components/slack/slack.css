@@ -75,7 +75,7 @@
   pointer-events: none;
 }
 
-/* ---- 舞台幕布：合幕后换景，再向两侧揭幕 -------------------------------- */
+/* ---- 漫画幕布：淡绿平涂、描边褶皱与网点，合幕后换景再揭幕 --------------- */
 .mode-curtain {
   position: fixed;
   inset: 0;
@@ -89,12 +89,8 @@
   top: 0;
   bottom: 0;
   width: calc(50% + 2px);
-  background:
-    linear-gradient(180deg, rgb(0 0 0 / 0.48), transparent 22%, rgb(0 0 0 / 0.22)),
-    repeating-linear-gradient(90deg,
-      #0c251c 0, #174332 15px, #34775a 33px,
-      #235b43 48px, #103222 72px, #081e15 85px,
-      #194b36 110px, #0c251c 132px);
+  background: #c9e2bb url('/curtain-comic-folds.svg') repeat-x;
+  background-size: 168px 100%;
   will-change: transform;
   animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
   animation-fill-mode: both;
@@ -103,13 +99,14 @@
 .mode-curtain__panel--left {
   left: 0;
   --curtain-open: -103%;
-  box-shadow: inset -2px 0 #b69559, 8px 0 30px rgb(0 0 0 / 0.35);
+  border-right: 2px solid #6d8b62;
 }
 
 .mode-curtain__panel--right {
   right: 0;
   --curtain-open: 103%;
-  box-shadow: inset 2px 0 #b69559, -8px 0 30px rgb(0 0 0 / 0.35);
+  border-left: 2px solid #6d8b62;
+  background-position: right top;
 }
 
 .mode-curtain--closing .mode-curtain__panel {
@@ -125,11 +122,8 @@
 .mode-curtain__valance {
   position: absolute;
   inset: 0 0 auto;
-  height: 34px;
-  border-bottom: 2px solid #b69559;
-  border-radius: 0 0 50% 50%;
-  background: linear-gradient(#0a2017, #245b42 70%, #103322);
-  box-shadow: 0 7px 18px rgb(0 0 0 / 0.4);
+  height: 78px;
+  background: url('/curtain-comic-valance.svg') repeat-x top left / 240px 78px;
 }
 
 .mode-curtain--closing .mode-curtain__valance {
