@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/1b377a2a-c36d-4e51-9923-feb28d1912d2
 
 ## 中文
 
-ReadX 是一个面向科研阅读的桌面工作区：把论文导入书库，在本机完成识别与翻译，然后在同一个窗口里逐页双语阅读、高亮批注、向 AI 助教提问、把精读拆成五个章节逐项梳理，最后将阅读成果整理成学术演示稿。论文文件与阅读资料优先保存在本机。
+ReadX 是一个面向科研阅读与论文写作的桌面工作区：导入论文、识别与翻译、逐页双语阅读、高亮批注、AI 精读与学术演示稿生成，都在同一个窗口里完成。LaTeX Studio 支持编辑真实项目文件、编译预览 PDF，并通过带确认卡片的 AI 对话修改源码。论文文件与阅读资料优先保存在本机。
 
 ### 一眼看懂 ReadX
 
@@ -159,14 +159,19 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 
 - **项目与文件**：新建项目会得到一份可直接编译的模板（`main.tex` / `references.bib` / `sections/` / `figures/`）；也可以把 Overleaf 导出的 ZIP 直接导进来（自动剥掉外层目录、跳过系统垃圾与编译副产物，并在报告里列出跳过了什么），或随时把源码导出成 ZIP（导出前剔除 `.aux`/`.log` 等副产物）。
 - **编辑**：编辑器是 Monaco（按需加载，不打开这个工作区就不会下载），带 LaTeX 语法高亮、`\begin`/`\end` 配对折叠、Ctrl/Cmd+S 立即保存与约 0.9 秒防抖的自动保存。`\cite` 与 `\ref` 的候选来自项目里真实的 `.bib` 条目与 `\label`；引用了不存在的键会直接标波浪线——那正是编译必然报 undefined 的地方。
-- **编译**：用**本机安装的 TeX 发行版**编译（MiKTeX / TeX Live），latexmk 可用时优先用它，不可用时走内置多趟（引擎 → 需要时跑 bibtex/biber → 交叉引用重跑，最多四趟）。工具链状态如实报告：哪个引擎可用、哪个不可用、为什么不可用（例如本机 `latexmk.exe` 在、但缺 Perl 跑不起来，界面就会这么写，并说明已改用内置多趟）。
+- **编译**：用**本机安装的 TeX 发行版**编译（MiKTeX / TeX Live），latexmk 可用时优先用它，不可用时走内置多趟（引擎 → 需要时跑 bibtex/biber → 交叉引用重跑，最多六趟）。工具链状态如实报告：哪个引擎可用、哪个不可用、为什么不可用（例如本机 `latexmk.exe` 在、但缺 Perl 跑不起来，界面就会这么写，并说明已改用内置多趟）。
 - **诊断**：编译错误与警告按「文件:行号 + 出错的那行源码」列出来，**点一下就跳到编辑器对应位置**；页数、退出码、错误/警告数一并显示，完整日志可随时打开。产物对应的是哪一版源码也被记住，改完源码还没重编译时会明确提示「当前 PDF 是上一次的产物」。
 - **预览**：右栏用 PDF.js 显示编译产物，支持翻页、缩放、适应宽度、下载，以及**在产物里查找**（扫描进度与「有页面读不出文字」都会如实说明）。
-- **AI 参与写作，两种力度由你选**：默认只有一个「建议」入口——AI 给出修复后的完整源码，你在「修改前 / 修改后」之间核对，点「应用并保存」才落盘，落盘走的是带内容指纹校验的正常保存路径。想要更省事，可以在工具栏打开**「AI 直接改文件」**（默认关闭，开启时会明确告知后果）：开启后 AI 可以直接改写项目内的 `.tex`，但每一次写入都被固定的护栏包住——**先快照 → 原子写入 → 强制真实重新编译 → 错误没减少就自动回滚**，并把「编译错误 N → M」「保留还是回滚」「快照编号」逐条摆给你看；被回滚时还能展开查看「AI 想改成什么」。快照列表随时可回滚，回滚是「回到那一刻」，之后新增的文件会被移除并逐条列出。
-- **LaTeX 可以单独指定模型**：AI 助手面板里的「模型」一栏能让 LaTeX 走自己的渠道（HTTP 提供方 + 地址 + 模型 + 推理强度），**不影响阅读与翻译用的全局渠道**——默认「跟随全局」，取消勾选即单独配置。密钥仍按「渠道 + 地址」隔离保存，同一渠道可直接复用已保存的 Key，绝不会被发到别的地址；只支持 HTTP 渠道（Codex/Claude Code/Kimi Code 这类 CLI 渠道靠拉起本机命令行进程，在后台服务里通常不可用，界面上会直说）。
-- **不把机器信息发出去**：编译日志在服务端**脱敏之后**才发给模型（操作系统用户名、家目录、项目绝对路径都会被替换），MiKTeX 那类与本项目无关的环境提示也会剔除；发什么、发多少在界面上写明，项目源码永远只在本机编译。
+- **直接在对话里请求修改**：输入「把 abstract 中的数字删掉」或「润色这一段，保留 LaTeX 命令」并发送，AI 会在对应回复下生成**修改确认卡片**，列出目标文件和修改说明，可展开查看修改前后内容。点**「确认修改」**后才创建源码快照并保存；点「取消修改」则保留原文件。输入栏的**「请求批准」**说明这一确认方式，不需要再找单独的预览按钮。每张卡片对应一个项目内的 `.tex` 或 `.bib` 文件。
+- **结合项目源码定位内容**：助手会读取当前编辑内容和项目内的 `.tex` / `.bib` 上下文，可沿着 `main.tex` 中的 `\input`、`\include` 找到实际章节。例如当前打开 `main.tex`，也可以请求修改 `sec/0_abstract.tex`。大型项目受上下文长度限制；保存前会再次核对源码，避免覆盖 AI 生成期间的新改动。
+- **自动修复编译错误**：展开**「编译修复与源码快照」**可生成修复建议、查看快照或执行自动修复。在工具栏开启**「自动修复写入」**后，自动修复会按「快照 → 写入 → 真实编译 → 错误未减少则回滚」执行，并显示错误数变化和保留／回滚结果；聊天中的修改仍然逐次请求确认。手动回滚会把项目恢复到快照时刻，之后新增的文件会被移除并列出。
+- **按自己的习惯安排界面**：项目目录可以拖宽，目录字号更大；编译诊断列表可以隐藏，无错误和警告时不再显示空提示；编译修复与源码快照默认折叠，让对话和 PDF 预览有更多空间。
+- **LaTeX 可以单独指定模型**：AI 助手面板里的**「模型设置」**可配置 HTTP 提供方、API 地址、模型与推理强度；模型列表支持拉取和搜索选择，保存后助手标题与输入栏同步显示配置。默认跟随全局，也可以为 LaTeX 单独配置，**不影响阅读与翻译用的全局渠道**。密钥按「渠道 + 地址」隔离保存；单独配置支持 HTTP 渠道，CLI 渠道的可用性取决于后台运行环境。
+- **本机编译与 AI 上下文**：编辑、TeX 编译和 PDF 预览在本机完成；使用 AI 问答或修改时，相关项目源码会发送给所选模型服务。编译修复日志在服务端脱敏后发送，操作系统用户名、家目录和项目绝对路径会被替换。
 
-![AI 直接改文件：写入前自动快照、写后强制编译验证；这次点了「回滚到修改前」，源码已恢复，编译面板如实提示当前 PDF 是上一次的产物](docs/images/promo/13-latex-ai-autofix.png)
+![示例：发送修改要求后，对话中出现目标文件、修改说明和「确认修改／取消修改」卡片；输入栏显示「请求批准」](docs/images/promo/16-latex-chat-approval.png)
+
+![自动修复：写入前自动快照、写后编译验证；点「回滚到修改前」后源码恢复，编译面板提示当前 PDF 是上一次的产物](docs/images/promo/13-latex-ai-autofix.png)
 
 ![LaTeX 单独指定模型：全局仍走 Codex 不动，LaTeX 自己的渠道修好了编译错误（1 → 0），密钥按渠道+地址隔离保存](docs/images/promo/14-latex-ai-model.png)
 
@@ -174,7 +179,14 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 - **编译来的行号是对的**：新一次编译会沿用上一次的辅助文件（`.aux`/`.bbl`/`.toc`…，但绝不搬上一次的 PDF 或日志），多趟按 TeX 自己的提示跑到收敛（上限 6 趟，实测一份真实 CVPR 评审模板要 5 趟）。所以评审模式（`[review]{cvpr}` + lineno）的**页边行号能算准**，不会再停在一句「re-run to get it right」上。
 
 ![同一项目连续编译：评审模式的页边行号算准了（第 1 页左栏 001→026、右栏接 035→064 连续），面板 0 错误 0 警告](docs/images/promo/15-latex-diagnostics.png)
+
 - **隔离与安全**：项目源码放在独立目录，不改动书库的任何记录，也不影响阅读、OCR、翻译、演示稿的语义。文件路径一律按「项目内相对路径」校验：`..`、绝对路径、盘符、符号链接、Windows 保留设备名都会被拒绝；写入是原子的，并且带内容指纹校验——文件被外部程序改过时不会静默覆盖，而是让你选「重新加载」还是「以我的版本覆盖」。编译调用的可执行文件来自白名单，项目里的字符串永远不会被当作命令执行。
+
+#### 14 · 摸鱼界面：挂件拉幕切换，本地小说与漫画随手读
+
+- **点击挂件切换**：科研与摸鱼界面之间以绿色舞台幕布合拢、再展开的动画过渡；按住挂件可沿窗口顶部拖动，位置会记住。也可按 `Ctrl+Shift+M` 切换，在摸鱼界面按 `Esc` 返回科研工作区。
+- **本地书架**：导入 TXT、EPUB、图片或 CBZ，在独立书架中阅读小说与漫画，阅读内容和进度保存在本机浏览器。
+- **找书并加入书架**：内建 Project Gutenberg 英文公版书搜索，下载 EPUB / TXT 后自动导入本地书架；中文连载支持导入兼容的 Legado 书源 JSON，按需获取并缓存章节，目录可更新。在线检索和章节获取需要网络及可用书源。
 
 ### 下载与开始使用
 
@@ -195,7 +207,7 @@ xattr -cr /Applications/ReadX.app
 
 ### 隐私说明
 
-ReadX 将论文及阅读资料保存在本机。使用 AI 翻译或问答时，相关文本或图片会发送给你选择的模型服务。API 密钥保存在本机配置中，请勿提交到仓库。
+ReadX 将论文及阅读资料保存在本机。使用 AI 翻译、问答或 LaTeX 源码修改时，相关文本、图片或项目源码会发送给你选择的模型服务。API 密钥保存在本机配置中，请勿提交到仓库。
 
 ## English
 
@@ -215,7 +227,8 @@ ReadX is a desktop workspace for research reading. Import papers, let recognitio
 10. **Find, search & compare (10)** — In-document find with hit counts and next/previous (Ctrl/Cmd+F); library-wide full-text search over indexed page text with snippets, coverage disclosure, and jump-to-page; a cross-paper comparison table for 2–4 papers built from their experimental-setup extractions, with per-cell page links and an explicit "not extracted" vs "not reported" distinction.
 11. **Citations & stats (11)** — BibTeX / RIS export (single paper, shelf, or whole library) that discloses how each entry type was inferred; an OpenAlex-backed citation network showing which library papers this one cites and which cite it; and library statistics covering reading activity, annotations, per-stage processing durations, and year/shelf/topic distribution. Stay time is deliberately not reported — it is not collected.
 12. **Knowledge graph (12)** — cross-paper entities and relations rendered as a dual-ring point cloud: shared entities sit nearest the center, single-paper entities around them, papers on the outer shell, all interlinked. Drag to rotate, scroll to zoom, hover a node to light up every link, click for relations with verbatim, page-anchored evidence that jumps back to the source page. A matrix view stays available for reading exact overlaps. Rendered with three.js (WebGL), lazy-loaded with the graph workspace.
-13. **LaTeX Studio (13)** — a separate writing workspace that edits real `.tex` files on disk: create a compilable starter project or import an Overleaf ZIP, edit in a lazily loaded Monaco with LaTeX highlighting, `\cite`/`\ref` completion taken from the project's own `.bib` entries and `\label`s, and autosave with content-fingerprint conflict detection. Compilation uses the TeX distribution installed on your machine — latexmk when it actually runs, otherwise a built-in multi-pass (engine → bibtex/biber when needed → re-run until cross-references settle). Errors and warnings are listed as file:line plus the offending source line and jump straight to that spot in the editor; the resulting PDF is previewed with paging, zoom, in-document find, and download. Source paths are validated as project-relative (no `..`, absolute paths, drive letters, symlinks, or reserved device names), writes are atomic, and compiler binaries come from a fixed allowlist — never from project content.
+13. **LaTeX Studio (13)** — Create a starter project or import an Overleaf ZIP, edit real `.tex` / `.bib` files with Monaco, and preview PDFs compiled by your local TeX distribution. Send an edit request in chat: the assistant uses project source context to locate the file and returns an approval card with a before/after preview. **Confirm modification** creates a snapshot and saves through the revision-checked file path; **Cancel modification** leaves the file as it was. Each card edits one project source file. LaTeX can use its own HTTP model settings, including a searchable model list. The file tree is resizable, diagnostics can be hidden, and compilation tools and snapshots are collapsed by default. The separate automatic compile-repair action requires its own write toggle and rolls back edits that do not reduce compile errors.
+14. **Leisure workspace (14)** — Click the draggable top pendant to switch between research and leisure with a green stage-curtain animation. Read local TXT / EPUB novels and image / CBZ comics, search Project Gutenberg and import downloads into the local shelf, or add compatible Legado sources for serialized novels. `Ctrl+Shift+M` switches modes; `Esc` returns from leisure to research.
 
 ### Download
 
@@ -223,7 +236,7 @@ Download the latest Windows or macOS installer from [GitHub Releases](https://gi
 
 ### Privacy
 
-Papers, annotations, reading progress, and notes are stored locally. When you use AI translation or Q&A, the relevant text or images are sent to the model service you selected. API keys stay in local configuration — never commit them.
+Papers, annotations, reading progress, and notes are stored locally. When you use AI translation, Q&A, or LaTeX editing, relevant text, images, or project source context is sent to your selected model service. API keys stay in local configuration — never commit them.
 
 ### Build from source
 
