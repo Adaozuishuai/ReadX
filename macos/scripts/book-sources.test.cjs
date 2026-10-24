@@ -137,7 +137,7 @@ function mountComic(count, rtl = false) {
   };
   const jsx = (type, props) => ({ type, props });
   const module = load('apps/web/src/components/slack/ComicReader.tsx', {
-    react, 'react/jsx-runtime': { jsx, jsxs: jsx }, './db': {}, '../../lib/storage': { STORAGE_KEYS: { comicPrefs: 'prefs' } },
+    react, 'react/jsx-runtime': { jsx, jsxs: jsx }, './db': {}, './stats': { recordPages() {} }, '../../lib/storage': { STORAGE_KEYS: { comicPrefs: 'prefs' } },
   }, { localStorage: { getItem: () => JSON.stringify({ double: true, fit: 'page', rtl }) }, window: { setTimeout: () => 1, clearTimeout() {} } });
   const find = (node, predicate) => {
     if (!node || typeof node !== 'object') return null;

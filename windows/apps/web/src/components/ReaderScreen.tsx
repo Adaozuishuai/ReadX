@@ -62,7 +62,8 @@ export function ReaderScreen({
   const [liveTranslationProgress, setLiveTranslationProgress] = useState('等待本页译文…');
   const [mode, setMode] = useState<ReadingMode>('source');
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 1000);
-  const [rightOpen, setRightOpen] = useState(() => window.innerWidth >= 1200);
+  // AI 助教栏默认收起（原先宽窗口自动展开）：要问再开，阅读面留给原文。
+  const [rightOpen, setRightOpen] = useState(false);
   const [tab, setTab] = useState<AssistantTab>('chat');
   const [swapped, setSwapped] = useState(false);
   const [divider, setDivider] = useState(() => readReaderNumber('divider', 50, 5, 95));
@@ -86,11 +87,10 @@ export function ReaderScreen({
     return () => observer.disconnect();
   }, []);
   useEffect(() => {
+    // 每次打开论文都从原文开始：不因「已有整本译文」自动切到仅译文
+    //（想看译文用顶栏模式胶囊切换，本次会话内保持选择）。
     setMode('source');
   }, [documentKey]);
-  useEffect(() => {
-    if (!epub && translatedPDF.document) setMode('translation');
-  }, [documentKey, epub, translatedPDF.document]);
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEYS.readerPanels, JSON.stringify({ toc: leftWidth, assistant: rightWidth })); } catch { /* Storage may be disabled. */ }
   }, [leftWidth, rightWidth]);
@@ -559,7 +559,9 @@ export function ReaderScreen({
     setPending(null);
     if (paragraph.kind === 'pdf') {
       setSelectedParagraph(null);
-      if (mode !== 'parallel') setMode('parallel');
+      // 段落对照只在双栏模式下生效。仅原文模式下点击段落不切换布局——
+      // 强切双栏会把原文栏挤窄重排（原文“乱跑”）并把译文整页“召唤”出来。
+      if (mode !== 'parallel') return;
       const targetPage = Math.min(paragraph.position, translatedPDF.document?.numPages ?? paragraph.position);
       navigateTranslationPage(targetPage, paragraph.targetY, paragraph.viewportOffset);
       return;

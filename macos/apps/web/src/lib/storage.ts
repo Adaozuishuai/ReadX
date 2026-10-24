@@ -29,6 +29,10 @@ export const STORAGE_KEYS = {
   comicPrefs: 'readx-slack-comic-prefs',
   pendantPosition: 'readx-mode-pendant-left',
   slackWebSources: 'readx-slack-web-sources',
+  slackStats: 'readx-slack-stats',
+  game2048: 'readx-slack-2048',
+  slackCountdown: 'readx-slack-countdown',
+  slackCountdownOff: 'readx-slack-countdown-off',
   /** 动态键也集中生成，杜绝散落的字符串拼接。 */
   chatSessions: (scope: string) => `cbct.chat.v2:${scope}`,
   paperVisualSelections: (fingerprint: string) => `cbct-visual-selections:v1:${fingerprint}`,

@@ -100,7 +100,9 @@ export async function generateReadingDeck(input: PresentationInput): Promise<Pre
       if (node.kind === 'text') {
         slide.addText(splitFontRuns(node.lines.join('\n')), { x: node.x, y: node.y, w: node.w, h: node.h, fontSize: node.fontSize, fontFace: TEXT_FONT, bold: node.bold, color: node.color, align: node.align, valign: 'top', margin: 0, lineSpacingMultiple: 1.18, paraSpaceAfter: 0, fit: 'shrink' });
       } else if (node.kind === 'rect') {
-        slide.addShape(pptx.ShapeType.rect, { x: node.x, y: node.y, w: node.w, h: node.h, fill: { color: node.color }, line: { color: node.color, transparency: 100 } });
+        const box = { x: node.x, y: node.y, w: node.w, h: node.h, fill: { color: node.color }, line: { color: node.color, transparency: 100 } };
+        if (node.radius) slide.addShape(pptx.ShapeType.roundRect, { ...box, rectRadius: node.radius });
+        else slide.addShape(pptx.ShapeType.rect, box);
       } else if (node.kind === 'line') {
         slide.addShape(pptx.ShapeType.line, { x: node.x, y: node.y, w: node.w, h: 0, line: { color: node.color, width: node.width } });
       } else if (node.kind === 'table') {

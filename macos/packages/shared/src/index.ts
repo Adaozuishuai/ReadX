@@ -175,3 +175,5 @@ export * from './pdfLayout.js';
 export * from './outline.js';
 
 export * from './latex.js';
+
+export * from './game2048.js';

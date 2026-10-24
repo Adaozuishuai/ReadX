@@ -45,7 +45,7 @@ export interface DeckTable { header: string[]; rows: string[][] }
 export interface DeckPage extends PlannedSlide { visual?: DeckVisual; table?: DeckTable; notes?: string }
 interface Bounds { x: number; y: number; w: number; h: number }
 export interface TextNode extends Bounds { kind: 'text'; text: string; lines: string[]; fontSize: number; bold: boolean; color: string; align: 'left' | 'center' | 'right'; lineHeight: number }
-export interface RectNode extends Bounds { kind: 'rect'; color: string }
+export interface RectNode extends Bounds { kind: 'rect'; color: string; radius?: number }
 export interface LineNode { kind: 'line'; x: number; y: number; w: number; color: string; width: number }
 export interface ImageNode extends Bounds { kind: 'image'; url: string; alt: string; visualId: string }
 export interface TableNode extends Bounds { kind: 'table'; header: string[]; rows: string[][]; rowHeights: number[]; accent: string; headerInk: string; ink: string; line: string; canvas: string; paper: string; fontSize: number }
@@ -95,12 +95,8 @@ function text(scene: PresentationScene, value: string, box: Bounds, size: number
   while (lines.length * fontSize / 72 * 1.18 > box.h && fontSize > 11) { fontSize -= .5; lines = wrapSlideText(value, box.w, fontSize); }
   scene.nodes.push({ kind: 'text', ...box, text: value, lines, fontSize, bold, color, align, lineHeight: fontSize / 72 * 1.18 });
 }
-function rect(scene: PresentationScene, x: number, y: number, w: number, h: number, color: string) { scene.nodes.push({ kind: 'rect', x, y, w, h, color }); }
+function rect(scene: PresentationScene, x: number, y: number, w: number, h: number, color: string, radius = 0) { scene.nodes.push({ kind: 'rect', x, y, w, h, color, radius: radius || undefined }); }
 function line(scene: PresentationScene, x: number, y: number, w: number, color: string, width = .7) { scene.nodes.push({ kind: 'line', x, y, w, color, width }); }
-function splitLead(value: string): [string, string] {
-  const match = /^(.{2,32}?)[：:]\s*(.+)$/s.exec(value);
-  return match ? [match[1]!, match[2]!] : ['', value];
-}
 export function paginatePoints(points: string[], max = 3): string[][] {
   const fragments = points.flatMap((point) => {
     if (textUnits(point) <= 94) return [point];
@@ -156,139 +152,222 @@ export function chooseLayout(page: PlannedSlide, index = 0): PresentationLayout 
   return index % 3 === 2 ? 'focus' : 'editorial';
 }
 
+/** 线性混色：ratio 是第一个颜色的权重，用于从主题色派生卡片底色。 */
+function mix(hex: string, other: string, ratio: number): string {
+  const blend = (a: string, b: string) => Math.round(parseInt(a, 16) * ratio + parseInt(b, 16) * (1 - ratio));
+  return [0, 2, 4].map((offset) => blend(hex.slice(offset, offset + 2), other.slice(offset, offset + 2)).toString(16).padStart(2, '0')).join('');
+}
+function onAccent(theme: PresentationTheme): string {
+  return contrast('FFFFFF', theme.accent) >= 4.5 ? 'FFFFFF' : '21342C';
+}
+/** 从主题派生的版面色板：卡片底色保证正文对比度，深色页文字统一为亮色。 */
+interface DeckPalette { panel: string; panelLite: string; onDark: string; onDarkFaint: string }
+function paletteOf(theme: PresentationTheme): DeckPalette {
+  let panel = mix(theme.accent, theme.paper, .08);
+  let panelLite = mix(theme.accent, theme.paper, .04);
+  if (contrast(theme.ink, panel) < 4.2) panel = theme.canvas;
+  if (contrast(theme.ink, panelLite) < 4.2) panelLite = theme.paper;
+  return {
+    panel, panelLite,
+    onDark: mix('FFFFFF', theme.accentDark, .1),
+    onDarkFaint: mix('FFFFFF', theme.accentDark, .32),
+  };
+}
+
 function base(id: string, title: string, label: string, theme: PresentationTheme, section?: ReadingKind): PresentationScene {
   return { id, title, label, section, background: theme.paper, nodes: [], notes: '' };
 }
 function frame(scene: PresentationScene, theme: PresentationTheme, page: number, total: number) {
-  text(scene, scene.section ? readingStep(scene.section).label : 'READX / RESEARCH', { x: .66, y: .36, w: 9, h: .25 }, 10, theme.accent, true);
-  line(scene, .66, 6.99, 12.01, theme.line);
-  text(scene, 'ReadX', { x: .66, y: 7.11, w: 2, h: .18 }, 9, theme.faint);
-  text(scene, `${String(page).padStart(2, '0')} / ${String(total).padStart(2, '0')}`, { x: 11.5, y: 7.08, w: 1.15, h: .23 }, 10, theme.faint, false, 'right');
+  line(scene, .68, 6.98, 11.97, theme.line);
+  text(scene, 'ReadX · 论文精读', { x: .68, y: 7.09, w: 3, h: .2 }, 9, theme.faint);
+  text(scene, `${String(page).padStart(2, '0')} / ${String(total).padStart(2, '0')}`, { x: 11.3, y: 7.06, w: 1.35, h: .22 }, 10, theme.faint, false, 'right');
 }
-function heading(scene: PresentationScene, title: string, theme: PresentationTheme) {
-  text(scene, title, { x: .66, y: .9, w: 12, h: 1.03 }, 31, theme.ink, true);
+/** 内容页页头：章节色签 + 大标题 + 短色条，取代旧版裸标题。 */
+function headerBlock(scene: PresentationScene, title: string, chip: string, theme: PresentationTheme) {
+  const chipW = textUnits(chip) * 10.5 / 72 + .38;
+  rect(scene, .68, .46, chipW, .33, theme.accent, .07);
+  text(scene, chip, { x: .68, y: .485, w: chipW, h: .26 }, 10.5, onAccent(theme), true, 'center');
+  text(scene, title, { x: .68, y: .95, w: 11.97, h: .8 }, 27, theme.ink, true);
+  rect(scene, .68, 1.82, .8, .05, theme.accent);
 }
-function takeaway(scene: PresentationScene, value: string | undefined, theme: PresentationTheme) {
+/** 底部要点色带：整页的视觉锚点，截断保证任何输入都放得下。 */
+function takeawayBand(scene: PresentationScene, value: string | undefined, theme: PresentationTheme, palette: DeckPalette) {
   if (!value) return;
-  line(scene, .68, 6.12, .45, theme.accent, 2);
-  text(scene, value.length > 96 ? `${value.slice(0, 95)}…` : value, { x: 1.32, y: 6.1, w: 11.18, h: .57 }, 15, theme.accent, true);
+  rect(scene, .68, 6.28, 11.97, .58, palette.panel);
+  rect(scene, .68, 6.28, .08, .58, theme.accent);
+  text(scene, '核心要点', { x: .95, y: 6.38, w: 1.05, h: .3 }, 11, theme.accent, true);
+  text(scene, value.length > 100 ? `${value.slice(0, 99)}…` : value, { x: 2.12, y: 6.36, w: 10.33, h: .44 }, 13.5, theme.ink, true);
 }
+/** 单文本要点：靠自动缩字兜底，两段式「引导词+正文」在密集内容下会互相挤占高度。 */
 function point(scene: PresentationScene, value: string, x: number, y: number, w: number, h: number, theme: PresentationTheme, size = 21) {
-  const [lead, detail] = splitLead(value);
-  if (lead) {
-    text(scene, lead, { x, y, w, h: .48 }, size, theme.ink, true);
-    text(scene, detail, { x, y: y + .57, w, h: Math.max(.4, h - .57) }, size - 2, theme.muted);
-  } else text(scene, value, { x, y, w, h }, size, theme.ink);
+  text(scene, value, { x, y, w, h }, size, theme.ink);
 }
 
-function contentScene(page: DeckPage, index: number, theme: PresentationTheme): PresentationScene {
+function contentScene(page: DeckPage, index: number, theme: PresentationTheme, palette: DeckPalette): PresentationScene {
   const layout = page.visual ? 'evidence' : chooseLayout(page, index);
   const scene = base(`content-${index}`, page.title, page.table ? '数据表格' : LAYOUT_NAMES[layout], theme, page.section);
   scene.notes = [page.notes, page.takeaway].filter(Boolean).join('\n\n');
-  heading(scene, page.title, theme);
+  headerBlock(scene, page.title, readingStep(page.section).label, theme);
   const bullets = page.bullets;
   if (page.table) {
     const width = 11.97 / page.table.header.length - .28;
     const cells = [page.table.header, ...page.table.rows].map((row) => row.map((cell) => wrapSlideText(cell, width, 14).join('\n')));
     const rowHeights = cells.map((row) => Math.max(.62, ...row.map((cell) => cell.split('\n').length * 14 / 72 * 1.18 + .24)));
-    scene.nodes.push({ kind: 'table', x: .68, y: 2.1, w: 11.97, h: rowHeights.reduce((a, b) => a + b, 0), header: cells[0]!, rows: cells.slice(1), rowHeights, fontSize: 14, accent: theme.accent, headerInk: contrast('FFFFFF', theme.accent) >= 4.5 ? 'FFFFFF' : '21342C', ink: theme.ink, line: theme.line, canvas: theme.canvas, paper: theme.paper });
+    scene.nodes.push({ kind: 'table', x: .68, y: 2.15, w: 11.97, h: rowHeights.reduce((a, b) => a + b, 0), header: cells[0]!, rows: cells.slice(1), rowHeights, fontSize: 14, accent: theme.accent, headerInk: onAccent(theme), ink: theme.ink, line: theme.line, canvas: theme.canvas, paper: theme.paper });
   } else if (page.visual) {
     const v = page.visual;
-    rect(scene, .66, 2.08, 8.0, 4.02, theme.canvas);
-    scene.nodes.push({ kind: 'image', x: .84, y: 2.26, w: 7.64, h: 3.66, url: v.imageURL, alt: v.caption, visualId: v.id });
-    const points = bullets.length ? bullets : v.points;
+    rect(scene, .68, 2.05, 7.3, 4.01, theme.canvas, .12);
+    scene.nodes.push({ kind: 'image', x: .88, y: 2.25, w: 6.9, h: 3.28, url: v.imageURL, alt: v.caption, visualId: v.id });
+    text(scene, `Page ${v.page} · ${v.caption.length > 80 ? `${v.caption.slice(0, 79)}…` : v.caption}`, { x: .92, y: 5.6, w: 6.82, h: .4 }, 10.5, theme.muted);
+    const points = bullets.length ? bullets : paginatePoints(v.points, 3).flat();
     const count = Math.min(points.length, 3);
-    const height = 3.95 / Math.max(count, 1);
     points.slice(0, 3).forEach((value, i) => {
-      text(scene, String(i + 1).padStart(2, '0'), { x: 9.02, y: 2.12 + i * height, w: .5, h: .28 }, 13, theme.accent);
-      point(scene, value, 9.02, 2.49 + i * height, 3.53, height - .45, theme, 18);
+      const rowY = 2.05 + i * (4.01 / Math.max(count, 1));
+      text(scene, String(i + 1).padStart(2, '0'), { x: 8.3, y: rowY + .04, w: .5, h: .3 }, 13, theme.accent, true);
+      point(scene, value, 8.86, rowY, 3.79, 4.01 / Math.max(count, 1) - .1, theme, 16);
     });
-    text(scene, `Page ${v.page} · ${v.caption.length > 140 ? `${v.caption.slice(0, 139)}…` : v.caption}`, { x: .68, y: 6.27, w: 11.97, h: .5 }, 10.5, theme.muted);
+    takeawayBand(scene, page.takeaway, theme, palette);
   } else if (layout === 'process') {
-    const count = Math.min(bullets.length, 4), gap = .34, width = (12 - (count - 1) * gap) / Math.max(1, count);
+    const count = Math.min(bullets.length, 4), gap = .3, width = (11.97 - (count - 1) * gap) / count;
+    if (count > 1) line(scene, .68 + width, 2.75, 11.97 - width * 2, theme.line, 1.2);
     bullets.slice(0, 4).forEach((value, i) => {
       const x = .68 + i * (width + gap);
-      line(scene, x, 2.66, width, theme.line, 1.4);
-      text(scene, String(i + 1).padStart(2, '0'), { x, y: 2.1, w: width, h: .49 }, 28, theme.accent);
-      point(scene, value, x, 3.04, width - .08, 2.7, theme, 21);
+      rect(scene, x, 2.05, width, 3.6, palette.panel, .14);
+      text(scene, String(i + 1).padStart(2, '0'), { x: x + .26, y: 2.29, w: width - .52, h: .55 }, 26, theme.accent, true);
+      point(scene, value, x + .26, 2.98, width - .52, 2.45, theme, 16);
     });
-    takeaway(scene, page.takeaway, theme);
+    takeawayBand(scene, page.takeaway, theme, palette);
   } else if (layout === 'comparison') {
     const columns = [bullets.filter((_, i) => i % 2 === 0), bullets.filter((_, i) => i % 2 === 1)];
     columns.forEach((values, i) => {
-      const x = .68 + i * 6.17;
-      rect(scene, x, 2.14, 5.8, .06, i ? theme.accent : theme.line);
-      values.forEach((value, j) => point(scene, value, x, 2.56 + j * 1.56, 5.57, 1.42, theme, 23));
+      const x = .68 + i * 6.11;
+      rect(scene, x, 2.05, 5.86, 4.01, i ? palette.panel : palette.panelLite, .14);
+      // A/B 标签与要点整组在面板内垂直居中，内容少时不会堆在顶部。
+      const rows = Math.max(values.length, 1);
+      const groupH = .95 + rows * 1.02;
+      const top = 2.05 + (4.01 - groupH) / 2;
+      rect(scene, x + .3, top + .31, .36, .36, theme.accent, .08);
+      text(scene, i ? 'B' : 'A', { x: x + .3, y: top + .34, w: .36, h: .3 }, 13, onAccent(theme), true, 'center');
+      values.slice(0, 3).forEach((value, j) => point(scene, value, x + .3, top + .93 + j * 1.02, 5.26, .98, theme, 17));
     });
-    takeaway(scene, page.takeaway, theme);
+    takeawayBand(scene, page.takeaway, theme, palette);
   } else if (layout === 'metrics' && bullets.filter((p) => /\d/.test(p)).length >= 2) {
+    const count = Math.min(3, bullets.length), gap = .3, width = (11.97 - (count - 1) * gap) / count;
     bullets.slice(0, 3).forEach((value, i) => {
-      const width = 12 / Math.min(3, bullets.length), x = .68 + i * width;
+      const x = .68 + i * (width + gap);
+      rect(scene, x, 2.05, width, 3.3, palette.panelLite, .14);
       const match = /[+-]?\d+(?:\.\d+)?\s*(?:%|dB|ms\b|GB\b|MB\b|倍|×)/i.exec(value) ?? /(?<![\w.])\d+\.\d+(?![\w.])/.exec(value) ?? /(?<![\w.])\d+(?![\w.])/.exec(value);
-      text(scene, match?.[0] ?? String(i + 1), { x, y: 2.38, w: width - .35, h: .95 }, 47, theme.accent, true);
-      line(scene, x, 3.6, width - .4, theme.line);
-      point(scene, value, x, 3.94, width - .4, 1.8, theme, 20);
+      text(scene, match?.[0] ?? String(i + 1), { x: x + .28, y: 2.35, w: width - .56, h: 1.05 }, 44, theme.accent, true);
+      line(scene, x + .28, 3.62, .6, theme.accent, 1.6);
+      point(scene, value, x + .28, 3.85, width - .56, 1.28, theme, 16);
     });
-    takeaway(scene, page.takeaway, theme);
+    takeawayBand(scene, page.takeaway, theme, palette);
   } else if (layout === 'focus') {
-    rect(scene, .66, 2.16, .06, 3.48, theme.accent);
-    text(scene, bullets[0] ?? '', { x: 1.03, y: 2.27, w: 7.03, h: 3.12 }, 32, theme.ink, true);
-    bullets.slice(1, 3).forEach((value, i) => point(scene, value, 8.68, 2.27 + i * 1.78, 3.93, 1.53, theme, 19));
-    takeaway(scene, page.takeaway, theme);
-  } else {
-    const first = bullets[0] ?? '';
-    text(scene, first, { x: .68, y: 2.35, w: 5.13, h: 3.27 }, 28, theme.ink, true);
-    bullets.slice(1, 4).forEach((value, i, rest) => {
-      const h = 3.58 / rest.length, y = 2.23 + i * h;
-      line(scene, 6.43, y, 6.13, theme.line);
-      point(scene, value, 6.43, y + .2, 6.1, h - .27, theme, 20);
+    rect(scene, .68, 2.05, 11.97, 3.5, palette.panel);
+    rect(scene, .68, 2.05, .09, 3.5, theme.accent);
+    text(scene, bullets[0] ?? '', { x: 1.12, y: 2.4, w: 10.9, h: 1.62 }, 27, theme.ink, true);
+    bullets.slice(1, 3).forEach((value, i) => {
+      text(scene, '—', { x: 1.12, y: 4.2 + i * .62, w: .3, h: .32 }, 14, theme.accent, true);
+      text(scene, value, { x: 1.52, y: 4.14 + i * .62, w: 10.48, h: .58 }, 15, theme.muted);
     });
-    takeaway(scene, page.takeaway, theme);
+    takeawayBand(scene, page.takeaway, theme, palette);
+  } else {
+    rect(scene, .68, 2.05, 5.3, 4.01, palette.panel, .16);
+    rect(scene, .98, 2.38, .4, .07, theme.accent);
+    // 观点在面板内垂直居中：单行观点不会把面板留成上重下空。
+    const lead = bullets[0] ?? '';
+    const leadHeight = Math.min(3.1, Math.max(.8, wrapSlideText(lead, 4.7, 24).length * 24 / 72 * 1.18));
+    text(scene, lead, { x: .98, y: 2.05 + (4.01 - leadHeight) / 2, w: 4.7, h: leadHeight }, 24, theme.ink, true);
+    const rest = bullets.slice(1, 4);
+    const rows = Math.max(rest.length, 1);
+    const cardH = (4.01 - (rows - 1) * .22) / rows;
+    rest.forEach((value, i) => {
+      const y = 2.05 + i * (cardH + .22);
+      rect(scene, 6.28, y, 6.37, cardH, palette.panelLite, .12);
+      text(scene, String(i + 1).padStart(2, '0'), { x: 6.54, y: y + .16, w: .55, h: .3 }, 12, theme.accent, true);
+      point(scene, value, 7.2, y + .14, 5.28, cardH - .3, theme, 16);
+    });
+    takeawayBand(scene, page.takeaway, theme, palette);
   }
+  return scene;
+}
+
+/** 深色分隔页：封面—内容—分隔页—结尾页形成深浅节奏。 */
+function dividerScene(step: { kind: ReadingKind; label: string }, index: number, firstTitle: string, theme: PresentationTheme, palette: DeckPalette): PresentationScene {
+  const scene = base(`divider-${index}`, step.label, step.label, theme, step.kind);
+  scene.background = theme.accentDark;
+  rect(scene, 0, 0, .22, 7.5, theme.accent);
+  text(scene, `SECTION ${String(index + 1).padStart(2, '0')}`, { x: .95, y: 2.0, w: 5, h: .3 }, 11, palette.onDarkFaint, true);
+  text(scene, String(index + 1).padStart(2, '0'), { x: 8.6, y: 1.15, w: 4.05, h: 3.1 }, 150, mix('FFFFFF', theme.accentDark, .18), true, 'right');
+  text(scene, step.label, { x: .95, y: 2.5, w: 8, h: 1.0 }, 38, 'FFFFFF', true);
+  rect(scene, .97, 3.68, 1.0, .08, theme.accent);
+  text(scene, firstTitle.length > 60 ? `${firstTitle.slice(0, 59)}…` : firstTitle, { x: .95, y: 3.98, w: 8.5, h: .8 }, 15, palette.onDark);
+  text(scene, 'ReadX', { x: .95, y: 6.95, w: 2, h: .25 }, 11, palette.onDarkFaint);
   return scene;
 }
 
 export function createDeckScenes(document: DocumentSummary | null | undefined, pages: DeckPage[], inputTheme = DEFAULT_PRESENTATION_THEME, includeSummary = true): PresentationScene[] {
   const theme = readableTheme(inputTheme);
+  const palette = paletteOf(theme);
   const title = document?.title?.trim() || '论文精读报告';
   const cover = base('cover', title, '封面', theme);
   cover.background = theme.accentDark;
-  text(cover, 'READX / RESEARCH PRESENTATION', { x: .8, y: .68, w: 11.7, h: .3 }, 11, 'C7DCD2', true);
-  text(cover, title, { x: .8, y: 1.8, w: 11.5, h: 3.05 }, title.length > 130 ? 35 : 42, 'FFFFFF', true);
+  rect(cover, 0, 0, .22, 7.5, theme.accent);
+  rect(cover, 0, 6.55, 13.34, .95, mix(theme.accentDark, 'FFFFFF', .05));
+  text(cover, 'READX · RESEARCH DECK', { x: .95, y: .78, w: 8, h: .3 }, 11, palette.onDarkFaint, true);
+  text(cover, title, { x: .95, y: 1.7, w: 11.5, h: 2.9 }, title.length > 130 ? 34 : 40, 'FFFFFF', true);
+  rect(cover, .97, 4.85, 1.15, .09, theme.accent);
   const meta = [document?.authors?.slice(0, 5).join(', '), document?.venue, document?.year].filter(Boolean).join(' · ');
-  line(cover, .83, 5.58, 1.1, '91BBA7', 2);
-  text(cover, meta || '论文研读与学术汇报', { x: .83, y: 5.87, w: 11.65, h: .55 }, 14, 'C7DCD2');
-  text(cover, 'ReadX', { x: .83, y: 6.93, w: 3, h: .23 }, 11, '91BBA7');
+  text(cover, (meta || '论文研读与学术汇报').slice(0, 140), { x: .95, y: 5.15, w: 11.6, h: .8 }, 14, palette.onDark);
+  text(cover, 'ReadX 论文精读', { x: .95, y: 6.85, w: 4, h: .28 }, 11, palette.onDarkFaint);
+  // 年份大字落在底部横带右端，填补封面右下的空，也和分隔页的数字水印呼应。
+  if (document?.year) text(cover, String(document.year), { x: 8.9, y: 6.22, w: 3.9, h: 1.26 }, 86, mix(theme.accentDark, 'FFFFFF', .22), true, 'right');
   const scenes: PresentationScene[] = [cover];
   const sections = READING_STEPS.filter((step) => pages.some((page) => page.section === step.kind));
   if (sections.length > 1) {
     const agenda = base('agenda', '研究脉络', '研究脉络', theme);
-    heading(agenda, '研究脉络', theme);
-    const rowH = Math.min(.81, 4.25 / sections.length);
+    headerBlock(agenda, '研究脉络', 'AGENDA', theme);
+    const cardW = (11.97 - .3) / 2;
+    const rows = Math.ceil(sections.length / 2);
+    const cardH = Math.min(1.5, (4.01 - (rows - 1) * .24) / rows);
     sections.forEach((step, i) => {
-      const y = 2.12 + i * rowH;
-      text(agenda, String(i + 1).padStart(2, '0'), { x: .7, y, w: .6, h: .4 }, 23, theme.accent);
-      text(agenda, step.label, { x: 1.65, y, w: 3, h: .4 }, 22, theme.ink, true);
-      text(agenda, pages.find((page) => page.section === step.kind)?.title ?? '', { x: 5.3, y: y + .04, w: 7.25, h: .4 }, 16, theme.muted);
-      line(agenda, 1.65, y + .62, 10.94, theme.line);
+      const x = .68 + (i % 2) * (cardW + .3), y = 2.05 + Math.floor(i / 2) * (cardH + .24);
+      rect(agenda, x, y, cardW, cardH, palette.panelLite, .12);
+      text(agenda, String(i + 1).padStart(2, '0'), { x: x + .28, y: y + .18, w: .8, h: .42 }, 20, theme.accent, true);
+      text(agenda, step.label, { x: x + 1.08, y: y + .2, w: cardW - 1.32, h: .38 }, 17, theme.ink, true);
+      const firstTitle = pages.find((page) => page.section === step.kind)?.title ?? '';
+      text(agenda, firstTitle.length > 40 ? `${firstTitle.slice(0, 39)}…` : firstTitle, { x: x + 1.08, y: y + .62, w: cardW - 1.38, h: Math.max(.42, cardH - .72) }, 11.5, theme.muted);
     });
     scenes.push(agenda);
   }
-  pages.forEach((page, index) => scenes.push(contentScene(page, index, theme)));
+  let lastSection: ReadingKind | null = null;
+  pages.forEach((page, index) => {
+    if (page.section !== lastSection) {
+      lastSection = page.section;
+      const sectionIndex = sections.findIndex((step) => step.kind === page.section);
+      if (sectionIndex >= 0) scenes.push(dividerScene(sections[sectionIndex]!, sectionIndex, page.title, theme, palette));
+    }
+    scenes.push(contentScene(page, index, theme, palette));
+  });
   if (pages.length && includeSummary) {
     const closing = base('summary', '研究总结', '研究总结', theme);
-    heading(closing, '研究总结', theme);
+    closing.background = theme.accentDark;
+    rect(closing, 0, 0, .22, 7.5, theme.accent);
+    text(closing, 'READX · SUMMARY', { x: .95, y: .82, w: 5, h: .3 }, 11, palette.onDarkFaint, true);
+    text(closing, '研究总结', { x: .95, y: 1.38, w: 8, h: .9 }, 34, 'FFFFFF', true);
+    rect(closing, .97, 2.46, 1.0, .08, theme.accent);
     const summary = ['motivation', 'method', 'results'].flatMap((kind) => {
       const page = pages.find((p) => p.section === kind && !p.visual && !p.table);
       return page ? [{ kind: kind as ReadingKind, point: page.takeaway || page.bullets[0] || '' }] : [];
     });
     (summary.length ? summary : pages.slice(-2).map((page) => ({ kind: page.section, point: page.takeaway || page.bullets[0] || '' }))).slice(0, 3).forEach((item, i) => {
-      const y = 2.23 + i * 1.25;
-      text(closing, readingStep(item.kind).label, { x: .7, y: y + .04, w: 2.3, h: .4 }, 16, theme.accent, true);
-      text(closing, item.point, { x: 3.1, y, w: 9.4, h: 1.02 }, 23, theme.ink);
+      const y = 2.9 + i * 1.15;
+      text(closing, readingStep(item.kind).label, { x: .95, y: y + .06, w: 2.2, h: .35 }, 13, palette.onDark, true);
+      text(closing, item.point, { x: 3.35, y, w: 9.3, h: 1.0 }, 19, 'FFFFFF');
     });
+    text(closing, 'ReadX', { x: .95, y: 6.95, w: 2, h: .25 }, 11, palette.onDarkFaint);
     scenes.push(closing);
   }
-  scenes.forEach((scene, index) => { if (index) frame(scene, theme, index + 1, scenes.length); });
+  scenes.forEach((scene, index) => { if (index && scene.background === theme.paper) frame(scene, theme, index + 1, scenes.length); });
   return scenes;
 }

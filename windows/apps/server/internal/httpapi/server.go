@@ -439,7 +439,10 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 		if !found {
 			continue
 		}
-		if stage := job.stage("memory"); stage != nil {
+		// skipped（重新翻译复用已有记忆 / 导入时 AI 未就绪跳过）没有「处理进度」可看：
+		// 前端以 paperMemoryStatus !== 'done' 点亮「处理」按钮，外露 skipped 会让
+		// 按钮在任务早已终态后仍然常亮。
+		if stage := job.stage("memory"); stage != nil && stage.Status != "skipped" {
 			documents[index].PaperMemoryStatus = stage.Status
 			documents[index].PaperMemoryMessage = stage.Message
 		}

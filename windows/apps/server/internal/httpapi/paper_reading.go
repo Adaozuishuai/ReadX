@@ -503,8 +503,47 @@ func (s *Server) analyzePaperVisuals(ctx context.Context, key, source, material 
 	return items, issues, nil
 }
 
+// normalizePlacementKey 归一化模型输出的步骤/小节写法：去空白（含全角）、
+// 去常见包裹符号、统一小写——「方法公式 | 核心机制与分析方法。」也能匹配上。
+func normalizePlacementKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, " ", "")
+	value = strings.ReplaceAll(value, "　", "")
+	return strings.Trim(value, ".。:：,，;；*`#\"'\"「」[]()（）")
+}
+
+// placementStepAliases 是模型常写的中文步骤名 → 步骤 key。提示词要求写 key，
+// 但「方法公式」这类标签是五重奏的界面用语，模型混写很常见。
+var placementStepAliases = map[string]string{
+	"实验动机": "motivation", "动机": "motivation",
+	"方法公式": "method", "方法": "method",
+	"实验配置": "experiment", "实验": "experiment",
+	"结果分析": "results", "结果": "results",
+	"代码复现": "reproduction", "复现": "reproduction",
+}
+
+// resolvePlacementStep 把归一化后的步骤写法解析成合法步骤 key。
+func resolvePlacementStep(step string) (string, bool) {
+	for kind := range visualSections {
+		if normalizePlacementKey(kind) == step {
+			return kind, true
+		}
+	}
+	for alias, kind := range placementStepAliases {
+		if normalizePlacementKey(alias) == step {
+			return kind, true
+		}
+	}
+	return "", false
+}
+
 func parsePaperVisualPlacement(value string) (string, string, string) {
-	lines := strings.Split(strings.TrimSpace(value), "\n")
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", "", ""
+	}
+	lines := strings.Split(trimmed, "\n")
+	fallbackAnalysis := ""
 	for i, line := range lines {
 		if i >= 8 {
 			break
@@ -514,16 +553,46 @@ func parsePaperVisualPlacement(value string) (string, string, string) {
 		if len(placement) != 2 {
 			continue
 		}
-		step, section := strings.Trim(placement[0], " *`\t"), strings.Trim(placement[1], " *`\t")
-		for _, title := range visualSections[step] {
-			if title != section {
-				continue
+		analysis := strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+		analysis = strings.TrimSpace(strings.TrimSuffix(analysis, "```"))
+		if analysis == "" {
+			continue
+		}
+		if fallbackAnalysis == "" {
+			fallbackAnalysis = analysis
+		}
+		step := normalizePlacementKey(placement[0])
+		section := normalizePlacementKey(placement[1])
+		kind, ok := resolvePlacementStep(step)
+		if !ok {
+			continue
+		}
+		for _, title := range visualSections[kind] {
+			if normalizePlacementKey(title) == section {
+				return kind, title, analysis
 			}
-			analysis := strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
-			analysis = strings.TrimSpace(strings.TrimSuffix(analysis, "```"))
-			if analysis != "" {
-				return step, section, analysis
+		}
+		// 小节名精确不中时的包含式回退：只在该步骤自己的小节里找，
+		// 模型少写/多写了几个字（如「核心机制与分析」）不至于丢图。
+		for _, title := range visualSections[kind] {
+			normalized := normalizePlacementKey(title)
+			if strings.Contains(normalized, section) || strings.Contains(section, normalized) {
+				return kind, title, analysis
 			}
+		}
+	}
+	// 归属行写得不合目录（或干脆没写）但分析内容存在：默认挂到「结果分析」的
+	// 首个小节，保证图先被用上——小节生成会把 assigned 的图强制嵌入正文，
+	// 比原先「两次解析失败就整图丢弃」稳定得多。
+	if fallbackAnalysis != "" {
+		if titles := visualSections["results"]; len(titles) > 0 {
+			return "results", titles[0], fallbackAnalysis
+		}
+	}
+	// 完全没有「步骤|小节」行：整段当分析，同样走兜底归属。
+	if !strings.Contains(trimmed, "|") {
+		if titles := visualSections["results"]; len(titles) > 0 {
+			return "results", titles[0], strings.TrimSpace(strings.TrimSuffix(trimmed, "```"))
 		}
 	}
 	return "", "", ""

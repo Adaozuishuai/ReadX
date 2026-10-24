@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ThemeChoice } from '../../hooks/useTheme';
 import { useSlackLibrary } from '../../hooks/useSlackLibrary';
+import { readString, writeString, STORAGE_KEYS } from '../../lib/storage';
 import { BookFinder } from './BookFinder';
+import { CountdownWidget } from './CountdownWidget';
+import { Game2048 } from './Game2048';
 import { SlackLibrary, type SlackFilter } from './SlackLibrary';
 import { SlackReader } from './SlackReader';
+import { recordReading, weekStats, type SlackStatsWeek } from './stats';
 import type { SlackItem } from './types';
 
 export function SlackWorkspace({
@@ -32,7 +36,8 @@ export function SlackWorkspace({
     setError,
   } = useSlackLibrary();
   const [openId, setOpenId] = useState<string | null>(null);
-  const [section, setSection] = useState<'shelf' | 'find'>('shelf');
+  const [section, setSection] = useState<'shelf' | 'find' | 'game'>('shelf');
+  const [countdownHidden, setCountdownHidden] = useState(() => readString(STORAGE_KEYS.slackCountdownOff, '') === '1');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<SlackFilter>('all');
   const [confirmItem, setConfirmItem] = useState<SlackItem | null>(null);
@@ -41,6 +46,25 @@ export function SlackWorkspace({
   const dragDepth = useRef(0);
 
   const current = useMemo(() => items.find((item) => item.id === openId) ?? null, [items, openId]);
+
+  // 摸鱼周报：回到书架时重算（current 变化必然触发），阅读中每 30 秒记一次时长。
+  const stats: SlackStatsWeek = useMemo(() => weekStats(), [current, section, items.length]);
+  useEffect(() => {
+    if (!current) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) recordReading(30);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [current]);
+
+  const hideCountdown = () => {
+    writeString(STORAGE_KEYS.slackCountdownOff, '1');
+    setCountdownHidden(true);
+  };
+  const showCountdown = () => {
+    writeString(STORAGE_KEYS.slackCountdownOff, '');
+    setCountdownHidden(false);
+  };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -51,12 +75,18 @@ export function SlackWorkspace({
         setConfirmItem(null);
         return;
       }
+      // Esc 分层退出：小游戏先回书架，再按才离开摸鱼界面。
+      if (section === 'game') {
+        event.preventDefault();
+        setSection('shelf');
+        return;
+      }
       event.preventDefault();
       onExit();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [confirmItem, onExit]);
+  }, [confirmItem, onExit, section]);
 
   const handleOpen = (id: string) => {
     setOpenId(id);
@@ -138,8 +168,9 @@ export function SlackWorkspace({
               <nav className="slack-section-nav" aria-label="摸鱼界面导航">
                 <button type="button" className={section === 'shelf' ? 'active' : ''} aria-current={section === 'shelf' ? 'page' : undefined} onClick={() => setSection('shelf')}>我的书架</button>
                 <button type="button" className={section === 'find' ? 'active' : ''} aria-current={section === 'find' ? 'page' : undefined} onClick={() => setSection('find')}>找书</button>
+                <button type="button" className={section === 'game' ? 'active' : ''} aria-current={section === 'game' ? 'page' : undefined} onClick={() => setSection('game')}>小游戏</button>
               </nav>
-              <small>{section === 'find' ? '多书源 · 直接导入本地' : '本地书架'}</small>
+              <small>{section === 'find' ? '多书源 · 直接导入本地' : section === 'game' ? '2048 · 方向键游玩' : '本地书架'}</small>
             </>
           )}
         </div>
@@ -191,6 +222,8 @@ export function SlackWorkspace({
               void open(item.id);
             }}
           />
+        ) : section === 'game' ? (
+          <Game2048 />
         ) : (
           <SlackLibrary
             items={items}
@@ -203,9 +236,14 @@ export function SlackWorkspace({
             onDelete={setConfirmItem}
             onUpload={() => uploadInput.current?.click()}
             onFind={() => setSection('find')}
+            stats={stats}
+            countdownHidden={countdownHidden}
+            onShowCountdown={showCountdown}
           />
         )}
       </div>
+
+      {countdownHidden ? null : <CountdownWidget onClose={hideCountdown} />}
 
       {dragging ? (
         <div className="slack-drop" aria-hidden="true">

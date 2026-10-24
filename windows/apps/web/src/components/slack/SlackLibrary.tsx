@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getAsset } from './db';
+import { formatSlackDuration, type SlackStatsWeek } from './stats';
 import type { SlackItem } from './types';
 
 export type SlackFilter = 'all' | 'novel' | 'comic';
@@ -87,6 +88,9 @@ export function SlackLibrary({
   onDelete,
   onUpload,
   onFind,
+  stats,
+  countdownHidden,
+  onShowCountdown,
 }: {
   items: SlackItem[];
   ready: boolean;
@@ -98,6 +102,9 @@ export function SlackLibrary({
   onDelete: (item: SlackItem) => void;
   onUpload: () => void;
   onFind: () => void;
+  stats: SlackStatsWeek;
+  countdownHidden: boolean;
+  onShowCountdown: () => void;
 }) {
   const novels = items.filter((item) => item.kind === 'novel').length;
   const comics = items.filter((item) => item.kind === 'comic').length;
@@ -136,6 +143,14 @@ export function SlackLibrary({
         </div>
       ) : (
         <>
+          {stats.seconds > 0 || stats.chapters > 0 || stats.pages > 0 ? (
+            <section className="slack-stats" aria-label="摸鱼周报">
+              <span>本周摸鱼 <strong>{formatSlackDuration(stats.seconds)}</strong></span>
+              <span>读完 <strong>{stats.chapters}</strong> 章{stats.pages > 0 ? <> · <strong>{stats.pages}</strong> 页</> : null}</span>
+              {stats.streak > 1 ? <span>连续 <strong>{stats.streak}</strong> 天</span> : null}
+            </section>
+          ) : null}
+
           {showContinue && latest ? (
             <section className="slack-continue" aria-label="继续阅读">
               <button
@@ -187,6 +202,9 @@ export function SlackLibrary({
               />
             </label>
             <button type="button" className="slack-add" onClick={onUpload}>＋ 添加资料</button>
+            {countdownHidden ? (
+              <button type="button" className="slack-countdown-toggle" onClick={onShowCountdown} title="显示下班倒计时挂件">⏱ 倒计时</button>
+            ) : null}
           </div>
         </>
       )}

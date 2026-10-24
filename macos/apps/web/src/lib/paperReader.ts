@@ -14,9 +14,11 @@ export async function preparePaperReading(_key: string, pdf: PDFDocumentProxy | 
     let encodedSize = 0;
     for (const visual of visuals) {
       signal.throwIfAborted();
-      if (visual.extractionStatus !== 'ready' || visual.reviewStatus === 'needs-review') {
-        // A missing or manually unreviewed crop must not mark every workbook
-        // section as incomplete. The section can still be generated from text.
+      if (visual.extractionStatus !== 'ready') {
+        // 只有真正没裁出图片的（crop-failed）才跳过：没图可送。
+        // needs-review 的候选（如裁剪区偏大、可能含相邻内容）照样送——图和图注
+        // 都是真的，模型看得到内容自会取舍；原先整批跳过会让候选区的图
+        // 永远进不了精读。想精确控制裁剪范围的仍可在候选区手动校正后重跑。
         continue;
       }
       try {

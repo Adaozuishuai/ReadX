@@ -65,6 +65,8 @@ npm run shortcut -- --browser  # 改用 start-browser.ps1 的浏览器回退入�
 
 点击顶部挂件，通过淡绿色漫画窗帘切换科研与摸鱼界面：平涂色块、描边褶皱、扇形帘头和少量网点，呈现纸上漫画的质感。挂件可沿顶部拖动并记住位置；`Ctrl+Shift+M` 快速切换，摸鱼界面按 `Esc` 返回。
 
+摸鱼界面还带三样小东西：书架顶部的**摸鱼周报**（本周时长、读完章节/页数、连续天数）；「小游戏」里的 **2048**（方向键 / WASD / 滑动，进度与最佳分自动保存）；以及顶部可拖动的**下班倒计时**小牌（距下班 / 周末 / 元旦，点开可改下班时间或收起）。
+
 <p align="center">
   <img src="../docs/images/promo/17-leisure-curtain.png" alt="淡绿色漫画窗帘转场截图" width="48%">
   <img src="../docs/images/promo/18-leisure-shelf.png" alt="摸鱼书架与 Qwen 拉绳挂件截图" width="48%">

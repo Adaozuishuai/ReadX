@@ -29,7 +29,7 @@ export function PresentationCanvas({ scene, thumbnail = false }: { scene: Presen
     <rect width={SLIDE_WIDTH} height={SLIDE_HEIGHT} fill={`#${scene.background}`} />
     {scene.nodes.map((node, index) => {
       if (node.kind === 'text') return <SceneText key={index} node={node} />;
-      if (node.kind === 'rect') return <rect key={index} x={node.x} y={node.y} width={node.w} height={node.h} fill={`#${node.color}`} />;
+      if (node.kind === 'rect') return <rect key={index} x={node.x} y={node.y} width={node.w} height={node.h} rx={node.radius ?? 0} fill={`#${node.color}`} />;
       if (node.kind === 'line') return <line key={index} x1={node.x} y1={node.y} x2={node.x + node.w} y2={node.y} stroke={`#${node.color}`} strokeWidth={node.width / 72} />;
       if (node.kind === 'image') return <image key={index} x={node.x} y={node.y} width={node.w} height={node.h} href={node.url} preserveAspectRatio="xMidYMid meet"><title>{node.alt}</title></image>;
       return <SceneTable key={index} node={node} />;

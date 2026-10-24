@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAssets } from './db';
 import type { SlackAsset, SlackItem, SlackProgress } from './types';
 import { STORAGE_KEYS } from '../../lib/storage';
+import { recordPages } from './stats';
 
 type Fit = 'page' | 'width';
 type ComicPrefs = { fit: Fit; rtl: boolean; double: boolean };
@@ -99,6 +100,14 @@ export function ComicReader({
       /* 隐私模式下写不了 localStorage：本次会话仍然生效。 */
     }
   }, [prefs]);
+
+  // 摸鱼周报：正向翻了几页就记几页，回翻不重复计。
+  const statPage = useRef(index);
+  useEffect(() => {
+    const delta = index - statPage.current;
+    statPage.current = index;
+    if (delta > 0) recordPages(delta);
+  }, [index]);
 
   const cancelHide = useCallback(() => window.clearTimeout(hideTimer.current), []);
   const hideBarSoon = useCallback((delay = 1600) => {

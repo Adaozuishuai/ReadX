@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SlackAsset, SlackChapter, SlackItem, SlackProgress } from './types';
 import { STORAGE_KEYS } from '../../lib/storage';
+import { recordChapters } from './stats';
 
 type ProseMode = 'paper' | 'ink' | 'plain' | 'night';
 type PageTurn = { from: number; to: number; direction: 1 | -1 };
@@ -109,6 +110,14 @@ export function NovelReader({
       /* 隐私模式下写不了 localStorage：本次会话仍然生效。 */
     }
   }, [prefs]);
+
+  // 摸鱼周报：正向翻了几章就记几章，回翻不重复计。
+  const statChapter = useRef(index);
+  useEffect(() => {
+    const delta = index - statChapter.current;
+    statChapter.current = index;
+    if (delta > 0) recordChapters(delta);
+  }, [index]);
 
   useEffect(() => {
     const map: Record<string, string> = {};
