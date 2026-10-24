@@ -110,7 +110,18 @@ $nodePackage = Join-Path $resourceRoot 'package.json'
 }
 '@ | Set-Content -LiteralPath $nodePackage -Encoding utf8
 $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
-& $npm install --prefix $resourceRoot --omit=dev --no-audit --no-fund --ignore-scripts
-if ($LASTEXITCODE -ne 0) { throw 'Installing bundled Node.js rendering dependencies failed.' }
+# npm run exports .npmrc's allow-scripts as an environment setting. New npm
+# versions reject that setting on a nested project install; this staging project
+# declares its own empty allowScripts policy and never runs dependency scripts.
+$inheritedAllowScripts = $env:npm_config_allow_scripts
+Remove-Item Env:\npm_config_allow_scripts -ErrorAction SilentlyContinue
+try {
+  & $npm install --prefix $resourceRoot --omit=dev --no-audit --no-fund --ignore-scripts
+  $runtimeInstallExit = $LASTEXITCODE
+}
+finally {
+  if ($null -ne $inheritedAllowScripts) { $env:npm_config_allow_scripts = $inheritedAllowScripts }
+}
+if ($runtimeInstallExit -ne 0) { throw 'Installing bundled Node.js rendering dependencies failed.' }
 
 Write-Host "Release runtime prepared: $resourceRoot"
