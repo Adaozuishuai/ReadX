@@ -15,6 +15,10 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+// lib/storage.ts 零依赖，直接加载真实模块：App/useChat 等被挂载的源文件经
+// 集中登记表取 localStorage 键，沙箱必须能解析这个 import。
+const storageModule = loadModule('apps/web/src/lib/storage.ts', {});
+
 function loadModule(relative, dependencies) {
   const filename = path.join(__dirname, '..', relative);
   const source = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
@@ -30,7 +34,7 @@ function loadModule(relative, dependencies) {
 
 // Model state, refs, dependency changes and effect cleanup; render is explicit so
 // each test controls when network replies and autosave/poll timers are delivered.
-function mount(relative, exported, api, dependencies = {}, args = ['p']) {
+function mount(relative, exported, api, dependencies = {}, args = ['p'], options = {}) {
   const slots = [];
   const timers = new Map();
   let nextTimer = 0;
@@ -62,6 +66,7 @@ function mount(relative, exported, api, dependencies = {}, args = ['p']) {
     Activity: 'activity',
   };
   const window_ = {
+    location: { search: options.search ?? '' },
     setTimeout(callback) { const id = ++nextTimer; timers.set(id, callback); return id; },
     clearTimeout(id) { timers.delete(id); },
     addEventListener() {},
@@ -73,12 +78,13 @@ function mount(relative, exported, api, dependencies = {}, args = ['p']) {
   }).outputText;
   const sandbox = {
     exports: {}, window: window_, document: { documentElement: { dataset: {} } },
-    crypto: require('node:crypto'), AbortController,
+    crypto: require('node:crypto'), AbortController, URLSearchParams,
     localStorage: (() => { const values = new Map(); return { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }; })(),
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
       if (name.endsWith('/api/client')) return { api, ApiError };
+      if (name.endsWith('/lib/storage')) return storageModule;
       if (name in dependencies) return dependencies[name];
       throw new Error(`Unexpected dependency: ${name}`);
     },
@@ -319,6 +325,31 @@ test('the application keeps LaTeX mounted until its leave guard succeeds', async
   header().onScreen('graph');
   await new Promise(setImmediate);
   assert.equal(header().screen, 'graph');
+  hook.unmount();
+});
+
+test('reader popups pass the requested page as an explicit citation target', () => {
+  const paper = { id: 'paper', key: 'paper', title: 'Paper' };
+  const hook = mount('apps/web/src/App.tsx', 'default', {}, {
+    './components/LibraryScreen': { LibraryScreen: 'library' },
+    './components/WorkspaceIcon': { WorkspaceIcon: 'icon' },
+    './components/slack/ModePendant': { ModePendant: 'pendant' },
+    './components/slack/slack.css': {},
+    './hooks/useWorkspace': { useWorkspace: () => ({ phase: { kind: 'ready', documents: { documents: [paper] } }, allDocuments: [paper], filters: {} }) },
+    './hooks/useDocument': { useDocument: () => ({ phase: { kind: 'ready', detail: { pages: [] } } }) },
+    './hooks/useAnnotations': { useAnnotations: () => ({}) },
+    './hooks/useLibraryMeta': { useLibraryMeta: () => ({ items: {} }) },
+    './hooks/useTheme': { useTheme: () => ({ choice: 'light' }) },
+  }, [], { search: '?readxWindow=reader&documentId=paper&page=10' });
+  const findReader = node => {
+    if (!node || typeof node !== 'object') return null;
+    if (Array.isArray(node)) return node.map(findReader).find(Boolean);
+    if (node.props?.onPopout) return node;
+    return findReader(node.props?.children);
+  };
+  const reader = findReader(hook.render());
+  assert.equal(reader.props.page, 10);
+  assert.equal(reader.props.cite.page, 10);
   hook.unmount();
 });
 

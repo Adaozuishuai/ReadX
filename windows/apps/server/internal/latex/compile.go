@@ -2,8 +2,8 @@ package latex
 
 import (
 	"context"
-	"encoding/json"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"

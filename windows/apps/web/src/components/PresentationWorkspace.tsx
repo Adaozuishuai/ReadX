@@ -10,6 +10,7 @@ import { buildReadingDeck, generateReadingDeck, type PresentationPlan, type Pres
 import { normalizePlannedSlide, DEFAULT_PRESENTATION_THEME } from '../lib/presentationDesign';
 import { PresentationCanvas } from './PresentationCanvas';
 import { listPresentationTemplates, savePresentationTemplate, type PresentationTemplateRecord } from '../lib/presentationTemplateLibrary';
+import { STORAGE_KEYS } from '../lib/storage';
 
 function savedEntries(raw: Record<string, unknown>) {
   const entries: Partial<Record<ReadingKind, ReadingEntry>> = {};
@@ -220,7 +221,7 @@ export function PresentationWorkspace({ documents, onBack }: { documents: Docume
         if (cancelled) return;
         setTemplateLibrary(records);
         let rememberedId = '';
-        try { rememberedId = localStorage.getItem('readx.presentation.active-template') ?? ''; } catch { /* Storage may be disabled. */ }
+        try { rememberedId = localStorage.getItem(STORAGE_KEYS.presentationTemplate) ?? ''; } catch { /* Storage may be disabled. */ }
         const initial = records.find((item) => item.id === rememberedId) ?? records.find((item) => item.id === 'builtin-vit3-report-en') ?? records[0];
         if (initial) {
           setActiveTemplateId(initial.id);
@@ -318,7 +319,7 @@ export function PresentationWorkspace({ documents, onBack }: { documents: Docume
       setTemplate({ ...reference, id });
       setActiveTemplateId(id);
       setTemplateLibrary((current) => [...current.filter((item) => item.id !== id), record].sort((a, b) => Number(b.builtin) - Number(a.builtin) || a.name.localeCompare(b.name)));
-      if (saved) try { localStorage.setItem('readx.presentation.active-template', id); } catch { /* Storage may be disabled. */ }
+      if (saved) try { localStorage.setItem(STORAGE_KEYS.presentationTemplate, id); } catch { /* Storage may be disabled. */ }
       setTemplateReady(true);
       setTemplateStatus(saved ? '模板已保存到模板库，AI 将参考它的主题和版式。' : `模板已载入供本次生成使用，但未能保存到模板库：${saveError}`);
     } catch (cause) {
@@ -335,7 +336,7 @@ export function PresentationWorkspace({ documents, onBack }: { documents: Docume
     setTemplate({ id: item.id, name: item.name, summary: item.summary, theme: item.theme });
     setTemplateReady(true);
     setTemplateStatus(`已选择${item.builtin ? '内置模板' : '模板库模板'}「${item.name}」。`);
-    try { localStorage.setItem('readx.presentation.active-template', item.id); } catch { /* Storage may be disabled. */ }
+    try { localStorage.setItem(STORAGE_KEYS.presentationTemplate, item.id); } catch { /* Storage may be disabled. */ }
   };
 
   const generate = async () => {

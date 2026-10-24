@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, streamChat, type ChatChunk, type LatexAIEditProposal } from '../api/client';
+import { STORAGE_KEYS } from '../lib/storage';
 
 type ChatTransport = (
   request: { key: string; mode?: string; question: string; scope?: string; history?: Array<{ role: string; text: string }>; images?: string[] },
@@ -27,7 +28,7 @@ export interface ChatTurn {
 }
 interface Conversation { id: string; title: string; updatedAt: string; turns: ChatTurn[] }
 const fresh = (): Conversation => ({ id: crypto.randomUUID(), title: '新对话', updatedAt: new Date().toISOString(), turns: [] });
-const storageKey = (key: string) => `cbct.chat.v2:${key}`;
+const storageKey = (key: string) => STORAGE_KEYS.chatSessions(key);
 function load(key: string | null): { conversations: Conversation[]; active: string } {
   try {
     const parsed = key ? JSON.parse(localStorage.getItem(storageKey(key)) ?? 'null') : null;

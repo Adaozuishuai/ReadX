@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { api, type DocumentJob, type JobStage } from '../api/client';
+import { AppDialog } from './AppDialog';
+import { downloadBlob } from '../lib/download';
 
 GlobalWorkerOptions.workerSrc = workerURL;
 
@@ -32,6 +34,7 @@ const STAGE_LABEL: Record<string, string> = {
   done: '已完成',
   failed: '失败',
   skipped: '跳过',
+  cancelled: '已取消',
   interrupted: '已中断',
 };
 
@@ -84,7 +87,6 @@ export function DocumentJobDialog({
 }) {
   const effectiveKey = pending && !jobKey ? '' : jobKey || document.key;
   const assetKey = fileKey || effectiveKey;
-  const dialog = useRef<HTMLDialogElement>(null);
   const [tab, setTab] = useState<Tab>('progress');
   const [job, setJob] = useState<DocumentJob | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -93,10 +95,6 @@ export function DocumentJobDialog({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  useEffect(() => {
-    dialog.current?.showModal();
-    return () => dialog.current?.close();
-  }, []);
 
   useEffect(() => {
     if (!effectiveKey) {
@@ -169,14 +167,7 @@ export function DocumentJobDialog({
   };
 
   const download = (blob: Blob, name: string) => {
-    const url = URL.createObjectURL(blob);
-    const link = window.document.createElement('a');
-    link.href = url;
-    link.download = name;
-    window.document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, name);
   };
 
   const downloadOriginal = async () => {
@@ -250,15 +241,7 @@ export function DocumentJobDialog({
   const openDisabled = importing || !effectiveKey || job?.status === 'failed' || job?.status === 'cancelled';
 
   return (
-    <dialog
-      ref={dialog}
-      className="app-dialog job-dialog"
-      aria-label="文档任务"
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-    >
+    <AppDialog open onClose={onClose} className="job-dialog" aria-label="文档任务">
       <header className="job-dialog-header">
         <div>
           <p className="precision-overline">{importing ? '正在导入' : '文档处理'}</p>
@@ -330,7 +313,7 @@ export function DocumentJobDialog({
                   <p>{statusDetail}</p>
                 </div>
                 <div className="job-progress-summary">
-                  <span>{document.format === 'epub' ? '章节' : '翻译段落'}</span>
+                  <span>{document.format === 'epub' ? '章节' : `翻译进度（${translationUnit}）`}</span>
                   <strong>{document.format === 'epub' ? 'EPUB' : `${translationCompleted}`}<small>{document.format === 'epub' ? '' : ` / ${translationTotal || '—'}`}</small></strong>
                   {document.format !== 'epub' ? <div className="job-meter" role="progressbar" aria-label="翻译进度" aria-valuemin={0} aria-valuemax={translationTotal || 1} aria-valuenow={translationCompleted}><span style={{ width: `${translationTotal ? Math.min(100, (translationCompleted / translationTotal) * 100) : 0}%` }} /></div> : null}
                 </div>
@@ -424,7 +407,7 @@ export function DocumentJobDialog({
                   </div>
                   <small className="job-metric-foot">
                     {translateStage?.resultCount
-                      ? `已生成 ${translateStage.resultCount} ${translateStage.resultUnit || '段'}译文 · OCR 已识别 ${ocrPages} / ${ocrTotalPages || '—'} 页`
+                      ? `已缓存 ${translateStage.resultCount} ${translateStage.resultUnit || '段'}译文 · OCR 已识别 ${ocrPages} / ${ocrTotalPages || '—'} 页`
                       : `OCR 已识别 ${ocrPages} / ${ocrTotalPages || '—'} 页`}
                   </small>
                 </article>
@@ -494,6 +477,6 @@ export function DocumentJobDialog({
           {!loaded ? <p className="job-notice">正在读取任务状态…</p> : null}
         </section>
       </div>
-    </dialog>
+    </AppDialog>
   );
 }

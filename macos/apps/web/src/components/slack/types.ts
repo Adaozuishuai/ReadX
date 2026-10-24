@@ -1,5 +1,10 @@
 export type SlackKind = 'novel' | 'comic';
 
+export interface DownloadedBookMetadata {
+  title: string; author: string; source?: string; sourceUrl?: string;
+  providerId?: string; providerBookId?: string; sourceLicense?: string; contentSha256?: string; importedAt?: number;
+}
+
 export interface SlackProgress {
   chapter: number;
   page: number;
@@ -27,6 +32,11 @@ export interface SlackItem {
   sourceUrl?: string;
   sourceName?: string;
   lastCheckedAt?: number;
+  providerId?: string;
+  providerBookId?: string;
+  sourceLicense?: string;
+  contentSha256?: string;
+  importedAt?: number;
 }
 
 export interface SlackChapter {

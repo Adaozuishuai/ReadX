@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"cbctv2/server/internal/appstate"
 )
 
 const maxDocumentTags = 16
@@ -60,9 +62,8 @@ func (s *Server) handleCategoryList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCategoryUpsert 新建或改色/重排一个分类（按名字 upsert）。
+// 读-改-写在 mutateCategories 的每 key 锁内原子完成。
 func (s *Server) handleCategoryUpsert(w http.ResponseWriter, r *http.Request) {
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
 	var body struct {
 		Name  string `json:"name"`
 		Color string `json:"color"`
@@ -92,31 +93,29 @@ func (s *Server) handleCategoryUpsert(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "不支持的分类颜色")
 		return
 	}
-	categories, err := s.loadCategories(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	updated := false
-	for index := range categories {
-		if categories[index].Name == name {
-			categories[index].Color = color
-			if body.Order != nil {
-				categories[index].Order = *body.Order
+	categories, err := s.mutateCategoriesResult(r.Context(), func(categories []Category) ([]Category, error) {
+		for index := range categories {
+			if categories[index].Name == name {
+				categories[index].Color = color
+				if body.Order != nil {
+					categories[index].Order = *body.Order
+				}
+				updated = true
+				break
 			}
-			updated = true
-			break
 		}
-	}
-	if !updated {
-		order := len(categories)
-		if body.Order != nil {
-			order = *body.Order
+		if !updated {
+			order := len(categories)
+			if body.Order != nil {
+				order = *body.Order
+			}
+			categories = append(categories, Category{Name: name, Color: color, Order: order})
 		}
-		categories = append(categories, Category{Name: name, Color: color, Order: order})
-	}
-	sortCategories(categories)
-	if err := s.saveCategories(r.Context(), categories); err != nil {
+		sortCategories(categories) // 排序在写回前完成，响应与落盘一致
+		return categories, nil
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "保存分类失败: "+err.Error())
 		return
 	}
@@ -128,56 +127,53 @@ func (s *Server) handleCategoryUpsert(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCategoryDelete 删除分类定义，并从所有论文上摘掉该分类引用（不留悬空名）。
+// 分类键与元数据键各自经 appStateStore 的每 key 锁原子更新。
 func (s *Server) handleCategoryDelete(w http.ResponseWriter, r *http.Request) {
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "分类名不能为空")
 		return
 	}
-	categories, err := s.loadCategories(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	kept := categories[:0]
-	removed := false
-	for _, item := range categories {
-		if item.Name == name {
-			removed = true
-			continue
+	kept, err := s.mutateCategoriesResult(r.Context(), func(categories []Category) ([]Category, error) {
+		kept := categories[:0]
+		for _, item := range categories {
+			if item.Name == name {
+				continue
+			}
+			kept = append(kept, item)
 		}
-		kept = append(kept, item)
-	}
-	if !removed {
-		writeError(w, http.StatusNotFound, "没有这个分类")
-		return
-	}
-	if err := s.saveCategories(r.Context(), kept); err != nil {
+		if len(kept) == len(categories) {
+			return nil, errCategoryNotFound
+		}
+		return kept, nil
+	})
+	if err != nil {
+		if errors.Is(err, errCategoryNotFound) {
+			writeError(w, http.StatusNotFound, errCategoryNotFound.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "删除分类失败: "+err.Error())
 		return
 	}
 	// 摘掉论文上的引用：分类名是弱引用，定义没了就不该继续挂在论文上。
-	all, err := s.loadAllMeta(r.Context())
-	if err != nil {
+	// 整个循环收进一次 mutateAllMeta（原先逐篇 saveMeta，N 次读改写）。
+	if err := s.mutateAllMeta(r.Context(), func(all map[string]DocumentMeta) (map[string]DocumentMeta, error) {
+		for key, meta := range all {
+			filtered := meta.Categories[:0]
+			for _, item := range meta.Categories {
+				if item != name {
+					filtered = append(filtered, item)
+				}
+			}
+			if len(filtered) != len(meta.Categories) {
+				meta.Categories = filtered
+				all[key] = meta
+			}
+		}
+		return all, nil
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	for key, meta := range all {
-		filtered := meta.Categories[:0]
-		for _, item := range meta.Categories {
-			if item != name {
-				filtered = append(filtered, item)
-			}
-		}
-		if len(filtered) != len(meta.Categories) {
-			meta.Categories = filtered
-			if err := s.saveMeta(r.Context(), key, meta); err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"categories": kept, "deleted": true})
 }
@@ -199,9 +195,8 @@ func (s *Server) handleDocumentMetaList(w http.ResponseWriter, r *http.Request) 
 // handleDocumentMetaPatch 合并式更新单篇的收藏/标签/回收站标记。
 //
 // 只接受白名单字段：未提供（null）的字段保持不变，避免「改标签顺手清掉收藏」这类意外。
+// 读-改-写在 mutateAllMeta 的每 key 锁内原子完成。
 func (s *Server) handleDocumentMetaPatch(w http.ResponseWriter, r *http.Request) {
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
 	key, ok := pathKey(w, r)
 	if !ok {
 		return
@@ -215,6 +210,8 @@ func (s *Server) handleDocumentMetaPatch(w http.ResponseWriter, r *http.Request)
 	if err := decodeJSON(w, r, &body); err != nil {
 		return
 	}
+	s.documentLifecycleMu.Lock()
+	defer s.documentLifecycleMu.Unlock()
 	if _, err := s.loadDocument(r.Context(), key); errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "没有这篇文档")
 		return
@@ -245,32 +242,34 @@ func (s *Server) handleDocumentMetaPatch(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	current, err := s.loadMeta(r.Context(), key)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if body.Favorite != nil {
-		current.Favorite = *body.Favorite
-	}
-	if body.Tags != nil {
-		current.Tags, _ = normalizeTags(*body.Tags)
-		if current.Tags == nil {
-			current.Tags = []string{}
+	current := emptyMeta(key)
+	if err := s.mutateAllMeta(r.Context(), func(all map[string]DocumentMeta) (map[string]DocumentMeta, error) {
+		if item, ok := all[key]; ok {
+			current = item
 		}
-	}
-	if body.Categories != nil {
-		current.Categories, _ = normalizeCategoryNames(*body.Categories)
-		if current.Categories == nil {
-			current.Categories = []string{}
+		if body.Favorite != nil {
+			current.Favorite = *body.Favorite
 		}
-	}
-	if body.Deleted != nil {
-		current.Deleted = *body.Deleted
-	}
-	current.Key = key
-	current.Updated = nowStamp()
-	if err := s.saveMeta(r.Context(), key, current); err != nil {
+		if body.Tags != nil {
+			current.Tags, _ = normalizeTags(*body.Tags)
+			if current.Tags == nil {
+				current.Tags = []string{}
+			}
+		}
+		if body.Categories != nil {
+			current.Categories, _ = normalizeCategoryNames(*body.Categories)
+			if current.Categories == nil {
+				current.Categories = []string{}
+			}
+		}
+		if body.Deleted != nil {
+			current.Deleted = *body.Deleted
+		}
+		current.Key = key
+		current.Updated = nowStamp()
+		all[key] = current
+		return all, nil
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "保存论文元数据失败: "+err.Error())
 		return
 	}
@@ -302,19 +301,17 @@ func (s *Server) handleTagList(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- 数据访问 ----
+// appStateStore 提供每 key 原子更新；涉及文档存亡的操作（清空回收站）见 trash.go
+// 的说明——documentLifecycleMu 覆盖存亡检查与文件操作，元数据合并仍走每 key 锁。
 
-func (s *Server) loadAllMeta(ctx context.Context) (map[string]DocumentMeta, error) {
-	var body string
-	err := s.handle.QueryRowContext(ctx, `SELECT value_json FROM app_state WHERE key = 'documents.meta'`).Scan(&body)
-	if errors.Is(err, sql.ErrNoRows) {
-		return map[string]DocumentMeta{}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("读取论文元数据失败: %w", err)
-	}
+// errCategoryNotFound 是 mutateCategories 闭包里的 404 哨兵。
+var errCategoryNotFound = errors.New("没有这个分类")
+
+// parseAllMeta 反序列化并补全 documents.meta（损坏明确报错，绝不静默回空：
+// 回空会让下一次写入覆盖用户数据）。供 mutateAllMeta 在锁内解析现有值。
+func parseAllMeta(body []byte) (map[string]DocumentMeta, error) {
 	raw := map[string]DocumentMeta{}
-	if err := json.Unmarshal([]byte(body), &raw); err != nil {
-		// 损坏不静默回退成空：回空会让下一次写入覆盖用户数据。这里明确报错。
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("论文元数据已损坏（app_state.documents.meta 不是 JSON 对象）: %w", err)
 	}
 	for key, item := range raw {
@@ -330,6 +327,50 @@ func (s *Server) loadAllMeta(ctx context.Context) (map[string]DocumentMeta, erro
 	return raw, nil
 }
 
+func (s *Server) loadAllMeta(ctx context.Context) (map[string]DocumentMeta, error) {
+	all, exists, err := appstate.Load[map[string]DocumentMeta](ctx, s.appStateStore, "documents.meta")
+	if err != nil {
+		if exists {
+			return nil, fmt.Errorf("论文元数据已损坏（app_state.documents.meta 不是 JSON 对象）: %w", err)
+		}
+		return nil, fmt.Errorf("读取论文元数据失败: %w", err)
+	}
+	if !exists || all == nil {
+		return map[string]DocumentMeta{}, nil
+	}
+	for key, item := range all {
+		if item.Tags == nil {
+			item.Tags = []string{}
+		}
+		if item.Categories == nil {
+			item.Categories = []string{}
+		}
+		item.Key = key
+		all[key] = item
+	}
+	return all, nil
+}
+
+// mutateAllMeta 在 documents.meta 键的每 key 锁内做原子读-改-写；
+// fn 返回错误即放弃写回。
+func (s *Server) mutateAllMeta(ctx context.Context, fn func(all map[string]DocumentMeta) (map[string]DocumentMeta, error)) error {
+	return s.appStateStore.Update(ctx, "documents.meta", func(cur []byte, exists bool) ([]byte, error) {
+		all := map[string]DocumentMeta{}
+		if exists {
+			parsed, err := parseAllMeta(cur)
+			if err != nil {
+				return nil, err
+			}
+			all = parsed
+		}
+		next, err := fn(all)
+		if err != nil || next == nil {
+			return nil, err
+		}
+		return json.Marshal(next)
+	})
+}
+
 func (s *Server) loadMeta(ctx context.Context, key string) (DocumentMeta, error) {
 	all, err := s.loadAllMeta(ctx)
 	if err != nil {
@@ -341,38 +382,35 @@ func (s *Server) loadMeta(ctx context.Context, key string) (DocumentMeta, error)
 	return emptyMeta(key), nil
 }
 
+// saveMeta 是单次原子读-改-写：调用方先 loadMeta 再 saveMeta 的两步写法不会
+// 丢并发更新（后写者的读改写基于锁内最新值；同篇冲突以最后一次为准）。
 func (s *Server) saveMeta(ctx context.Context, key string, meta DocumentMeta) error {
-	all, err := s.loadAllMeta(ctx)
-	if err != nil {
-		return err
-	}
-	all[key] = meta
-	encoded, err := json.Marshal(all)
-	if err != nil {
-		return err
-	}
-	_, err = s.handle.ExecContext(ctx,
-		`INSERT INTO app_state(key, value_json, updated_at) VALUES('documents.meta', ?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-		string(encoded), nowStamp())
-	return err
+	return s.mutateAllMeta(ctx, func(all map[string]DocumentMeta) (map[string]DocumentMeta, error) {
+		all[key] = meta
+		return all, nil
+	})
 }
 
 // restoreDocumentFromTrash makes re-importing a soft-deleted document restore the
 // existing library entry instead of creating a new OCR/translation run.
+// 清除 Deleted 是单次原子读-改-写：闭包内基于锁内最新值改字段，并发 PATCH
+// 的其它字段（如 favorite）不会被覆盖。与清空回收站的竞争窗口由 trash 侧的
+// documentLifecycleMu 覆盖 Deleted 预检到删除文件的完整过程。
 func (s *Server) restoreDocumentFromTrash(ctx context.Context, key string) (DocumentSummary, error) {
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
-	meta, err := s.loadMeta(ctx, key)
-	if err != nil {
+	s.documentLifecycleMu.Lock()
+	defer s.documentLifecycleMu.Unlock()
+	if _, err := s.loadDocument(ctx, key); err != nil {
 		return DocumentSummary{}, err
 	}
-	if meta.Deleted {
-		meta.Deleted = false
-		meta.Updated = nowStamp()
-		if err := s.saveMeta(ctx, key, meta); err != nil {
-			return DocumentSummary{}, err
+	if err := s.mutateAllMeta(ctx, func(all map[string]DocumentMeta) (map[string]DocumentMeta, error) {
+		if meta, ok := all[key]; ok && meta.Deleted {
+			meta.Deleted = false
+			meta.Updated = nowStamp()
+			all[key] = meta
 		}
+		return all, nil
+	}); err != nil {
+		return DocumentSummary{}, err
 	}
 	return s.loadDocument(ctx, key)
 }
@@ -420,29 +458,48 @@ func sortCategories(categories []Category) {
 }
 
 func (s *Server) loadCategories(ctx context.Context) ([]Category, error) {
-	var body string
-	err := s.handle.QueryRowContext(ctx, `SELECT value_json FROM app_state WHERE key = 'library.categories'`).Scan(&body)
-	if errors.Is(err, sql.ErrNoRows) {
-		return []Category{}, nil
-	}
+	categories, exists, err := appstate.Load[[]Category](ctx, s.appStateStore, "library.categories")
 	if err != nil {
+		if exists {
+			return nil, fmt.Errorf("分类定义已损坏（app_state.library.categories 不是 JSON 数组）: %w", err)
+		}
 		return nil, fmt.Errorf("读取分类定义失败: %w", err)
 	}
-	categories := []Category{}
-	if err := json.Unmarshal([]byte(body), &categories); err != nil {
-		return nil, fmt.Errorf("分类定义已损坏（app_state.library.categories 不是 JSON 数组）: %w", err)
+	if !exists || categories == nil {
+		return []Category{}, nil
 	}
 	return categories, nil
 }
 
-func (s *Server) saveCategories(ctx context.Context, categories []Category) error {
-	encoded, err := json.Marshal(categories)
-	if err != nil {
-		return err
-	}
-	_, err = s.handle.ExecContext(ctx,
-		`INSERT INTO app_state(key, value_json, updated_at) VALUES('library.categories', ?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-		string(encoded), nowStamp())
+// mutateCategories 在 library.categories 键的每 key 锁内做原子读-改-写。
+func (s *Server) mutateCategories(ctx context.Context, fn func(categories []Category) ([]Category, error)) error {
+	_, err := s.mutateCategoriesResult(ctx, fn)
 	return err
+}
+
+// mutateCategoriesResult 同 mutateCategories，并把写回的列表带给响应方。
+func (s *Server) mutateCategoriesResult(ctx context.Context, fn func(categories []Category) ([]Category, error)) ([]Category, error) {
+	var result []Category
+	err := s.appStateStore.Update(ctx, "library.categories", func(cur []byte, exists bool) ([]byte, error) {
+		categories := []Category{}
+		if exists {
+			if err := json.Unmarshal(cur, &categories); err != nil {
+				return nil, fmt.Errorf("分类定义已损坏（app_state.library.categories 不是 JSON 数组）: %w", err)
+			}
+		}
+		next, err := fn(categories)
+		if err != nil {
+			return nil, err
+		}
+		result = next
+		return json.Marshal(next)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Server) saveCategories(ctx context.Context, categories []Category) error {
+	return appstate.Save(ctx, s.appStateStore, "library.categories", categories)
 }

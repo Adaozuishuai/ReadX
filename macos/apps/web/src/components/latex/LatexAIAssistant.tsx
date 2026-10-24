@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LatexAutoFixResult, LatexBuild, LatexSnapshot } from '@cbct/shared';
 import { api, latexAIFix, streamLatexChat, type LatexAISettings } from '../../api/client';
 import { useAIPreferences } from '../../hooks/useAIPreferences';
+import { useConfirm } from '../ConfirmDialog';
 import { ChatWorkspace } from '../ChatWorkspace';
 import { runLatexChat } from '../../lib/latex/latexChatTransport';
 
@@ -46,6 +47,7 @@ export function LatexAIAssistant({
   onRefreshSnapshots: () => void;
 }) {
   const preferences = useAIPreferences();
+  const confirmDialog = useConfirm();
   const chatKey = `latex-project:${projectId}`;
   const [fixing, setFixing] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -524,9 +526,11 @@ export function LatexAIAssistant({
                     <button
                       type="button"
                       onClick={() => {
-                        if (window.confirm('回滚会把项目源码恢复到这份快照的状态，快照之后新增的文件会被移除。继续？')) {
-                          onRollbackSnapshot(snapshot.id);
-                        }
+                        void confirmDialog.bridge
+                          .confirm('回滚会把项目源码恢复到这份快照的状态，快照之后新增的文件会被移除。继续？')
+                          .then((ok) => {
+                            if (ok) onRollbackSnapshot(snapshot.id);
+                          });
                       }}
                     >
                       回滚
@@ -582,6 +586,7 @@ export function LatexAIAssistant({
         onApplyEdit={onApplyFix}
         composerHint="发送修改要求，确认对话中的卡片后保存"
       />
+      {confirmDialog.node}
     </aside>
   );
 }

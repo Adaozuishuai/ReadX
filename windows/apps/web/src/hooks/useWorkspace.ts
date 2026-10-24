@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { DocumentSummary, DocumentsResponse, ImportReport, MetaResponse } from '@cbct/shared';
+import type { DocumentSummary, DocumentsResponse, MetaResponse } from '@cbct/shared';
 import { ApiError, api } from '../api/client';
 
 export type WorkspacePhase =
@@ -33,19 +33,11 @@ export function useWorkspace(): {
   filters: Filters;
   setFilters: (next: Partial<Filters>) => void;
   reload: () => void;
-  importReport: ImportReport | null;
-  importing: boolean;
-  importError: string | null;
-  runImport: () => void;
-  clearImportNotice: () => void;
 } {
   const [phase, setPhase] = useState<WorkspacePhase>({ kind: 'loading' });
   const [allDocuments, setAllDocuments] = useState<DocumentSummary[]>([]);
   const [filters, setFiltersState] = useState<Filters>({ status: '', q: '' });
   const [attempt, setAttempt] = useState(0);
-  const [importing, setImporting] = useState(false);
-  const [importReport, setImportReport] = useState<ImportReport | null>(null);
-  const [importError, setImportError] = useState<string | null>(null);
 
   const reload = useCallback(() => setAttempt((value) => value + 1), []);
 
@@ -97,32 +89,12 @@ export function useWorkspace(): {
     return () => controller.abort();
   }, [attempt]);
 
-  const runImport = useCallback(() => {
-    setImporting(true);
-    setImportError(null);
-    api
-      .importLegacy()
-      .then((report) => {
-        setImportReport(report);
-        setAttempt((value) => value + 1);
-      })
-      .catch((error: unknown) => {
-        setImportError(`${error instanceof Error ? error.message : String(error)}｜${hintFor(error)}`);
-      })
-      .finally(() => setImporting(false));
-  }, []);
-
   return {
     phase,
     allDocuments,
     filters,
     setFilters,
     reload,
-    importReport,
-    importing,
-    importError,
-    runImport,
-    clearImportNotice: () => setImportReport(null),
   };
 }
 

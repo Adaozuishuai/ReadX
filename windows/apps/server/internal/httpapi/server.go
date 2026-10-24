@@ -16,9 +16,12 @@ import (
 	"sync"
 	"time"
 
+	"cbctv2/server/internal/appstate"
+	"cbctv2/server/internal/booksources"
 	"cbctv2/server/internal/config"
 	"cbctv2/server/internal/db"
 	"cbctv2/server/internal/legacy"
+	"cbctv2/server/internal/tasks"
 )
 
 const appVersion = "0.0.0-s0"
@@ -31,18 +34,26 @@ const staticCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 	"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 
 type Server struct {
+	bookSourcesOnce     sync.Once
+	bookSources         *booksources.Registry
+	zLibrary            *booksources.ZLibrary
 	downloadPublication func(context.Context, string, int64, func(int64, int64)) ([]byte, string, error)
 	settingsMu          sync.Mutex
 	workBuddyLoginMu    sync.Mutex
 	workBuddyLogin      workBuddyLoginStatus
-	appStateMu          sync.Mutex
-	// graphMu 只保护「读缓存 → 调 180s 模型 → 写缓存」的短窗口：模型调用期间不持锁，
-	// 否则一次抽取会把图谱读写与其它 app_state 功能一起卡死。
-	graphMu sync.Mutex
 	// Paper memory and visual preparation are shared across five concurrent
 	// section requests. Keyed locks prevent duplicate preparation per document.
 	paperMemoryLocks keyedLockTable
 	paperVisualLocks keyedLockTable
+	// comparisonJobs 统一走 tasks.Registry：并发槽/超时/容量/TTL 清理/取消。
+	// （原先这里是 mu + map 手写状态机：无取消、条目从不清理、零测试。）
+	comparisonJobs *tasks.Registry
+	// appStateStore 是 app_state 表的每 key 锁入口（internal/appstate）。
+	// 原先的 appStateMu/graphMu 全局锁已随各业务文件迁移删除。
+	appStateStore *appstate.Store
+	// Coordinate document restoration/metadata changes with permanent deletion.
+	// Per-key app_state locks alone do not protect the gap before deleting rows/files.
+	documentLifecycleMu sync.Mutex
 	// jobsMu 保护导入任务表：任务更新频繁（逐页翻译/渲染），但临界区只有内存改字段，
 	// 落盘在锁外做，不能把 SQLite 写入拖进热点。
 	jobsMu          sync.Mutex
@@ -54,7 +65,14 @@ type Server struct {
 }
 
 func New(cfg config.Config, handle *sql.DB) *Server {
-	return &Server{cfg: cfg, handle: handle, startedAt: time.Now().UTC(), importJobs: map[string]*jobRuntime{}}
+	return &Server{
+		cfg:            cfg,
+		handle:         handle,
+		startedAt:      time.Now().UTC(),
+		importJobs:     map[string]*jobRuntime{},
+		comparisonJobs: newComparisonJobRegistry(),
+		appStateStore:  appstate.New(sqlAppStateKV{handle: handle}),
+	}
 }
 
 // Handler 组装完整路由，可直接交给 http.Server 或 httptest。
@@ -67,6 +85,19 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/books/search", withAuth(s.handleSlackBookSearch))
 	mux.Handle("GET /v1/books/download", withAuth(s.handleSlackBookDownload))
 	mux.Handle("GET /v1/books/fetch-web", withAuth(s.handleSlackWebSourceFetch))
+	mux.Handle("GET /v1/book-sources", withAuth(s.handleBookSources))
+	mux.Handle("GET /v1/book-sources/zlibrary/connection", withAuth(s.handleZLibraryConnection))
+	mux.Handle("PUT /v1/book-sources/zlibrary/connection", withAuth(s.handleZLibraryConnection))
+	mux.Handle("POST /v1/book-sources/zlibrary/connection", withAuth(s.handleZLibraryConnection))
+	mux.Handle("DELETE /v1/book-sources/zlibrary/connection", withAuth(s.handleZLibraryConnection))
+	mux.Handle("POST /v1/book-sources/zlibrary/probe", withAuth(s.handleZLibraryProbe))
+	mux.Handle("GET /v1/book-sources/zlibrary/books/{id}/cover", withAuth(s.handleZLibraryCover))
+	mux.Handle("GET /v1/book-sources/{provider}/search", withAuth(s.handleSourceSearch))
+	mux.Handle("GET /v1/book-sources/{provider}/books/{id}", withAuth(s.handleSourceDetail))
+	mux.Handle("POST /v1/book-sources/{provider}/books/{id}/downloads", withAuth(s.handleSourceDownload))
+	mux.Handle("GET /v1/book-downloads/{task}", withAuth(s.handleBookDownloadTask))
+	mux.Handle("DELETE /v1/book-downloads/{task}", withAuth(s.handleBookDownloadTask))
+	mux.Handle("GET /v1/book-downloads/{task}/file", withAuth(s.handleBookDownloadFile))
 	mux.Handle("GET /v1/documents", withAuth(s.handleDocuments))
 	mux.Handle("POST /v1/import", withAuth(s.handleImport))
 	mux.Handle("POST /v1/import/files", withAuth(s.handlePublicationUpload))
@@ -147,6 +178,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/ai/presentation-theme", withAuth(s.handleAIPresentationTheme))
 	mux.Handle("POST /v1/ai/presentation-plan", withAuth(s.handleAIPresentationPlan))
 	mux.Handle("POST /v1/ai/generate", withAuth(s.handleAIGenerate))
+	mux.Handle("GET /v1/documents/{key}/comparison-experiment-job", withAuth(s.handleComparisonExperimentJob))
+	mux.Handle("POST /v1/documents/{key}/comparison-experiment-job", withAuth(s.handleComparisonExperimentJob))
+	mux.Handle("DELETE /v1/documents/{key}/comparison-experiment-job", withAuth(s.handleComparisonExperimentJob))
 	mux.Handle("POST /v1/ai/paper-page", withAuth(s.handlePaperPage))
 	mux.Handle("GET /v1/readings/{key}", withAuth(s.handleReadingGet))
 	mux.Handle("PUT /v1/readings/{key}/{kind}", withAuth(s.handleReadingPut))

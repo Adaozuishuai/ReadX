@@ -11,6 +11,7 @@ import (
 
 	"cbctv2/server/internal/ai"
 	"cbctv2/server/internal/latex"
+	"cbctv2/server/internal/sseio"
 )
 
 type latexChatRequest struct {
@@ -142,20 +143,8 @@ func (s *Server) handleLatexAIChat(w http.ResponseWriter, r *http.Request) {
 	messages = append(messages, ai.TrimHistory(history, 8)...)
 	messages = append(messages, ai.Message{Role: "user", Content: question})
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Accel-Buffering", "no")
-	flusher, canFlush := w.(http.Flusher)
-	emit := func(payload any) {
-		encoded, marshalErr := json.Marshal(payload)
-		if marshalErr != nil {
-			return
-		}
-		fmt.Fprintf(w, "data: %s\n\n", encoded)
-		if canFlush {
-			flusher.Flush()
-		}
-	}
+	out := sseio.Begin(w)
+	emit := out.Send
 	emit(map[string]any{"meta": map[string]any{
 		"included": len(sourceFiles), "total": len(sourceFiles), "scope": "project", "unit": "个源文件",
 		"provider": config.ProviderName(), "model": config.ModelName(), "reasoningEffort": config.ReasoningEffort,

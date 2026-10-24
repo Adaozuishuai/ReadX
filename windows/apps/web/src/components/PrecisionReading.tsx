@@ -16,6 +16,7 @@ import { READING_STEPS, type ReadingKind } from '../lib/readingSteps';
 import { NarrativeReading } from './NarrativeReading';
 import { ReadingVisuals } from './ReadingVisuals';
 import type { ReactNode } from 'react';
+import { downloadBlob } from '../lib/download';
 
 const LABELS: Record<string, string> = { sections: '章节', fields: '证据条目', title: '标题', k: '要点', v: '事实', page: 'Page', excerpt: '逐字依据', formulas: '公式', latex: 'LaTeX', explanation: '解释与条件', dataset: '研究对象与数据', acquisition: '研究设计与条件', training: '实施流程', loss: '分析方法', metrics: '评价标准', baselines: '对照或基线', tables: '结果表', caption: '表题', header: '表头', protocol: '协议', columns: '指标列', rows: '结果行', method: '方法', cells: '数值', valueText: '原始数值', uncertaintyText: '误差', stability: '稳健性', ablation: '组件或分组分析', generalization: '外部验证与泛化', efficiency: '效率与成本', statistics: '统计报告', missing: '缺失信息', resources: '代码、数据与材料', environment: '环境', cost: '资源成本', risks: '风险', finding: '论文依据', assessment: '分析与推断', action: '核对行动', interpretation: '有条件的解读', evidence: '证据' };
 
@@ -114,8 +115,7 @@ export function PrecisionReading({ apiKey, onCite, onAsk, disabled, document, pd
   };
   const exportAll = () => {
     const text = `# ${document?.title || '论文'} · 精读五重奏\n\n${READING_STEPS.map((s) => reading.entries[s.kind] ? entryMarkdown(s.label, reading.entries[s.kind]!, sharedAnalyses) : `## ${s.label}\n\n尚未生成。`).join('\n\n---\n\n')}`;
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
-    const link = window.document.createElement('a'); link.href = url; link.download = `${(document?.title || '精读五重奏').replace(/[\\/:*?"<>|]/g, '_').slice(0, 90)}.md`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadBlob(new Blob([text], { type: 'text/markdown;charset=utf-8' }), `${(document?.title || '精读五重奏').replace(/[\\/:*?"<>|]/g, '_').slice(0, 90)}.md`);
   };
   const saveChecklist = async () => {
     if (!apiKey || !entry || saveLock.current) return;

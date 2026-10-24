@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { OPS, Util } from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { TextContent } from 'pdfjs-dist/types/src/display/api';
+import { STORAGE_KEYS } from '../lib/storage';
 
 export type ReadingKind = 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction';
 export type PaperVisualKind = 'figure' | 'table';
@@ -471,10 +472,14 @@ async function renderPageCrops(page: PDFPageProxy, visuals: VisualCandidate[]): 
   } finally { pageCanvas.width = 0; pageCanvas.height = 0; }
 }
 
-function selectionStorageKey(document: PDFDocumentProxy, documentKey?: string | null) {
+function selectionIdentity(document: PDFDocumentProxy, documentKey?: string | null) {
   const identity = document.fingerprints?.[0] || documentKey;
   if (!identity) throw new Error('无法识别当前 PDF，暂不能保存选区。');
-  return 'cbct-visual-selections:v1:' + identity;
+  return identity;
+}
+
+function selectionStorageKey(document: PDFDocumentProxy, documentKey?: string | null) {
+  return STORAGE_KEYS.paperVisualSelections(selectionIdentity(document, documentKey));
 }
 function validSelection(value: unknown, pages: number): value is VisualSelection {
   if (!value || typeof value !== 'object') return false;
@@ -529,7 +534,7 @@ export function usePaperVisuals(document: PDFDocumentProxy | null, enabled: bool
     try {
       const raw: unknown = JSON.parse(localStorage.getItem(selectionStorageKey(document, documentKey)) || '[]');
       if (Array.isArray(raw)) selections.current = raw.filter((v) => validSelection(v, document.numPages));
-      const dismissed: unknown = JSON.parse(localStorage.getItem(selectionStorageKey(document, documentKey) + ':ignored') || '[]');
+      const dismissed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEYS.paperVisualIgnored(selectionIdentity(document, documentKey))) || '[]');
       if (Array.isArray(dismissed)) ignored.current = new Set(dismissed.filter((v): v is string => typeof v === 'string' && v.length < 160));
     } catch { /* Automatic detection remains available when local storage is unavailable. */ }
     setIgnoredCount(ignored.current.size);
@@ -583,7 +588,7 @@ export function usePaperVisuals(document: PDFDocumentProxy | null, enabled: bool
           const fingerprint = document.fingerprints?.[0];
           if (fingerprint) {
             try {
-              window.localStorage.setItem(`cbct-visual-detections:${fingerprint}`, JSON.stringify(all.map(({ id, kind, page, caption, captionBounds, detectedBounds, cropBounds, extractionStatus }) => ({ id, kind, page, caption, captionBounds, detectedBounds, cropBounds, extractionStatus }))));
+              window.localStorage.setItem(STORAGE_KEYS.paperVisualDetections(fingerprint), JSON.stringify(all.map(({ id, kind, page, caption, captionBounds, detectedBounds, cropBounds, extractionStatus }) => ({ id, kind, page, caption, captionBounds, detectedBounds, cropBounds, extractionStatus }))));
             } catch { /* Detection results remain available in memory if storage is unavailable. */ }
           }
           setVisuals([...all]);
@@ -644,13 +649,13 @@ export function usePaperVisuals(document: PDFDocumentProxy | null, enabled: bool
     if (!document || scanning.current || editing.current) return;
     try {
       const next = new Set([...ignored.current, id]);
-      localStorage.setItem(selectionStorageKey(document, documentKey) + ':ignored', JSON.stringify([...next]));
+      localStorage.setItem(STORAGE_KEYS.paperVisualIgnored(selectionIdentity(document, documentKey)), JSON.stringify([...next]));
       ignored.current = next; setIgnoredCount(next.size); setVisuals((current) => current.filter((item) => item.id !== id));
     } catch { setError('未能保存忽略设置，候选仍予以保留。'); }
   };
   const restoreIgnored = () => {
     if (!document || scanning.current || editing.current) return;
-    try { localStorage.setItem(selectionStorageKey(document, documentKey) + ':ignored', '[]'); ignored.current = new Set(); setIgnoredCount(0); setRevision((v) => v + 1); }
+    try { localStorage.setItem(STORAGE_KEYS.paperVisualIgnored(selectionIdentity(document, documentKey)), '[]'); ignored.current = new Set(); setIgnoredCount(0); setRevision((v) => v + 1); }
     catch { setError('无法恢复被忽略的候选，请确认本机存储可用。'); }
   };
   const located = new Set(visuals.map((v) => { const m = normalizeCaptionText(v.caption).match(CAPTION_LABEL); return m ? v.kind + ':' + visualNumber(m[2] || '') : ''; }));

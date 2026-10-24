@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { ReadingField } from '../hooks/useReadings';
+import { STORAGE_KEYS } from '../lib/storage';
 
 /**
  * 跨文献对照：把 2–4 篇论文的「实验配置」精读抽取并排成一张表。
@@ -28,6 +29,16 @@ const GROUPS = [
 ] as const;
 
 const MAX_PAPERS = 4;
+const SELECTION_KEY = STORAGE_KEYS.compareSelection;
+
+function readSelection(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(SELECTION_KEY) ?? '[]');
+    return Array.isArray(value) ? [...new Set(value.filter((key): key is string => typeof key === 'string'))].slice(0, MAX_PAPERS) : [];
+  } catch {
+    return [];
+  }
+}
 
 /** 抽取结果里的「明说没有」断言：与后端 UnknownValues 同一批词。 */
 const UNKNOWN_VALUES = new Set([
@@ -44,6 +55,7 @@ type CardPhase =
 function parseExperimentCard(value: string): Record<string, ReadingField[]> | null {
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || !GROUPS.some((group) => Array.isArray(parsed[group.id]))) return null;
     const out: Record<string, ReadingField[]> = {};
     for (const group of GROUPS) {
       const raw = parsed[group.id];
@@ -78,25 +90,45 @@ interface Props {
 }
 
 export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocument }: Props) {
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>(readSelection);
   const [cards, setCards] = useState<Record<string, CardPhase>>({});
   const [filter, setFilter] = useState('');
   const [generating, setGenerating] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
+  const [jobRevision, setJobRevision] = useState(0);
+  const submitting = useRef(new Set<string>());
 
-  const loadCard = useCallback(async (key: string) => {
-    setCards((current) => ({ ...current, [key]: { kind: 'loading' } }));
+  useEffect(() => {
+    try { localStorage.setItem(SELECTION_KEY, JSON.stringify(selected)); } catch { /* Keep the session selection when storage is unavailable. */ }
+  }, [selected]);
+
+  useEffect(() => {
+    if (!documents.length) return;
+    const known = new Set(documents.map((doc) => doc.key));
+    setSelected((current) => current.every((key) => known.has(key)) ? current : current.filter((key) => known.has(key)));
+  }, [documents]);
+
+  const loadCard = useCallback(async (key: string, signal: AbortSignal) => {
+    setCards((current) => current[key] ? current : { ...current, [key]: { kind: 'loading' } });
     try {
-      const response = await api.readings(key);
-      const entry = (response.entries as Record<string, { value?: string; updatedAt?: string } | undefined>).experiment;
-      const groups = entry?.value ? parseExperimentCard(entry.value) : null;
+      const response = await api.readings(key, signal);
+      if (signal.aborted) return;
+      let groups: Record<string, ReadingField[]> | null = null;
+      let updatedAt: string | undefined;
+      for (const kind of ['comparisonExperiment', 'experiment', 'experimentJSON']) {
+        const raw = response.entries[kind];
+        const entry = typeof raw === 'string' ? { value: raw, updatedAt: '' } : raw as { value?: string; updatedAt?: string } | undefined;
+        groups = typeof entry?.value === 'string' ? parseExperimentCard(entry.value) : null;
+        if (groups) { updatedAt = entry?.updatedAt; break; }
+      }
       setCards((current) => ({
         ...current,
         [key]: groups
-          ? { kind: 'ready', groups, updatedAt: entry?.updatedAt }
+          ? { kind: 'ready', groups, updatedAt }
           : { kind: 'empty' },
       }));
     } catch (cause) {
+      if (signal.aborted) return;
       setCards((current) => ({
         ...current,
         [key]: { kind: 'error', message: cause instanceof Error ? cause.message : String(cause) },
@@ -104,12 +136,42 @@ export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocume
     }
   }, []);
 
-  // 选中的论文才去取精读记录；已取过的复用，翻来翻去不重复请求。
+  // Leaving this page only stops polling; the server owns the generation job.
   useEffect(() => {
-    for (const key of selected) {
-      if (!cards[key]) void loadCard(key);
-    }
-  }, [selected, cards, loadCard]);
+    const controller = new AbortController();
+    const active = new Set<string>();
+    let timer: number | undefined;
+    const refresh = async (initial: boolean) => {
+      const running = await Promise.all(selected.map(async (key) => {
+        try {
+          const job = await api.comparisonExperimentJob(key, controller.signal);
+          if (controller.signal.aborted) return false;
+          const wasActive = active.has(key);
+          if (job.status === 'running') active.add(key);
+          else active.delete(key);
+          setGenerating((current) => {
+            const next = { ...current };
+            if (job.status === 'running') next[key] = `${job.message} ${job.percent}%`;
+            else delete next[key];
+            return next;
+          });
+          if (initial || (wasActive && job.status === 'completed')) await loadCard(key, controller.signal);
+          if (!controller.signal.aborted && job.status === 'failed') {
+            setCards((current) => ({ ...current, [key]: { kind: 'error', message: job.error || job.message } }));
+          }
+          return job.status === 'running';
+        } catch (cause) {
+          if (!controller.signal.aborted) {
+            setCards((current) => ({ ...current, [key]: { kind: 'error', message: cause instanceof Error ? cause.message : String(cause) } }));
+          }
+          return active.has(key);
+        }
+      }));
+      if (!controller.signal.aborted && running.some(Boolean)) timer = window.setTimeout(() => void refresh(false), 1500);
+    };
+    void refresh(true);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [selected, jobRevision, loadCard]);
 
   const toggle = (key: string) => {
     setNotice('');
@@ -123,26 +185,24 @@ export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocume
     });
   };
 
-  /** 缺抽取的论文就地生成「实验配置」；用的是阅读器里同一套生成与校验流程。 */
+  /** Start or reattach to one server job per paper; completed indices are reused. */
   const generate = async (key: string) => {
-    setGenerating((current) => ({ ...current, [key]: '正在生成…' }));
+    if (submitting.current.has(key) || generating[key]) return;
+    submitting.current.add(key);
+    setGenerating((current) => ({ ...current, [key]: '正在提交后台任务…' }));
     try {
-      await api.generate(key, 'experiment', [], (progress) => {
-        setGenerating((current) => ({
-          ...current,
-          [key]: progress.message || `生成中 ${Math.round(progress.percent)}%`,
-        }));
-      });
-      await loadCard(key);
-      setNotice('已生成实验配置。');
+      const job = await api.startComparisonExperiment(key);
+      setNotice(job.status === 'completed' ? '已载入保存的实验配置。' : '实验配置正在后台生成，切换界面后仍会继续。');
+      setJobRevision((current) => current + 1);
     } catch (cause) {
       setNotice(`生成失败：${cause instanceof Error ? cause.message : String(cause)}`);
-    } finally {
       setGenerating((current) => {
         const next = { ...current };
         delete next[key];
         return next;
       });
+    } finally {
+      submitting.current.delete(key);
     }
   };
 
@@ -159,21 +219,23 @@ export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocume
 
   return (
     <div className="compare-section">
-      <header className="heat-toolbar">
-        <div className="heat-heading">
+      <header className="compare-header">
+        <div className="compare-heading">
           {onBack ? (
             <button type="button" className="heat-back" onClick={onBack} aria-label="返回书库">←</button>
           ) : null}
           <div>
             <p className="section-eyebrow">CROSS-PAPER COMPARISON</p>
             <h1>跨文献对照</h1>
-            <p className="library-description">选 2–4 篇，把实验配置并排摊开；每格都能点回原文核对。</p>
+            <p className="compare-description">并排阅读实验配置，沿着证据回到原文。</p>
           </div>
         </div>
+        <div className="compare-header-meta"><strong>2–4 <small>篇论文</small></strong><span>7 个对照维度 · 原文证据直达</span></div>
       </header>
 
       <div className="compare-body">
-        <aside className="compare-picker">
+        <aside className="compare-picker" aria-label="选择对照论文">
+          <div className="compare-picker-heading"><h2>选择论文</h2><span>{selected.length} / {MAX_PAPERS}</span></div>
           <input
             type="search"
             value={filter}
@@ -181,7 +243,7 @@ export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocume
             placeholder="搜索标题或论文键"
             aria-label="搜索要对照的论文"
           />
-          <p className="compare-picker-hint">已选 {selected.length} / {MAX_PAPERS} 篇</p>
+          <p className="compare-picker-hint">{visible.length} 篇论文{filter.trim() ? '符合搜索' : '可选'} · 至少选择 2 篇</p>
           <ul>
             {visible.map((doc) => {
               const checked = selected.includes(doc.key);
@@ -189,25 +251,43 @@ export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocume
                 <li key={doc.key}>
                   <label className={checked ? 'selected' : ''}>
                     <input type="checkbox" checked={checked} onChange={() => toggle(doc.key)} />
-                    <span title={doc.title}>{doc.title || doc.key}</span>
-                    {doc.year ? <em className="tabular-nums">{doc.year}</em> : null}
+                    <span className="compare-picker-copy">
+                      <span className="compare-picker-title" title={doc.title}>{doc.title || doc.key}</span>
+                      <span className="compare-picker-meta">{doc.year || '年份未标注'}{checked ? ' · 已加入对照' : ''}</span>
+                    </span>
+                    {checked ? <span className="compare-picker-order" aria-hidden="true">{selected.indexOf(doc.key) + 1}</span> : null}
                   </label>
                 </li>
               );
             })}
           </ul>
+          {!visible.length ? <p className="compare-picker-empty">{documents.length ? '没有找到相关论文，换个关键词试试。' : '书库中还没有论文，先返回书库导入。'}</p> : null}
+          <p className="compare-picker-footer">选择后自动对照，最多同时展开 4 篇。</p>
         </aside>
 
         <div className="compare-main">
+          <div className="compare-main-heading">
+            <div><h2>对照工作台</h2><p>{columns.length >= 2 ? `${columns.length} 篇论文 · 7 个维度` : '从左侧论文列表开始选择'}</p></div>
+            {selected.length ? <button type="button" className="compare-clear" onClick={() => { setSelected([]); setNotice(''); }}>清空选择</button> : null}
+          </div>
+          {columns.length ? <div className="compare-selected" aria-label="已选论文">{columns.map((doc, order) => (
+            <button type="button" key={doc.key} onClick={() => toggle(doc.key)} aria-label={`移除对照论文：${doc.title || doc.key}`} title={doc.title || doc.key}>
+              <b>{order + 1}</b><span>{doc.title || doc.key}</span><i aria-hidden="true">×</i>
+            </button>
+          ))}</div> : null}
           {notice ? <p className="compare-notice" role="status">{notice}</p> : null}
 
           {columns.length < 2 ? (
-            <p className="compare-empty">
-              在左侧选 2–4 篇论文开始对照。表格里的每一格都来自该篇「精读 · 实验配置」的抽取结果。
-            </p>
+            <section className="compare-empty" aria-label="开始文献对照">
+              <svg className="compare-empty-icon" viewBox="0 0 80 64" fill="none" aria-hidden="true"><rect x="6" y="6" width="29" height="48" rx="5" /><rect x="45" y="10" width="29" height="48" rx="5" /><path d="M14 19h13M14 27h13M14 35h8M53 23h13M53 31h13M53 39h8M35 32h10m-6-4 4 4-4 4" /></svg>
+              <h3>{columns.length ? '再选一篇，就能开始对照' : '把论文放在一起看'}</h3>
+              <p>选择 2–4 篇论文，并排梳理研究设计、实验配置与结果。<br />每个字段的页码都能带你回到原文。</p>
+              <div className="compare-dimensions"><span>对照涵盖</span><div>{GROUPS.map((group) => <span key={group.id}>{group.label}</span>)}</div></div>
+              <small>已有的实验配置会直接载入，未抽取的论文可在表格中生成。</small>
+            </section>
           ) : (
             <div className="compare-scroll">
-              <table className="compare-table">
+              <table className="compare-table" style={{ minWidth: `${164 + columns.length * 290}px` }}>
                 <thead>
                   <tr>
                     <th scope="col">维度</th>
@@ -223,7 +303,9 @@ export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocume
                           >
                             {doc.title || doc.key}
                           </button>
-                          {phase?.kind === 'ready' ? (
+                          {generating[doc.key] ? (
+                            <span className="compare-chip">后台生成中</span>
+                          ) : phase?.kind === 'ready' ? (
                             <span className="compare-chip ready">已抽取</span>
                           ) : phase?.kind === 'empty' ? (
                             <span className="compare-chip missing">未抽取</span>
@@ -252,7 +334,7 @@ export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocume
                               />
                             ) : phase?.kind === 'empty' ? (
                               <div className="compare-cell-actions">
-                                <span className="compare-none">未抽取</span>
+                                <span className="compare-none">{generating[doc.key] ? '后台生成中' : '未抽取'}</span>
                                 <button
                                   type="button"
                                   disabled={Boolean(generating[doc.key])}
@@ -262,7 +344,10 @@ export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocume
                                 </button>
                               </div>
                             ) : phase?.kind === 'error' ? (
-                              <span className="compare-none text-bad">{phase.message}</span>
+                              <div className="compare-cell-actions">
+                                <span className="compare-none text-bad">{phase.message}</span>
+                                <button type="button" disabled={Boolean(generating[doc.key])} onClick={() => void generate(doc.key)}>{generating[doc.key] || '重试生成配置'}</button>
+                              </div>
                             ) : (
                               <span className="compare-none">读取中…</span>
                             )}
@@ -277,12 +362,12 @@ export function CompareWorkspace({ documents, onBack, onOpenAtPage, onOpenDocume
           )}
 
           {columns.length >= 2 ? (
-            <ul className="compare-disclosure">
+            <details className="compare-help"><summary>数据与引用说明</summary><ul className="compare-disclosure">
               <li>数据来自各篇「精读 · 实验配置」的抽取结果：字段带页码与逐字依据，由服务端校验证据能在原文里找到。</li>
               <li>「未抽取」表示这篇还没生成实验配置，不等于论文没写；「未提及」是抽取结果里明确写下的断言。</li>
               <li>只覆盖实验配置相关的七个维度；方法公式、结果分析与代码复现是另外的精读章节，未并入此表。</li>
               <li>抽取本身可能漏字段：发现缺项请回该篇的「精读 · 实验配置」重新生成。</li>
-            </ul>
+            </ul></details>
           ) : null}
         </div>
       </div>

@@ -10,6 +10,7 @@ import { LatexEditor } from './LatexEditor';
 import { LatexFileTree } from './LatexFileTree';
 import { LatexPdfPreview } from './LatexPdfPreview';
 import { LatexToolbar } from './LatexToolbar';
+import { STORAGE_KEYS } from '../../lib/storage';
 
 /**
  * 打开的项目：左文件树 / 中多 Tab 编辑器 / 右编译产物与诊断。
@@ -42,7 +43,7 @@ export function LatexWorkspace({
   const [paneWeights, setPaneWeights] = useState<[number, number, number]>([0.5, 0.5, 0]);
   const [treeWidth, setTreeWidth] = useState(() => {
     if (typeof window === 'undefined') return 250;
-    const saved = Number(window.localStorage.getItem('readx-latex-tree-width'));
+    const saved = Number(window.localStorage.getItem(STORAGE_KEYS.latexTreeWidth));
     return Number.isFinite(saved) && saved >= 180 ? Math.min(saved, 900) : 250;
   });
   const panesRef = useRef<HTMLDivElement>(null);
@@ -96,7 +97,7 @@ export function LatexWorkspace({
   const stopResize = useCallback(() => {
     if (treeResizeGesture.current) {
       treeResizeGesture.current = null;
-      window.localStorage.setItem('readx-latex-tree-width', String(treeWidth));
+      window.localStorage.setItem(STORAGE_KEYS.latexTreeWidth, String(treeWidth));
     }
     resizeGesture.current = null;
     document.body.style.removeProperty('cursor');
@@ -505,7 +506,7 @@ export function LatexWorkspace({
               event.preventDefault();
               setTreeWidth((width) => {
                 const nextWidth = Math.max(180, Math.min(900, width + (event.key === 'ArrowRight' ? 18 : -18)));
-                window.localStorage.setItem('readx-latex-tree-width', String(nextWidth));
+                window.localStorage.setItem(STORAGE_KEYS.latexTreeWidth, String(nextWidth));
                 return nextWidth;
               });
             }

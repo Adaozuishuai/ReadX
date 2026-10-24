@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, type AISettings, type CodexModel, type OCRSettings } from '../api/client';
 import { effortLabel, reasoningOptionsForSelection } from './AIModelControls';
 import { ProviderLogo } from './providerLogos';
+import { AppDialog } from './AppDialog';
 
 /**
  * 服务商预设：点一下即填好「渠道 + 地址 + 建议模型」，仍然只落一份配置。
@@ -60,7 +61,6 @@ function presetOf(provider: string, baseURL: string): ProviderPreset | undefined
 type TestState = 'idle' | 'testing' | 'ok' | 'fail';
 
 export function AISettingsDialog({ onClose }: { onClose: () => void }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [settings, setSettings] = useState<AISettings | null>(null);
   const [ocrSettings, setOCRSettings] = useState<OCRSettings | null>(null);
   const [ocrToken, setOCRToken] = useState('');
@@ -129,7 +129,6 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   const activeName = customMode ? '自定义服务商' : (active?.name ?? (cli ? provider.toUpperCase() : null));
 
   useEffect(() => {
-    dialog.current?.showModal();
     let alive = true;
     void api
       .settings()
@@ -239,7 +238,6 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
       setOCRToken('');
       setClearOCRToken(false);
       setOCRNotice(value.configured ? 'PaddleOCR 设置已保存在本机。' : 'PaddleOCR 令牌已清除。');
-      window.dispatchEvent(new CustomEvent('cbct-ocr-settings', { detail: { settings: value } }));
     } catch (cause) {
       setOCRNotice(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -322,9 +320,10 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   }, [workBuddyLoginPending]);
 
   return (
-    <dialog
-      className="app-dialog ai-settings"
-      ref={dialog}
+    <AppDialog
+      open
+      onClose={onClose}
+      className="ai-settings"
       onCancel={(event) => {
         // 模型下拉展开时按 Esc 只想收起下拉：原生 dialog 的 cancel 会顺带关掉整个
         // 设置弹窗，把还没保存的地址/Key/模型输入一起丢掉。
@@ -657,10 +656,10 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
       </div>
 
       <footer className="ai-settings-foot">
-        <button type="button" className="ai-save-button" disabled={busy || !settings} onClick={() => void save()}>
-          保存设置
+        <button type="button" className="ai-save-button" disabled={busy || !settings} onClick={() => void save().then((saved) => { if (saved) onClose(); })}>
+          {busy ? '保存中…' : '保存并关闭'}
         </button>
       </footer>
-    </dialog>
+    </AppDialog>
   );
 }

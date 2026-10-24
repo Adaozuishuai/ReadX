@@ -1,346 +1,163 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { api } from '../../api/client';
-import { formatLabel } from './sources/types';
-import type { WebBookSource, WebSearchResult } from './sources/web-types';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { bookSources, mayDownload, readableFormats, type BookSource, type SourceBook, type BookSearchResult } from '../../api/bookSources';
+import { useBookDownload } from '../../hooks/useBookDownload';
 import { WebSourceFinder } from './WebSourceFinder';
+import { ZLibraryConnection } from './ZLibraryConnection';
+import { SourceBookCover } from './SourceBookCover';
+import { ApiError } from '../../api/client';
+import type { DownloadedBookMetadata, SlackItem } from './types';
+import type { WebBookSource, WebSearchResult } from './sources/web-types';
 
-const GUTENDEX = 'https://gutendex.com/books/';
+const failure = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
+const bytes = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
+const sourceLink = (raw?: string) => { try { const u = new URL(raw ?? ''); return u.protocol === 'https:' ? u.href : undefined; } catch { return undefined; } };
 
-type FinderSource = 'gutenberg' | 'web';
-
-interface GutendexBook {
-  id: number;
-  title: string;
-  authors: { name: string }[];
-  summaries?: string[];
-  languages: string[];
-  download_count: number;
-  formats: Record<string, string>;
-}
-
-interface GutendexResponse {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: GutendexBook[];
-}
-
-interface FinderBook {
-  key: string;
-  source: 'gutenberg';
-  sourceLabel: string;
-  title: string;
-  author: string;
-  info: string;
-  format: string;
-  size: string;
-  cover: string;
-  detailUrl: string;
-  description: string;
-  gutenberg?: GutendexBook;
-}
-
-const SOURCE_TABS: { id: FinderSource; label: string; hint: string }[] = [
-  { id: 'gutenberg', label: 'Project Gutenberg', hint: '公版书' },
-  { id: 'web', label: '中文连载', hint: 'Legado 书源' },
-];
-
-const SOURCE_INTRO: Record<FinderSource, string> = {
-  gutenberg: '搜索 Gutenberg 的英文公版书。下载 EPUB 或 TXT 后会自动放进 ReadX 本地书架。',
-  web: '导入 Legado 书源 JSON，搜索中文连载小说。章节按需抓取并缓存，目录可随时更新。',
-};
-
-function bookFile(book: GutendexBook): { url: string; extension: 'epub' | 'txt' } | null {
-  const epub = book.formats['application/epub+zip'];
-  if (epub) return { url: epub, extension: 'epub' };
-  const text = Object.entries(book.formats).find(([type]) => type.startsWith('text/plain'))?.[1];
-  return text ? { url: text, extension: 'txt' } : null;
-}
-
-function checkedBookURL(value: string): URL {
-  const url = new URL(value);
-  if (url.protocol !== 'https:' || !['www.gutenberg.org', 'gutenberg.org'].includes(url.hostname)) {
-    throw new Error('下载地址不是 Project Gutenberg 的安全地址');
-  }
-  return url;
-}
-
-function gutenbergFinderBook(book: GutendexBook): FinderBook {
-  const file = bookFile(book);
-  return {
-    key: `gutenberg:${book.id}`,
-    source: 'gutenberg',
-    sourceLabel: 'Project Gutenberg',
-    title: book.title,
-    author: book.authors.map((author) => author.name).join(', '),
-    info: `${book.download_count.toLocaleString()} 次下载 · ${book.languages.join(', ').toUpperCase()}`,
-    format: file?.extension ?? '',
-    size: '',
-    cover: book.formats['image/jpeg'] ?? '',
-    detailUrl: `https://www.gutenberg.org/ebooks/${book.id}`,
-    description: book.summaries?.[0] ?? '',
-    gutenberg: book,
-  };
-}
-
-function BookCover({ book }: { book: FinderBook }) {
-  if (!book.cover) {
-    return <div className="slack-finder__cover"><span>READ</span></div>;
-  }
-  return (
-    <div className="slack-finder__cover">
-      <img src={book.cover} alt="" loading="lazy" />
-    </div>
-  );
-}
-
-export function BookFinder({
-  onImport,
-  onImportWebNovel,
-}: {
-  onImport: (file: File, metadata: { title: string; author: string; source?: string }) => Promise<void>;
+export function BookFinder({ onImport, onImportWebNovel, onUpload, items, onOpen }: {
+  onImport: (file: File, metadata: DownloadedBookMetadata) => Promise<void>;
   onImportWebNovel: (source: WebBookSource, book: WebSearchResult) => Promise<void>;
+  onUpload: () => void; items: SlackItem[]; onOpen: (id: string) => void;
 }) {
-  const [source, setSource] = useState<FinderSource>('gutenberg');
+  const [sources, setSources] = useState<BookSource[]>([]);
+  const [source, setSource] = useState('gutenberg');
   const [query, setQuery] = useState('');
-  const [requestURL, setRequestURL] = useState('');
-  const [result, setResult] = useState<GutendexResponse | null>(null);
-  const [gutenbergLoading, setGutenbergLoading] = useState(false);
+  const [searched, setSearched] = useState('');
+  const [pageCursor, setPageCursor] = useState('');
+  const [pageHistory, setPageHistory] = useState<string[]>([]);
+  const [result, setResult] = useState<BookSearchResult | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [downloading, setDownloading] = useState<string | null>(null);
-  const [licenseOpen, setLicenseOpen] = useState(false);
-
+  const [detail, setDetail] = useState<SourceBook | null>(null);
+  const [format, setFormat] = useState('');
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
+  const [connectionRevision, setConnectionRevision] = useState(0);
+  const [settings, setSettings] = useState(false);
+  const searchRun = useRef<AbortController | null>(null);
+  const detailRun = useRef<AbortController | null>(null);
+  const current = sources.find(item => item.providerId === source);
+  const refreshSources = () => {
+    setConnectionRevision(value => value + 1);
+    searchRun.current?.abort(); detailRun.current?.abort(); setResult(null); setDetail(null); setLoading(false);
+    void bookSources.list().then(data => setSources(data.sources)).catch(cause => setError(failure(cause)));
+  };
+  const download = useBookDownload(async (file, book) => {
+    await onImport(file, {
+      title: book.title, author: book.authors.join(', '),
+      source: sources.find(item => item.providerId === book.providerId)?.name ?? book.providerId,
+      providerId: book.providerId, providerBookId: book.id, sourceUrl: book.sourceUrl,
+      sourceLicense: book.rights.basis,
+    });
+  });
   useEffect(() => {
-    if (source !== 'gutenberg' || !requestURL) return;
     const controller = new AbortController();
-    let active = true;
-    setGutenbergLoading(true);
-    setError('');
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]);
-    void api.searchFreeBooks(requestURL, signal)
-      .then((data) => {
-        if (active) setResult(data);
-      })
-      .catch((cause: unknown) => {
-        if (!active || controller.signal.aborted) return;
-        setError(cause instanceof Error ? cause.message : String(cause));
-        setResult(null);
-      })
-      .finally(() => {
-        if (active) setGutenbergLoading(false);
-      });
-    return () => {
-      active = false;
-      controller.abort();
+    void bookSources.list(controller.signal).then(data => setSources(data.sources)).catch(cause => { if (!controller.signal.aborted) setError(failure(cause)); });
+    return () => { controller.abort(); searchRun.current?.abort(); detailRun.current?.abort(); };
+  }, []);
+  useEffect(() => {
+    if (!detail && !settings) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault(); event.stopPropagation();
+      if (!download.busy) { setDetail(null); setSettings(false); }
     };
-  }, [requestURL, source]);
-
-  const switchSource = (next: FinderSource) => {
-    if (next === source) return;
-    setSource(next);
-    setError('');
-    setRequestURL('');
-    setResult(null);
-    setGutenbergLoading(false);
+    window.addEventListener('keydown', close, true);
+    return () => window.removeEventListener('keydown', close, true);
+  }, [detail, settings, download.busy]);
+  const switchSource = (next: string) => {
+    searchRun.current?.abort(); detailRun.current?.abort(); setSource(next); setError(''); setResult(null); setSearched(''); setPageCursor(''); setPageHistory([]); setLoading(false); setDetail(null);
   };
-
-  const search = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const value = query.trim();
-    if (!value) {
-      setError('输入书名或作者再搜索');
-      return;
-    }
-    if (source === 'gutenberg') {
-      setRequestURL(`${GUTENDEX}?search=${encodeURIComponent(value)}&languages=en`);
-      return;
-    }
-  };
-
-  const download = async (book: FinderBook) => {
-    if (downloading !== null) return;
-    setDownloading(book.key);
-    setError('');
+  const search = async (cursor = '', useSearched = false) => {
+    const q = cursor || useSearched ? searched : query.trim();
+    if (!q) { setError('请输入书名或作者'); return; }
+    searchRun.current?.abort(); const controller = new AbortController(); searchRun.current = controller;
+    setLoading(true); setError(''); setSearched(q);
     try {
-      const sourceBook = book.gutenberg;
-      if (!sourceBook) throw new Error('书目信息缺失');
-      const fileInfo = bookFile(sourceBook);
-      if (!fileInfo) throw new Error('这本书没有可导入的 EPUB 或 TXT 格式');
-      const url = checkedBookURL(fileInfo.url);
-      const blob = await api.downloadFreeBook(url.toString(), AbortSignal.timeout(120_000));
-      if (!blob.size) throw new Error('下载文件为空');
-      const safeTitle = sourceBook.title.replace(/[\\/:*?"<>|]/g, '_').trim() || `gutenberg-${sourceBook.id}`;
-      const file = new File([blob], `${safeTitle}.${fileInfo.extension}`, {
-        type: fileInfo.extension === 'epub' ? 'application/epub+zip' : 'text/plain;charset=utf-8',
-      });
-      await onImport(file, {
-        title: sourceBook.title,
-        author: sourceBook.authors.map((author) => author.name).join(', '),
-        source: 'Project Gutenberg',
-      });
-
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setDownloading(null);
+      const data = await bookSources.search(source, q, cursor, controller.signal);
+      if (!controller.signal.aborted) {
+        setResult(data); setPageCursor(cursor);
+        setPageHistory(history => !cursor ? [] : cursor === pageCursor ? history : history.at(-1) === cursor ? history.slice(0, -1) : [...history, pageCursor]);
+      }
     }
+    catch (cause) { if (!controller.signal.aborted) {
+      setError(failure(cause)); setResult(null);
+      if (source === 'zlibrary' && cause instanceof ApiError && cause.status === 401) refreshSources();
+    } }
+    finally { if (!controller.signal.aborted) setLoading(false); }
   };
-
-  const renderBook = (book: FinderBook) => {
-    const unavailable = !book.format;
-    return (
-      <article className="slack-finder__card" key={book.key}>
-        <BookCover book={book} />
-        <div className="slack-finder__details">
-          <div className="slack-finder__badges">
-            <span className={`slack-finder__source-badge slack-finder__source-badge--${book.source}`}>
-              {book.sourceLabel}
-            </span>
-            {book.format ? (
-              <span className={`slack-finder__format${unavailable ? ' unsupported' : ''}`}>
-                {formatLabel(book.format)}
-              </span>
-            ) : null}
-            {book.size ? <span className="slack-finder__size">{book.size}</span> : null}
-          </div>
-          <h2>{book.title}</h2>
-          <p className="slack-finder__author">{book.author || '作者未知'}</p>
-          {book.info ? <p className="slack-finder__meta">{book.info}</p> : null}
-          {book.description ? <p className="slack-finder__description">{book.description}</p> : null}
-          <div className="slack-finder__actions">
-            <button
-              type="button"
-              className="slack-primary slack-finder__download"
-              disabled={downloading !== null || unavailable}
-              onClick={() => void download(book)}
-            >
-              {downloading === book.key
-                ? '下载并导入中…'
-                : unavailable
-                  ? book.format
-                    ? `${formatLabel(book.format)} 暂不支持`
-                    : '没有可用格式'
-                  : book.format
-                    ? `下载 ${formatLabel(book.format)} 并加入书架`
-                    : '下载并加入书架'}
-            </button>
-            <a className="slack-finder__open" href={book.detailUrl} target="_blank" rel="noreferrer">
-              在网页中打开 ↗
-            </a>
-          </div>
-        </div>
-      </article>
-    );
+  const showDetail = async (book: SourceBook) => {
+    setRightsConfirmed(false);
+    download.reset();
+    detailRun.current?.abort(); const controller = new AbortController(); detailRun.current = controller; setError(''); setLoading(true);
+    try { const data = await bookSources.detail(book.providerId, book.id, controller.signal); if (!controller.signal.aborted) { setDetail(data); setFormat(readableFormats(data)[0] ?? ''); } }
+    catch (cause) { if (!controller.signal.aborted) {
+      setError(failure(cause));
+      if (book.providerId === 'zlibrary' && cause instanceof ApiError && cause.status === 401) refreshSources();
+    } }
+    finally { if (!controller.signal.aborted) setLoading(false); }
   };
-
-  const busy = source === 'gutenberg' && gutenbergLoading;
-
-  return (
-    <main className="slack-finder">
-      <section className="slack-finder__hero">
-        <p className="slack-eyebrow">BOOK SOURCES · 多源检索</p>
-        <h1>找本书读</h1>
-        <p>{SOURCE_INTRO[source]}</p>
-
-        <div className="slack-finder__sources" role="tablist" aria-label="书源">
-          {SOURCE_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={source === tab.id}
-              className={source === tab.id ? 'active' : ''}
-              onClick={() => switchSource(tab.id)}
-            >
-              <strong>{tab.label}</strong>
-              <small>{tab.hint}</small>
-            </button>
-          ))}
-        </div>
-
-        {source === 'web' ? null : (
-          <form className="slack-finder__search" onSubmit={search}>
-            <span aria-hidden="true">⌕</span>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={
-                '搜索书名或作者，例如 Pride and Prejudice'
-              }
-              aria-label="搜索书籍"
-            />
-            <button type="submit" disabled={busy}>{busy ? '搜索中…' : '搜索'}</button>
-          </form>
-        )}
-      </section>
-
-      {source === 'web' ? (
-        <WebSourceFinder onImport={onImportWebNovel} />
-      ) : (
-        <>
-          {error ? <p className="slack-finder__error" role="alert">{error}</p> : null}
-          {busy ? <p className="slack-loading" role="status">正在查询书目…</p> : null}
-
-          {source === 'gutenberg' ? (
-        !busy && result ? (
-          <>
-            <div className="slack-finder__summary">
-              <strong>{result.count.toLocaleString()} 本书</strong>
-              <span>仅显示含 EPUB 或 TXT 下载格式的条目</span>
-            </div>
-            {result.results.length ? (
-              <div className="slack-finder__grid">
-                {result.results.map((book) => renderBook(gutenbergFinderBook(book)))}
-              </div>
-            ) : (
-              <div className="slack-empty slack-empty--small"><h2>没有找到可导入的书</h2><p>试试更短的书名或作者名。</p></div>
-            )}
-            {result.previous || result.next ? (
-              <nav className="slack-finder__pages" aria-label="书目分页">
-                <button type="button" disabled={!result.previous || busy} onClick={() => result.previous && setRequestURL(result.previous)}>上一页</button>
-                <button type="button" disabled={!result.next || busy} onClick={() => result.next && setRequestURL(result.next)}>下一页</button>
-              </nav>
-            ) : null}
-          </>
-        ) : null
-      ) : null}
-
-          {source === 'gutenberg' && !requestURL && !gutenbergLoading ? (
-            <div className="slack-finder__note">
-              <span aria-hidden="true">✦</span>
-              <p>由 Project Gutenberg 提供书目和文件。公版状态因地区而异，请按所在地规则使用。</p>
-              <a href="https://www.gutenberg.org/" target="_blank" rel="noreferrer">访问 Project Gutenberg ↗</a>
-            </div>
-          ) : null}
-        </>
-      )}
-
-      <div className="slack-finder__legal">
-        <button type="button" onClick={() => setLicenseOpen(true)}>许可信息</button>
+  const existing = detail && items.find(item => item.providerId === detail.providerId && item.providerBookId === detail.id);
+  const submit = (event: FormEvent) => { event.preventDefault(); void search(); };
+  return <main className="slack-finder">
+    <section className="slack-finder__hero">
+      <div className="book-source-heading"><h1>找本书读</h1><button type="button" onClick={() => setSettings(true)}>书源设置</button></div>
+      <div className="slack-finder__sources" role="tablist" aria-label="书源">
+        {sources.map(item => <button type="button" role="tab" aria-selected={source === item.providerId} className={source === item.providerId ? 'active' : ''} key={item.providerId} disabled={download.busy} onClick={() => switchSource(item.providerId)}>
+          <strong>{item.name}</strong><small>{item.enabled ? (item.capabilities.requiresAuth ? '账号书源' : '可检索') : '未启用'}</small>
+        </button>)}
+        <button type="button" role="tab" aria-selected={source === 'web'} className={source === 'web' ? 'active' : ''} disabled={download.busy} onClick={() => switchSource('web')}><strong>中文连载</strong><small>Legado 书源</small></button>
       </div>
-
-      {licenseOpen ? (
-        <div
-          className="slack-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="slack-license-title"
-          onClick={() => setLicenseOpen(false)}
-        >
-          <div className="slack-modal__card slack-license" onClick={(event) => event.stopPropagation()}>
-            <h2 id="slack-license-title">许可与源码</h2>
-            <p>
-              ReadX 按 MIT 许可发布。本应用内的书源检索、解析和导入适配器均为 ReadX 独立实现。许可正文见工程根目录的 <code>LICENSE</code>。
-            </p>
-            <p>
-              源码随 ReadX 源码工程提供；已安装的应用包不包含完整工程。
-            </p>
-            <div className="slack-modal__actions">
-              <button type="button" onClick={() => setLicenseOpen(false)}>关闭</button>
+      {source !== 'web' && <p>{current?.reason ?? '正在读取书源…'}</p>}
+      {current?.enabled && current.capabilities.search && <form className="slack-finder__search" onSubmit={submit}>
+        <span aria-hidden="true">⌕</span><input aria-label="搜索书籍" placeholder="搜索书名或作者" maxLength={120} value={query} onChange={event => setQuery(event.target.value)} />
+        <button type="submit" disabled={loading || download.busy}>{loading ? '查询中…' : '搜索'}</button>
+      </form>}
+    </section>
+    {error && <p className="slack-finder__error" role="alert">{error}<button type="button" onClick={() => void search()}>重试搜索</button></p>}
+    {source === 'zlibrary' && !settings && <ZLibraryConnection onChange={refreshSources} refreshKey={connectionRevision} />}
+    {source === 'web' ? <WebSourceFinder onImport={onImportWebNovel} /> : <>
+      {loading && <p role="status" className="slack-loading">正在查询书目…</p>}
+      {current && !current.enabled && <section className="slack-finder__note"><p>这个书源暂时不可用，可切换到其他书源；本地文件请回到书架导入。</p></section>}
+      {!loading && result && <>
+        <p className="slack-finder__summary">本页 {result.books.length} 本书 · 选择书籍查看格式与来源许可</p>
+        {result.books.length ? <div className="slack-finder__grid">{result.books.map(book => {
+          const format = book.formats.find(value => /epub|txt/i.test(value));
+          const openDetail = () => { if (!download.busy) void showDetail(book); };
+          return <article key={`${book.providerId}:${book.id}`} className="slack-finder__card" role="button" tabIndex={0}
+            aria-label={`查看《${book.title}》详情与格式`}
+            onClick={openDetail}
+            onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDetail(); } }}>
+            <SourceBookCover book={book} />
+            <div className="slack-finder__details"><div className="slack-finder__badges">
+              <span className="slack-finder__source-badge">{current?.name}</span>
+              {format ? <span className="slack-finder__format">{format.toUpperCase()}</span> : null}
             </div>
-          </div>
-        </div>
-      ) : null}
-    </main>
-  );
+              <h2>{book.title}</h2><p className="slack-finder__author">{book.authors.join(', ') || '作者未知'}</p><p className="slack-finder__description">{book.description}</p>
+              <span className="slack-finder__open">查看详情与格式 →</span>
+            </div>
+          </article>;
+        })}</div> : <div className="slack-empty slack-empty--small"><h2>没有找到书籍</h2><p>试试更短的书名或作者名。</p></div>}
+        <nav className="slack-finder__pages" aria-label="书目分页"><button type="button" disabled={!pageHistory.length || loading || download.busy} onClick={() => void search(pageHistory.at(-1), true)}>上一页</button><span>第 {pageHistory.length + 1} 页</span><button type="button" disabled={!result.nextCursor || loading || download.busy} onClick={() => void search(result.nextCursor)}>下一页</button></nav>
+      </>}
+    </>}
+    {settings && <div className="slack-modal" role="dialog" aria-modal="true" aria-labelledby="source-settings-title"><div className="slack-modal__card book-source-dialog"><h2 id="source-settings-title">书源设置</h2>
+      <ZLibraryConnection onChange={refreshSources} refreshKey={connectionRevision} />
+      {sources.map(item => <section key={item.providerId}><strong>{item.name} · {item.enabled ? '可用' : '未启用'}</strong><p>{item.reason}</p><small>搜索 {item.capabilities.search ? '✓' : '—'} · 详情 {item.capabilities.detail ? '✓' : '—'} · 下载 {item.capabilities.download ? '✓' : '—'}</small></section>)}
+      <p>OPDS 当前使用已登记的 Gutenberg 官方目录。新增目录需要服务端适配，不在浏览器保存站点凭据。</p><button type="button" onClick={() => setSettings(false)}>关闭</button>
+    </div></div>}
+    {detail && <div className="slack-modal" role="dialog" aria-modal="true" aria-labelledby="book-detail-title"><div className="slack-modal__card book-source-dialog">
+      <h2 id="book-detail-title">{detail.title}</h2><p>{detail.authors.join(', ')}</p><p>{detail.description}</p>
+      <dl><dt>来源</dt><dd>{current?.name}</dd><dt>语言</dt><dd>{detail.language || '未提供'}</dd><dt>书籍编号</dt><dd>{detail.id}</dd><dt>权利状态</dt><dd>{detail.rights.access === 'allowed' ? '允许获取' : detail.rights.access === 'denied' ? '不允许获取' : '尚未明确'} · {detail.rights.reason}</dd></dl>
+      {readableFormats(detail).length ? <label>文件格式 <select aria-label="下载格式" value={format} disabled={download.busy} onChange={event => setFormat(event.target.value)}>{readableFormats(detail).map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label> : <p>没有可导入的 EPUB/TXT。PDF 请从科研书库导入。</p>}
+      {detail.requiresRightsConfirmation && <label className="zlibrary-rights-confirm"><input type="checkbox" checked={rightsConfirmed} disabled={download.busy} onChange={event => setRightsConfirmed(event.target.checked)} />我有权下载、保存并阅读这本书</label>}
+      {existing && <p>此书已在书架。可以打开已有版本；再次导入会保留旧版本及阅读进度，相同文件会跳过。</p>}
+      {download.busy && <div className="book-download-progress" role="status"><p>{download.importing ? '校验完成，正在导入本地书架…' : download.task?.state === 'queued' ? '等待下载…' : '正在下载并校验…'}</p><progress max={download.task?.totalBytes || undefined} value={download.task?.totalBytes ? download.task.receivedBytes : undefined} /><span>{bytes(download.task?.receivedBytes ?? 0)}{download.task?.totalBytes ? ` / ${bytes(download.task.totalBytes)}` : ''}</span><button type="button" disabled={download.importing} onClick={download.cancel}>取消下载</button></div>}
+      {download.error && <p role="alert" className="slack-finder__error">{download.error}</p>}
+      <div className="slack-modal__actions">
+        {existing && <button type="button" disabled={download.busy} onClick={() => onOpen(existing.id)}>打开已有版本</button>}
+        <button type="button" className="slack-primary" disabled={download.busy || !mayDownload(detail, rightsConfirmed) || !format} onClick={() => void download.start(detail, format, rightsConfirmed)}>{existing ? '保留旧版并导入' : download.error ? '重试下载并阅读' : '下载并阅读'}</button>
+        {sourceLink(detail.sourceUrl) && <a href={sourceLink(detail.sourceUrl)} target="_blank" rel="noreferrer">查看来源 ↗</a>}
+        {!mayDownload(detail) && <button type="button" onClick={onUpload}>导入本地文件</button>}
+        <button type="button" disabled={download.busy} onClick={() => { detailRun.current?.abort(); setDetail(null); }}>关闭</button>
+      </div>
+    </div></div>}
+  </main>;
 }

@@ -152,7 +152,13 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 				}
 				count := len(metadata.Translations)
 				if count != lastCount {
-					s.jobStage(jobKey, "translate", "running", fmt.Sprintf("后台翻译中，%d 段译文已可阅读", count), count, translationUnits)
+					s.updateImportJob(jobKey, func(job *DocumentJob) {
+						stage := job.stage("translate")
+						if stage != nil {
+							stage.Message = fmt.Sprintf("后台翻译中，已缓存 %d 段可阅读译文", count)
+							stage.ResultCount, stage.ResultUnit = count, "段"
+						}
+					})
 					lastCount = count
 				}
 				if renderedCount > 0 {
@@ -190,7 +196,9 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 				fail(renderErr)
 				return
 			}
-			s.jobStage(jobKey, "translate", "done", fmt.Sprintf("全文翻译完成，共 %d 段", len(metadata.Translations)), len(metadata.Translations), translationUnits)
+			s.updateImportJob(jobKey, func(job *DocumentJob) {
+				job.completeLeeTranslation(len(translations), len(metadata.Translations))
+			})
 			if renderedCount == len(pages) {
 				pagePaths := make([]string, len(pages))
 				for index := range pages {
@@ -214,7 +222,7 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 				}
 			}
 			rendered := filepath.Join(jobRoot, "rendered", "readx-translated.pdf")
-			if err := s.adoptLeeTranslatedPDF(documentKey, rendered, len(pages)); err != nil {
+			if err := s.adoptLeeTranslatedPDF(jobKey, documentKey, rendered, len(pages)); err != nil {
 				fail(err)
 				return
 			}
@@ -229,6 +237,16 @@ func (s *Server) runLeeTranslationInBackground(ctx context.Context, jobKey, docu
 			return
 		case <-time.After(1200 * time.Millisecond):
 		}
+	}
+}
+
+// Lee output blocks and ReadX's matched paragraph cache have different counts.
+// Final progress uses output blocks; cached paragraphs remain a separate result.
+func (job *DocumentJob) completeLeeTranslation(blocks, cached int) {
+	job.setStage("translate", "done", fmt.Sprintf("全文翻译完成，已生成 %d 块译文，缓存 %d 段", blocks, cached), blocks, blocks)
+	if stage := job.stage("translate"); stage != nil {
+		stage.Unit, stage.Substage = "块", ""
+		stage.ResultCount, stage.ResultUnit = cached, "段"
 	}
 }
 

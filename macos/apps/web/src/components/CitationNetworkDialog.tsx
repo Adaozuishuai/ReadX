@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type CitationNetworkResponse } from '../api/client';
+import { AppDialog } from './AppDialog';
 
 /**
  * 库内引用关系。
@@ -18,17 +19,12 @@ interface Props {
 }
 
 export function CitationNetworkDialog({ documentKey, onOpenDocument, onClose }: Props) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [data, setData] = useState<CitationNetworkResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   // 「重新获取」把 refreshRequested 置真并换一次 token：token 只是用来重跑下面这个 effect。
   const refreshRequested = useRef(false);
   const [refreshToken, setRefreshToken] = useState(0);
-
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -56,14 +52,7 @@ export function CitationNetworkDialog({ documentKey, onOpenDocument, onClose }: 
   const citations = (data?.inLibrary ?? []).filter((edge) => edge.relation === 'citation');
 
   return (
-    <dialog
-      className="app-dialog citation-network-dialog"
-      ref={dialog}
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-    >
+    <AppDialog open onClose={onClose} className="citation-network-dialog">
       <header>
         <div>
           <h2>引用关系</h2>
@@ -182,6 +171,6 @@ export function CitationNetworkDialog({ documentKey, onOpenDocument, onClose }: 
         </button>
         <button type="button" onClick={onClose}>关闭</button>
       </footer>
-    </dialog>
+    </AppDialog>
   );
 }

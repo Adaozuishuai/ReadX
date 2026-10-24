@@ -11,7 +11,7 @@ const trees = ['apps/server', 'apps/web', 'apps/desktop/src', 'apps/desktop/test
 const files = ['apps/desktop/tsconfig.json', 'config.example.json', 'package-lock.json',
   ...['build-server.mjs', 'dev.mjs', 'ensure-built.mjs', 'gen-fixtures.mjs', 'go.mjs',
     'prepare-pdf.mjs', 'render-translated-pdf.cjs', 'server-runtime.mjs', 'import-smoke.cjs', 'update-smoke.jsx', 'latex-state.test.cjs',
-    'desktop-smoke.cjs', 'run-desktop-smoke.mjs', 'import-smoke.jsx', 'platform-runtime.mjs', 'runtime-check.mjs'].map(name => `scripts/${name}`)];
+    'desktop-smoke.cjs', 'run-desktop-smoke.mjs', 'import-smoke.jsx', 'platform-runtime.mjs', 'runtime-check.mjs', 'book-sources.test.cjs'].map(name => `scripts/${name}`)];
 const differences = [];
 let checked = 0;
 
@@ -20,7 +20,7 @@ function list(dir, prefix = '') {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
     if (entry.name === 'data' && dir.endsWith(path.join('vendor', 'retainpdf'))) return [];
     if ((entry.name === 'bin' && dir.endsWith(path.join('apps', 'server'))) ||
-      (entry.name === 'dist' && ['apps/web', 'apps/desktop', 'packages/shared'].some(part => dir.endsWith(part))) ||
+      (entry.name === 'dist' && ['apps/web', 'apps/desktop', 'packages/shared'].some(part => dir.endsWith(path.join(...part.split('/'))))) ||
       (entry.name === 'pdfjs' && dir.endsWith(path.join('apps', 'web', 'public')))) return [];
     if (ignored.has(entry.name) || /(?:\.py[co]|\.log|\.db(?:-shm|-wal)?|dev-info\.json(?:\.tmp)?)$/.test(entry.name)) return [];
     const relative = path.join(prefix, entry.name);
@@ -55,7 +55,7 @@ for (const relative of ['package.json', 'apps/desktop/package.json']) {
   const targetFile = path.join(root, 'macos', relative);
   const target = JSON.parse(fs.readFileSync(targetFile, 'utf8'));
   let changed = false;
-  for (const key of ['name', 'version', 'dependencies', 'devDependencies', 'engines', 'workspaces', 'allowScripts']) {
+  for (const key of ['name', 'version', 'author', 'dependencies', 'devDependencies', 'engines', 'workspaces', 'allowScripts']) {
     if (JSON.stringify(source[key]) === JSON.stringify(target[key])) continue;
     differences.push(`${relative}:${key}`);
     changed = true;

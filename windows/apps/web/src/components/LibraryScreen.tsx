@@ -1,5 +1,5 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
 import type { DesktopUpdateStatus } from '@cbct/shared';
 import { statusLabel } from '@cbct/shared';
@@ -16,9 +16,13 @@ import { CitationExportDialog } from './CitationExportDialog';
 import { DailyRecommendations } from './DailyRecommendations';
 import { ResizeHandle } from './ResizeHandle';
 import { WorkspaceIcon, type WorkspaceIconName } from './WorkspaceIcon';
+import { STORAGE_KEYS } from '../lib/storage';
+import { AppDialog } from './AppDialog';
 
 type Layout = 'grid' | 'list' | 'table';
 type SortKey = 'title' | 'year' | 'status';
+type TableColumn = 'title' | 'author' | 'year' | 'status' | 'shelves';
+type GridDensity = 'comfortable' | 'compact';
 
 const RELEASE_NOTE_TAGS = new Set(['p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'div', 'span', 'ul', 'ol', 'li', 'strong', 'b', 'em', 'i', 'del', 's', 'code', 'pre', 'blockquote', 'a']);
 const RELEASE_NOTE_DROP_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'svg', 'math']);
@@ -66,7 +70,7 @@ export function ReleaseNotesContent({ value }: { value: string }) {
 }
 
 /** 每日推荐的独立侧栏：开合与宽度都按用户上次的选择保存。 */
-const DAILY_STORAGE = 'cbct-v2-library-daily';
+const DAILY_STORAGE = STORAGE_KEYS.libraryDaily;
 const DAILY_DEFAULT_WIDTH = 316;
 const DAILY_MIN_WIDTH = 260;
 const DAILY_MAX_WIDTH = 720;
@@ -88,7 +92,42 @@ function readDailyPanel(): { open: boolean; width: number } {
   }
 }
 
-const LAYOUT_STORAGE = 'cbct-v2-library-layout';
+const LAYOUT_STORAGE = STORAGE_KEYS.libraryLayout;
+const GRID_DENSITY_STORAGE = STORAGE_KEYS.libraryGridDensity;
+const TABLE_STORAGE = STORAGE_KEYS.libraryTable;
+const SIDEBAR_WIDTH_STORAGE = STORAGE_KEYS.librarySidebarWidth;
+const DEFAULT_SIDEBAR_WIDTH = 238;
+const MIN_SIDEBAR_WIDTH = 190;
+const MAX_SIDEBAR_WIDTH = 420;
+const DEFAULT_TABLE_COLUMNS: TableColumn[] = ['title', 'author', 'year', 'status', 'shelves'];
+
+function readGridDensity(): GridDensity {
+  try { return localStorage.getItem(GRID_DENSITY_STORAGE) === 'compact' ? 'compact' : 'comfortable'; }
+  catch { return 'comfortable'; }
+}
+
+function readTablePreferences(): { sort: { key: SortKey; reverse: boolean }; columns: TableColumn[] } {
+  try {
+    const value = JSON.parse(localStorage.getItem(TABLE_STORAGE) ?? 'null') as { sort?: { key?: unknown; reverse?: unknown }; columns?: unknown } | null;
+    const key = value?.sort?.key;
+    const sort: { key: SortKey; reverse: boolean } = {
+      key: key === 'year' || key === 'status' ? key : 'title',
+      reverse: value?.sort?.reverse === true,
+    };
+    const savedColumns = value?.columns;
+    const columns = Array.isArray(savedColumns)
+      ? DEFAULT_TABLE_COLUMNS.filter((column) => savedColumns.includes(column))
+      : DEFAULT_TABLE_COLUMNS;
+    return { sort, columns: columns.length ? columns : ['title'] };
+  } catch { return { sort: { key: 'title', reverse: false }, columns: DEFAULT_TABLE_COLUMNS }; }
+}
+
+function readSidebarWidth(): number {
+  try {
+    const width = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE));
+    return Number.isFinite(width) && width > 0 ? Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width)) : DEFAULT_SIDEBAR_WIDTH;
+  } catch { return DEFAULT_SIDEBAR_WIDTH; }
+}
 
 function readLayout(): Layout {
   if (typeof localStorage === 'undefined') return 'grid';
@@ -166,10 +205,13 @@ export function LibraryScreen({
   const [categoryFilter, setCategoryFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
   const [layout, setLayout] = useState<Layout>(readLayout);
-  const [sort, setSort] = useState<{ key: SortKey; reverse: boolean }>({ key: 'title', reverse: false });
+  const [gridDensity, setGridDensity] = useState<GridDensity>(readGridDensity);
+  const [tablePreferences, setTablePreferences] = useState(readTablePreferences);
+  const { sort, columns: tableColumns } = tablePreferences;
   const [managingCategories, setManagingCategories] = useState(false);
   const [duplicates, setDuplicates] = useState<{ primaryKey: string; keys: string[] }[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [dailyOpen, setDailyOpen] = useState(() => readDailyPanel().open);
   const [dailyWidth, setDailyWidth] = useState(() => readDailyPanel().width);
   useEffect(() => {
@@ -181,6 +223,26 @@ export function LibraryScreen({
   const [arxivProgress, setArxivProgress] = useState('');
   const [arxivSummary, setArxivSummary] = useState('');
   const [citationOpen, setCitationOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const closeOnOutside = (event: PointerEvent) => {
+      if (!moreRef.current?.contains(event.target as Node)) setMoreOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setMoreOpen(false);
+      moreButtonRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [moreOpen]);
   // 搜索分两档：题录（本地筛选，标题/作者/会场）与全文（服务端逐页正文匹配）。
   // 全文检索的覆盖面见 coverage：未索引的论文搜不到，必须显示出来。
   const [searchMode, setSearchMode] = useState<'meta' | 'fulltext'>('meta');
@@ -244,6 +306,18 @@ export function LibraryScreen({
       /* 隐私模式写不了：本次会话仍生效。 */
     }
   }, [layout]);
+
+  useEffect(() => {
+    try { localStorage.setItem(GRID_DENSITY_STORAGE, gridDensity); } catch { /* Storage may be disabled. */ }
+  }, [gridDensity]);
+
+  useEffect(() => {
+    try { localStorage.setItem(TABLE_STORAGE, JSON.stringify({ sort, columns: tableColumns })); } catch { /* Storage may be disabled. */ }
+  }, [sort, tableColumns]);
+
+  useEffect(() => {
+    try { localStorage.setItem(SIDEBAR_WIDTH_STORAGE, String(sidebarWidth)); } catch { /* Storage may be disabled. */ }
+  }, [sidebarWidth]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -334,7 +408,14 @@ export function LibraryScreen({
   }, [rawDocuments, meta.items, view, categoryFilter, tagFilter, sort]);
 
   const toggleSort = (key: SortKey) =>
-    setSort((current) => (current.key === key ? { key, reverse: !current.reverse } : { key, reverse: false }));
+    setTablePreferences((current) => ({ ...current, sort: current.sort.key === key ? { key, reverse: !current.sort.reverse } : { key, reverse: false } }));
+
+  const toggleTableColumn = (column: TableColumn) => setTablePreferences((current) => {
+    const columns = current.columns.includes(column)
+      ? current.columns.filter((item) => item !== column)
+      : DEFAULT_TABLE_COLUMNS.filter((item) => current.columns.includes(item) || item === column);
+    return { ...current, columns: columns.length ? columns : ['title'] };
+  });
 
   // 导航项右边的数字有两种口径，别混：
   //   导航里的「书架」= **书架个数**（和「收藏」「回收站」并列的都是条目数）；
@@ -355,9 +436,47 @@ export function LibraryScreen({
     { id: 'calendar', label: '阅读日历', icon: 'calendar' },
   ];
 
+  const toolbarCommands = () => <>
+    {missingPDFs.length > 0 ? (
+      <button type="button" className="library-toolbar-command" disabled={fetchingArxiv} onClick={() => void fetchMissingArxivPDFs()}>
+        {fetchingArxiv ? '正在自动获取…' : `自动获取缺失 PDF（${missingPDFs.length}）`}
+      </button>
+    ) : null}
+    {fetchingArxiv ? <button type="button" className="library-toolbar-command danger" onClick={() => arxivController.current?.abort()}>停止获取</button> : null}
+    {view === 'trash' ? (
+      <button type="button" className="library-toolbar-command danger" disabled={!Object.values(meta.items).some(item => item.deleted)} onClick={() => setEmptyTrashKeys(Object.values(meta.items).filter(item => item.deleted).map(item => item.key))}>
+        清空回收站
+      </button>
+    ) : null}
+    {view !== 'trash' && view !== 'graph' && view !== 'calendar' ? (
+      <button
+        type="button"
+        className="library-toolbar-command"
+        title={categoryFilter ? `导出书架「${categoryFilter}」的书目` : '导出整库书目（不含回收站）'}
+        onClick={() => setCitationOpen(true)}
+      >
+        导出书目
+      </button>
+    ) : null}
+    <button
+      type="button"
+      onClick={() => setDailyOpen((value) => !value)}
+      aria-pressed={dailyOpen}
+      title="每日论文推荐单独占一个侧栏；宽度可拖拽，双击分隔线复位"
+      className={`discovery-toggle${dailyOpen ? ' active' : ''}`}
+    >
+      <WorkspaceIcon name="sparkles" size={15} /><span>每日推荐</span>
+    </button>
+    {layout === 'grid' ? <div className="view-switch density-switch" role="group" aria-label="网格密度">
+      {(['comfortable', 'compact'] as GridDensity[]).map((density) => <button key={density} type="button" aria-pressed={gridDensity === density} className={gridDensity === density ? 'active' : ''} onClick={() => setGridDensity(density)}>
+        <span>{density === 'comfortable' ? '舒适' : '紧凑'}</span>
+      </button>)}
+    </div> : null}
+  </>;
+
   return (
     <div className={`app-shell${dailyOpen ? ' daily-open' : ''}`}>
-      <aside className={`library-sidebar${collapsed ? ' collapsed' : ''}`}>
+      <aside className={`library-sidebar${collapsed ? ' collapsed' : ''}`} style={{ width: sidebarWidth, '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}>
         <div className="sidebar-brand">
           <strong>个人书库</strong>
           <span>RESEARCH LIBRARY</span>
@@ -430,6 +549,17 @@ export function LibraryScreen({
         </div>
       </aside>
 
+      {!collapsed ? <ResizeHandle
+        label="书架侧栏宽度"
+        value={sidebarWidth}
+        onStart={() => {
+          const start = sidebarWidth;
+          return (delta) => setSidebarWidth(Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, start + delta)));
+        }}
+        onStep={(delta) => setSidebarWidth((value) => Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, value + delta)))}
+        onReset={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
+      /> : null}
+
       <section className="library-main">
         <header className="library-topbar">
           <div className="library-heading">
@@ -444,35 +574,13 @@ export function LibraryScreen({
               <WorkspaceIcon name="panel" size={17} />
             </button>
             <div className="min-w-0">
-            <p className="section-eyebrow">MY LIBRARY</p>
             <h1>
               {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'shelves' ? '我的书架' : view === 'graph' ? '知识图谱' : '阅读日历'}
             </h1>
-            <p className="library-description">集中管理论文、精读笔记与复现计划。</p>
             </div>
           </div>
           <div className="library-view-actions">
-            {missingPDFs.length > 0 ? (
-              <button type="button" className="mr-2 rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-accent hover:border-accent disabled:opacity-50" disabled={fetchingArxiv} onClick={() => void fetchMissingArxivPDFs()}>
-                {fetchingArxiv ? '正在自动获取…' : `自动获取缺失 PDF（${missingPDFs.length}）`}
-              </button>
-            ) : null}
-            {fetchingArxiv ? <button type="button" className="mr-2 rounded-md border border-line px-2 py-1 text-[11px] text-bad" onClick={() => arxivController.current?.abort()}>停止</button> : null}
-            {view === 'trash' ? (
-              <button type="button" className="mr-2 rounded-md border border-line px-2 py-1 text-[11px] text-bad disabled:opacity-40" disabled={!Object.values(meta.items).some(item => item.deleted)} onClick={() => setEmptyTrashKeys(Object.values(meta.items).filter(item => item.deleted).map(item => item.key))}>
-                清空回收站
-              </button>
-            ) : null}
-            {view !== 'trash' && view !== 'graph' && view !== 'calendar' ? (
-              <button
-                type="button"
-                className="mr-2 rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-ink-soft hover:border-accent hover:text-accent"
-                title={categoryFilter ? `导出书架「${categoryFilter}」的书目` : '导出整库书目（不含回收站）'}
-                onClick={() => setCitationOpen(true)}
-              >
-                导出书目
-              </button>
-            ) : null}
+            <div className="library-toolbar-inline">{toolbarCommands()}</div>
             <div className="view-switch" role="group" aria-label="文献布局">
             {(['grid', 'list', 'table'] as Layout[]).map((item) => (
               <button
@@ -486,15 +594,10 @@ export function LibraryScreen({
               </button>
             ))}
             </div>
-            <button
-              type="button"
-              onClick={() => setDailyOpen((value) => !value)}
-              aria-pressed={dailyOpen}
-              title="每日论文推荐单独占一个侧栏；宽度可拖拽，双击分隔线复位"
-              className={`discovery-toggle${dailyOpen ? ' active' : ''}`}
-            >
-              <WorkspaceIcon name="sparkles" size={15} /><span>每日推荐</span>
-            </button>
+            <div className="library-more" ref={moreRef}>
+              <button ref={moreButtonRef} type="button" className="library-more-trigger" aria-label="更多书库操作" aria-expanded={moreOpen} aria-controls="library-more-panel" onClick={() => setMoreOpen((value) => !value)}>⋯</button>
+              {moreOpen ? <div id="library-more-panel" className="library-more-panel" aria-label="更多书库操作" onClickCapture={() => setMoreOpen(false)}>{toolbarCommands()}</div> : null}
+            </div>
           </div>
         </header>
 
@@ -665,7 +768,7 @@ export function LibraryScreen({
           ) : null}
 
           {!fulltextActive && view !== 'shelves' && phase.kind === 'ready' && documents.length > 0 && layout === 'grid' ? (
-            <div className="book-grid">
+            <div className={`book-grid density-${gridDensity}`}>
               {documents.map((doc) => (
                 <LibraryCard
                   key={doc.id}
@@ -710,7 +813,9 @@ export function LibraryScreen({
               meta={meta.items}
               selectedId={selectedId}
               sort={sort}
+              columns={tableColumns}
               onSort={toggleSort}
+              onToggleColumn={toggleTableColumn}
               onSelect={onOpenDocument}
               onOpenProcessing={onOpenProcessing}
               onRetranslate={onRetranslate}
@@ -776,7 +881,6 @@ export function UpdateControl() {
       : { state: 'unsupported', message: '应用内更新仅在 Windows 或 macOS 桌面安装版中提供。' }
   ));
   const [confirmingUpdate, setConfirmingUpdate] = useState(false);
-  const dialog = useRef<HTMLDialogElement>(null);
   const dismissedVersion = useRef<string | null>(null);
   const bridge = window.__READX_DESKTOP_UPDATES__;
 
@@ -805,13 +909,6 @@ export function UpdateControl() {
       setConfirmingUpdate(true);
     }
   }, [status.state, status.version]);
-  useEffect(() => {
-    const element = dialog.current;
-    if (!element) return;
-    if (confirmingUpdate && !element.open) element.showModal();
-    else if (!confirmingUpdate && element.open) element.close();
-  }, [confirmingUpdate]);
-
   const postpone = () => {
     if (status.version) dismissedVersion.current = status.version;
     setConfirmingUpdate(false);
@@ -871,13 +968,7 @@ export function UpdateControl() {
         {status.state === 'downloading' ? <div className="sidebar-update-progress" role="progressbar" aria-valuenow={Math.round(status.percent ?? 0)} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${Math.round(status.percent ?? 0)}%` }} /></div> : null}
         {detail ? <p className="sidebar-update-detail nav-label" title={detail}>{detail}</p> : null}
       </div>
-      <dialog
-        ref={dialog}
-        className="app-dialog update-confirm-dialog"
-        aria-labelledby="update-confirm-title"
-        onCancel={(event) => { event.preventDefault(); postpone(); }}
-        onClose={() => setConfirmingUpdate(false)}
-      >
+      <AppDialog open={confirmingUpdate} onClose={postpone} className="update-confirm-dialog" aria-labelledby="update-confirm-title">
         <header>
           <div>
             <p className="section-eyebrow">READX UPDATE</p>
@@ -893,7 +984,7 @@ export function UpdateControl() {
           <button type="button" className="update-later-button" onClick={postpone}>暂不更新</button>
           <button type="button" className="update-primary-button" onClick={() => void run()}>立即更新</button>
         </footer>
-      </dialog>
+      </AppDialog>
     </>
   );
 }
@@ -1024,7 +1115,9 @@ function DocumentTable({
   meta,
   selectedId,
   sort,
+  columns,
   onSort,
+  onToggleColumn,
   onSelect,
   onOpenProcessing,
   onRetranslate,
@@ -1035,7 +1128,9 @@ function DocumentTable({
   meta: Record<string, DocumentMeta>;
   selectedId: string | null;
   sort: { key: SortKey; reverse: boolean };
+  columns: TableColumn[];
   onSort: (key: SortKey) => void;
+  onToggleColumn: (column: TableColumn) => void;
   onSelect: (id: string) => void;
   onOpenProcessing: (doc: DocumentSummary) => void;
   onRetranslate: (doc: DocumentSummary) => void;
@@ -1043,15 +1138,24 @@ function DocumentTable({
   onToggleTrash: (key: string) => Promise<unknown>;
 }) {
   const arrow = (key: SortKey) => (sort.key === key ? (sort.reverse ? ' ↓' : ' ↑') : '');
+  const visible = (column: TableColumn) => columns.includes(column);
+  const labels: Record<TableColumn, string> = { title: '标题', author: '作者', year: '年份', status: '状态', shelves: '书架' };
   return (
+    <div className="library-table-wrap">
+    <div className="library-table-options" role="group" aria-label="表格列显示">
+      <span>显示列</span>
+      {DEFAULT_TABLE_COLUMNS.map((column) => <label key={column}>
+        <input type="checkbox" checked={visible(column)} disabled={visible(column) && columns.length === 1} onChange={() => onToggleColumn(column)} />{labels[column]}
+      </label>)}
+    </div>
     <table className="w-full border-collapse text-left text-[12px]">
       <thead>
         <tr className="border-b border-line text-[11px] text-ink-faint">
-          <th className="cursor-pointer px-2 py-2 font-medium hover:text-ink" onClick={() => onSort('title')}>标题{arrow('title')}</th>
-          <th className="px-2 py-2 font-medium">作者</th>
-          <th className="cursor-pointer px-2 py-2 font-medium hover:text-ink" onClick={() => onSort('year')}>年份{arrow('year')}</th>
-          <th className="cursor-pointer px-2 py-2 font-medium hover:text-ink" onClick={() => onSort('status')}>状态{arrow('status')}</th>
-          <th className="px-2 py-2 font-medium">书架</th>
+          {visible('title') ? <th className="cursor-pointer px-2 py-2 font-medium hover:text-ink" onClick={() => onSort('title')}>标题{arrow('title')}</th> : null}
+          {visible('author') ? <th className="px-2 py-2 font-medium">作者</th> : null}
+          {visible('year') ? <th className="cursor-pointer px-2 py-2 font-medium hover:text-ink" onClick={() => onSort('year')}>年份{arrow('year')}</th> : null}
+          {visible('status') ? <th className="cursor-pointer px-2 py-2 font-medium hover:text-ink" onClick={() => onSort('status')}>状态{arrow('status')}</th> : null}
+          {visible('shelves') ? <th className="px-2 py-2 font-medium">书架</th> : null}
           <th className="px-2 py-2 font-medium" />
         </tr>
       </thead>
@@ -1063,21 +1167,21 @@ function DocumentTable({
               key={doc.id}
               className={`border-b border-line/60 align-top transition ${doc.id === selectedId ? 'bg-accent-soft/50' : 'hover:bg-surface-sunk'}`}
             >
-              <td className="px-2 py-2">
+              {visible('title') ? <td className="px-2 py-2">
                 <button type="button" onClick={() => onSelect(doc.id)} className="text-left font-medium text-ink hover:text-accent">
                   {item?.favorite ? <span className="mr-1 text-accent">★</span> : null}
                   {doc.title || '（无标题）'}
                   {doc.translatedTitle && <small className="block text-ink-faint">{doc.translatedTitle}</small>}
                 </button>
-              </td>
-              <td className="px-2 py-2 text-ink-soft">{doc.authors[0] ?? '作者未知'}{doc.authors.length > 1 ? ' 等' : ''}</td>
-              <td className="px-2 py-2 tabular-nums text-ink-soft">{doc.year ?? '—'}</td>
-              <td className="px-2 py-2">
+              </td> : null}
+              {visible('author') ? <td className="px-2 py-2 text-ink-soft">{doc.authors[0] ?? '作者未知'}{doc.authors.length > 1 ? ' 等' : ''}</td> : null}
+              {visible('year') ? <td className="px-2 py-2 tabular-nums text-ink-soft">{doc.year ?? '—'}</td> : null}
+              {visible('status') ? <td className="px-2 py-2">
                 <span className={`rounded-pill px-1.5 py-0.5 text-[10px] font-medium ${STATUS_TONE[doc.status] ?? 'bg-surface-sunk text-ink-soft'}`}>
                   {statusLabel(doc.status)}
                 </span>
-              </td>
-              <td className="px-2 py-2">
+              </td> : null}
+              {visible('shelves') ? <td className="px-2 py-2">
                 {(item?.categories ?? []).length ? (
                   <span className="flex flex-wrap gap-1">
                     {(item?.categories ?? []).map((name) => (
@@ -1087,7 +1191,7 @@ function DocumentTable({
                 ) : (
                   <span className="text-ink-faint">—</span>
                 )}
-              </td>
+              </td> : null}
               <td className="px-2 py-2">
                 <div className="flex items-center gap-2">
                 {doc.format !== 'epub' && doc.hasPdf && doc.paperMemoryStatus && doc.paperMemoryStatus !== 'done' ? <button type="button" onClick={() => onOpenProcessing(doc)} title={doc.paperMemoryMessage || '查看论文记忆处理进度'} className="rounded-md border border-accent/30 bg-accent-soft/40 px-2 py-0.5 text-[10px] text-accent transition hover:border-accent">处理</button> : null}
@@ -1107,6 +1211,7 @@ function DocumentTable({
         })}
       </tbody>
     </table>
+    </div>
   );
 }
 

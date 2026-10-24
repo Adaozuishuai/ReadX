@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import type { LatexNode } from '@cbct/shared';
+import { useConfirm } from '../ConfirmDialog';
 import { WorkspaceIcon } from '../WorkspaceIcon';
 
 /**
@@ -33,6 +34,7 @@ export function LatexFileTree({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const assetInput = useRef<HTMLInputElement>(null);
+  const confirmDialog = useConfirm();
 
   const visible = useMemo(() => {
     const out: LatexNode[] = [];
@@ -155,7 +157,9 @@ export function LatexFileTree({
                   type="button"
                   title="删除"
                   onClick={() => {
-                    if (window.confirm(`删除 ${node.path}？`)) onDelete(node.path);
+                    void confirmDialog.bridge.confirm(`删除 ${node.path}？`).then((ok) => {
+                      if (ok) onDelete(node.path);
+                    });
                   }}
                 >
                   ✕
@@ -165,6 +169,7 @@ export function LatexFileTree({
           );
         })}
       </ul>
+      {confirmDialog.node}
     </div>
   );
 }

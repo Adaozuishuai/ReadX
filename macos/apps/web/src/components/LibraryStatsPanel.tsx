@@ -2,14 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type StatsResponse, type TrendsResponse } from '../api/client';
 import { WorkspaceIcon } from './WorkspaceIcon';
 
-/**
- * 书库与阅读统计面板。
- *
- * 三条纪律（都在界面上写出来，而不是留在代码注释里）：
- *  1. 不报「读了多久」——页面停留时长没有采集，只有「最近 7/30 天在读几篇」。
- *  2. 处理耗时只统计盖过时间戳的阶段；老任务缺时间戳的单独计数，不摊派。
- *  3. 主题分布来自题录关键词聚合，样本不足时后端只给计数，这里照实显示提示语。
- */
+/** 书库与阅读统计面板。 */
 export function LibraryStatsPanel() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [trends, setTrends] = useState<TrendsResponse | null>(null);
@@ -51,7 +44,6 @@ export function LibraryStatsPanel() {
     <section className="stats-panel" aria-label="书库与阅读统计">
       <div className="stats-head">
         <h2>书库统计</h2>
-        <span>口径见底部说明</span>
       </div>
 
       <div className="stats-tiles">
@@ -92,23 +84,6 @@ export function LibraryStatsPanel() {
           ) : (
             <p className="stats-empty">还没有带时间戳的处理记录。</p>
           )}
-          <p className="stats-note">
-            共 {processing.jobs} 篇有任务记录、{processing.runs} 次执行（失败 {processing.failedRuns} 次），
-            处理 {processing.pages} 页；执行中位 {formatDuration(processing.medianRunMs)}。
-            {processing.missingStageTiming > 0
-              ? ` ${processing.missingStageTiming} 篇的阶段缺起止时间（旧版本记录或仍在进行中），未计入。`
-              : ''}
-          </p>
-          {processing.slowest.length ? (
-            <ul className="stats-slowest">
-              {processing.slowest.map((item) => (
-                <li key={`${item.key}-${item.stage}`}>
-                  <span>{item.title || item.key}</span>
-                  <span className="tabular-nums">{item.stage} · {formatDuration(item.ms)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
         </div>
 
         <div className="stats-block">
@@ -155,11 +130,6 @@ export function LibraryStatsPanel() {
         </div>
       ) : null}
 
-      <ul className="stats-basis">
-        {stats.basis.map((line) => (
-          <li key={line}>{line}</li>
-        ))}
-      </ul>
     </section>
   );
 }

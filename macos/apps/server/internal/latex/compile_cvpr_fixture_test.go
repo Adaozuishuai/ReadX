@@ -59,7 +59,7 @@ func TestRealCVPRTemplateDiagnosticsAndPasses(t *testing.T) {
 	}
 
 	// 位置规则：警告不许凭空带文件。允许带文件只有一种情况——我们在项目源码里
-// 真的找到了那个引用键（locationSource=search），此时位置必须经得起核对。
+	// 真的找到了那个引用键（locationSource=search），此时位置必须经得起核对。
 	for _, diagnostic := range finished.Diagnostics {
 		if diagnostic.File == "" && diagnostic.Line == 0 {
 			continue

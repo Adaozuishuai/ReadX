@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, net, screen, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -21,6 +21,8 @@ import { downloadVerifiedUpdate } from './update-download';
 const READY_PREFIX = 'CBCT_V2_READY ';
 const READY_TIMEOUT_MS = 30_000;
 const SHUTDOWN_GRACE_MS = 4_000;
+const DEFAULT_WINDOW_BOUNDS = { width: 1440, height: 900 };
+const MIN_WINDOW_BOUNDS = { width: 1100, height: 660 };
 
 interface ServerHandle {
   info: ReadyInfo;
@@ -28,6 +30,7 @@ interface ServerHandle {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let windowStateSaveTimer: NodeJS.Timeout | null = null;
 let server: ServerHandle | null = null;
 let allowedOrigin = '';
 let stopping = false;
@@ -63,6 +66,27 @@ async function bootstrap(): Promise<void> {
   // 一律 deny，导致 target="_blank" 的外链点了完全没反应（连提示都没有）。
   app.on('web-contents-created', (_event, contents) => {
     contents.setWindowOpenHandler(({ url }) => {
+      if (isAllowedReaderPopup(url)) {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 1440,
+            height: 900,
+            minWidth: MIN_WINDOW_BOUNDS.width,
+            minHeight: MIN_WINDOW_BOUNDS.height,
+            title: 'ReadX · 阅读',
+            backgroundColor: '#f6f2ea',
+            webPreferences: {
+              preload: path.join(__dirname, 'preload.js'),
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: true,
+              spellcheck: false,
+              additionalArguments: server ? [`--cbct-api-base=${allowedOrigin}`, `--cbct-token=${server.info.token}`] : [],
+            },
+          },
+        };
+      }
       // 外链（target="_blank"）走系统浏览器；其余一律不开新窗口。
       if (isExternalHTTP(url) && !sameOrigin(url)) void shell.openExternal(url);
       return { action: 'deny' };
@@ -374,12 +398,12 @@ function createWindow(): void {
   if (!server) return;
   const url = startUrl(server);
   const injected: BootstrapInfo = { apiBase: originOf(url), token: server.info.token };
+  const saved = readWindowState();
 
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 660,
+    ...saved.bounds,
+    minWidth: MIN_WINDOW_BOUNDS.width,
+    minHeight: MIN_WINDOW_BOUNDS.height,
     show: false,
     backgroundColor: '#f6f2ea',
     title: 'ReadX',
@@ -398,10 +422,99 @@ function createWindow(): void {
   });
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  if (saved.maximized) mainWindow.maximize();
+  const persist = () => scheduleWindowStateSave(mainWindow);
+  mainWindow.on('resize', persist);
+  mainWindow.on('move', persist);
+  mainWindow.on('maximize', persist);
+  mainWindow.on('unmaximize', persist);
+  mainWindow.on('close', () => {
+    if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+    windowStateSaveTimer = null;
+    saveWindowState(mainWindow);
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
   void mainWindow.loadURL(url);
+}
+
+interface SavedWindowState {
+  bounds: { x?: number; y?: number; width: number; height: number };
+  maximized: boolean;
+}
+
+function windowStatePath(): string {
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+
+function readWindowState(): SavedWindowState {
+  const fallback: SavedWindowState = { bounds: DEFAULT_WINDOW_BOUNDS, maximized: false };
+  try {
+    const value = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8')) as Partial<SavedWindowState>;
+    const bounds = value.bounds;
+    if (!bounds || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)
+      || bounds.width < MIN_WINDOW_BOUNDS.width || bounds.height < MIN_WINDOW_BOUNDS.height) return fallback;
+    const restored = {
+      x: Number.isFinite(bounds.x) ? bounds.x : undefined,
+      y: Number.isFinite(bounds.y) ? bounds.y : undefined,
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+    };
+    if (restored.x !== undefined && restored.y !== undefined) {
+      const visible = screen.getAllDisplays().some(({ workArea }) =>
+        restored.x! >= workArea.x && restored.x! + restored.width <= workArea.x + workArea.width
+        && restored.y! >= workArea.y && restored.y! + restored.height <= workArea.y + workArea.height);
+      if (!visible) return { bounds: { width: restored.width, height: restored.height }, maximized: value.maximized === true };
+    }
+    return { bounds: restored, maximized: value.maximized === true };
+  } catch {
+    return fallback;
+  }
+}
+
+function scheduleWindowStateSave(window: BrowserWindow | null): void {
+  if (!window || window.isDestroyed()) return;
+  if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+  windowStateSaveTimer = setTimeout(() => {
+    windowStateSaveTimer = null;
+    saveWindowState(window);
+  }, 300);
+}
+
+function saveWindowState(window: BrowserWindow | null): void {
+  if (!window || window.isDestroyed()) return;
+  try {
+    const bounds = window.isMaximized() ? window.getNormalBounds() : window.getBounds();
+    const value: SavedWindowState = {
+      bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      maximized: window.isMaximized(),
+    };
+    const target = windowStatePath();
+    const temporary = `${target}.tmp`;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(temporary, JSON.stringify(value), 'utf8');
+    fs.renameSync(temporary, target);
+  } catch (error) {
+    logLifecycle(`保存窗口状态失败：${describe(error)}`);
+  }
+}
+
+function isAllowedReaderPopup(target: string): boolean {
+  if (!sameOrigin(target)) return false;
+  try {
+    const url = new URL(target);
+    if (url.pathname !== '/' || url.hash) return false;
+    const params = url.searchParams;
+    if (params.get('readxWindow') !== 'reader') return false;
+    const documentId = params.get('documentId') ?? '';
+    if (!/^[\w-]{1,128}$/.test(documentId)) return false;
+    const page = params.get('page');
+    if (page !== null && (!/^\d{1,5}$/.test(page) || Number(page) < 1)) return false;
+    return [...params.keys()].every((key) => key === 'readxWindow' || key === 'documentId' || key === 'page');
+  } catch {
+    return false;
+  }
 }
 
 function startUrl(handle: ServerHandle): string {

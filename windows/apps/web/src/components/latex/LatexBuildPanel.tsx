@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { LatexBuild, LatexDiagnostic, LatexToolchainReport } from '@cbct/shared';
+import { STORAGE_KEYS } from '../../lib/storage';
 
 const STATUS_LABEL: Record<string, string> = {
   queued: '排队中',
@@ -44,13 +45,13 @@ export function LatexBuildPanel({
   const missingCitations = build?.missingCitations ?? [];
   const missingReferences = build?.missingReferences ?? [];
   const [diagnosticsHidden, setDiagnosticsHidden] = useState(() =>
-    typeof window !== 'undefined' && window.localStorage.getItem('readx-latex-diagnostics-hidden') === 'true',
+    typeof window !== 'undefined' && window.localStorage.getItem(STORAGE_KEYS.latexDiagnosticsHidden) === 'true',
   );
 
   const toggleDiagnostics = () => {
     setDiagnosticsHidden((hidden) => {
       const next = !hidden;
-      window.localStorage.setItem('readx-latex-diagnostics-hidden', String(next));
+      window.localStorage.setItem(STORAGE_KEYS.latexDiagnosticsHidden, String(next));
       return next;
     });
   };

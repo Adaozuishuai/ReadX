@@ -4,6 +4,47 @@
    ============================================================================ */
 
 /* ---- 顶部切换挂件 -------------------------------------------------------- */
+.zlibrary-connection { margin:20px 0; padding:20px; border:1px solid var(--color-line); border-radius:16px; background:var(--color-surface); color:var(--color-ink); }
+.zlibrary-connection header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+.zlibrary-connection header span { border-radius:99px; padding:4px 10px; background:var(--color-canvas); font-size:12px; color:var(--color-accent); }
+.zlibrary-connection label { display:grid; gap:6px; min-width:0; font-size:12px; color:var(--color-ink-soft); }
+.zlibrary-connection input, .zlibrary-connection textarea, .zlibrary-connection select { box-sizing:border-box; width:100%; min-width:0; padding:10px 12px; border:1px solid var(--color-line); border-radius:9px; background:var(--color-canvas); color:var(--color-ink); font:inherit; font-size:14px; }
+.zlibrary-connection textarea { min-height:76px; resize:vertical; }
+.zlibrary-connection form { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; align-items:end; margin:16px 0; }
+.zlibrary-connection button { padding:9px 13px; border:1px solid var(--color-line); border-radius:9px; background:var(--color-canvas); color:var(--color-ink); cursor:pointer; font-size:12px; }
+.zlibrary-connection button.slack-primary { background:var(--color-accent); color:var(--color-on-accent); }
+.zlibrary-connection button:disabled { opacity:.5; cursor:wait; }
+.zlibrary-connection__actions { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+.zlibrary-connection details { margin-top:12px; font-size:12px; color:var(--color-ink-soft); }
+.zlibrary-connection details summary { cursor:pointer; }
+.zlibrary-connection p { line-height:1.7; font-size:12px; overflow-wrap:anywhere; }
+.zlibrary-connection small { color:var(--color-ink-faint); font-size:11px; line-height:1.7; }
+.zlibrary-rights-confirm { display:flex; align-items:flex-start; gap:8px; padding:14px 0; font-size:12px; line-height:1.6; }
+.zlibrary-rights-confirm input { margin-top:3px; accent-color:var(--color-accent); }
+.book-source-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.book-source-heading > button, .book-source-dialog button, .book-source-dialog select { border:1px solid var(--color-line); border-radius:9px; padding:8px 12px; background:var(--color-surface); color:var(--color-ink); cursor:pointer; }
+.book-source-heading > button:hover, .book-source-dialog button:hover { border-color:var(--color-accent); }
+/* 书源设置弹窗：加宽 + 每个书源独立成段，长说明和凭据表单不再挤成一团。 */
+.book-source-dialog { width:min(780px,calc(100vw - 48px)); max-height:calc(100dvh - 48px); overflow:auto; overflow-wrap:anywhere; padding:26px 30px; }
+.book-source-dialog h2 { margin-bottom:16px; }
+.book-source-dialog > p { white-space:pre-line; line-height:1.7; }
+.book-source-dialog section { padding:18px 2px; border-bottom:1px solid var(--color-line); }
+.book-source-dialog section:last-of-type { border-bottom:0; }
+.book-source-dialog section strong { display:block; margin-bottom:6px; }
+.book-source-dialog section small { display:block; margin-top:8px; line-height:1.8; }
+.book-source-dialog section p, .book-source-dialog small { color:var(--color-ink-soft); }
+.book-source-dialog .zlibrary-connection { margin:16px 0 6px; padding:18px 20px; }
+.book-source-dialog dl { display:grid; grid-template-columns:96px minmax(0,1fr); gap:10px 14px; margin:20px 0; font-size:13px; line-height:1.7; }
+.book-source-dialog dt { color:var(--color-ink-soft); }
+.book-source-dialog dd { margin:0; }
+.book-source-dialog .slack-modal__actions { flex-wrap:wrap; align-items:center; }
+.book-source-dialog a { color:var(--color-accent); font-size:13px; }
+.book-source-dialog button:disabled { cursor:default; opacity:.5; }
+.book-source-dialog .slack-primary { background:var(--color-accent); color:var(--color-on-accent); }
+.book-download-progress { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:16px 0; }
+.book-download-progress p { width:100%; margin:0; }
+.book-download-progress progress { flex:1; min-width:100px; accent-color:var(--color-accent); }
+.book-download-progress span { font-size:12px; color:var(--color-ink-soft); }
 .mode-pendant {
   position: fixed;
   top: 0;
@@ -170,10 +211,11 @@
 .slack-topbar {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: var(--space-4);
   flex-shrink: 0;
-  min-height: 64px;
-  padding: 0 104px 0 22px;
+  height: var(--bar-height);
+  min-height: var(--bar-height);
+  padding: 0 104px 0 var(--space-6);
   border-bottom: 1px solid var(--color-line);
   background: var(--color-surface);
 }
@@ -181,7 +223,7 @@
 .slack-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   flex-shrink: 0;
   padding: 0;
   border: 0;
@@ -215,7 +257,7 @@
 .slack-topbar__title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   flex: 1;
   min-width: 0;
 }
@@ -224,7 +266,7 @@
   overflow: hidden;
   max-width: 46vw;
   color: var(--color-ink);
-  font-size: 13px;
+  font-size: var(--type-md);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -265,7 +307,7 @@
 .slack-topbar__actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   flex-shrink: 0;
   margin-left: auto;
 }
@@ -315,103 +357,125 @@
 
 .slack-library > * {
   width: 100%;
-  max-width: 1280px;
+  max-width: 1560px;
   margin-right: auto;
   margin-left: auto;
 }
 
-.slack-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 258px;
-  gap: 24px;
-  align-items: stretch;
-  margin-bottom: 24px;
-  padding: 26px 28px;
+/* 最近一本：摸鱼回访先给「接着上次看」，其次才是浏览整个书架。 */
+.slack-continue {
+  margin-bottom: 14px;
+}
+
+.slack-continue__open {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  /* 底部加高给内嵌进度条留出一条不压文字的走线。 */
+  padding: 12px 18px 24px 12px;
   border: 1px solid var(--color-line);
-  border-radius: 20px;
+  border-radius: 16px;
   background:
     radial-gradient(120% 150% at 0% 0%, var(--color-accent-soft), transparent 58%),
     var(--color-surface);
-}
-
-.slack-eyebrow {
-  margin: 0 0 7px;
-  color: var(--color-ink-faint);
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 1.6px;
-}
-
-.slack-hero h1 {
-  margin: 0 0 8px;
-  color: var(--color-ink);
-  font-size: 30px;
-  font-weight: 650;
-  letter-spacing: -0.8px;
-  line-height: 1.25;
-}
-
-.slack-hero__copy > p {
-  max-width: 620px;
-  margin: 0;
-  color: var(--color-ink-soft);
-  font-size: 12px;
-  line-height: 1.85;
-}
-
-.slack-hero__stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  margin-top: 16px;
-  color: var(--color-ink-faint);
-  font-size: 10.5px;
-}
-
-.slack-hero__stats strong {
-  margin-right: 3px;
-  color: var(--color-accent);
-  font-size: 15px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-
-.slack-upload {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-height: 132px;
-  padding: 18px;
-  border: 1.5px dashed var(--color-line-strong);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--color-canvas) 56%, transparent);
-  color: var(--color-ink-soft);
+  text-align: left;
   cursor: pointer;
-  transition: transform 0.16s, background 0.16s, border-color 0.16s, color 0.16s;
+  transition: transform 0.16s, box-shadow 0.16s, border-color 0.16s;
 }
 
-.slack-upload:hover {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
+.slack-continue__open:hover {
+  border-color: var(--color-line-strong);
+  box-shadow: var(--shadow-md);
   transform: translateY(-1px);
 }
 
-.slack-upload__plus {
-  font-size: 27px;
-  line-height: 1;
+.slack-continue__open .slack-cover {
+  flex-shrink: 0;
+  width: 52px;
+  border-radius: 6px;
+  aspect-ratio: 3 / 4;
 }
 
-.slack-upload strong {
-  font-size: 13px;
+.slack-continue__info {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.slack-continue__info small {
+  color: var(--color-ink-faint);
+  font-size: 10px;
+  letter-spacing: 0.6px;
+}
+
+.slack-continue__info strong {
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: 15px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slack-continue__info > span {
+  color: var(--color-ink-soft);
+  font-size: 11px;
+}
+
+.slack-continue__bar {
+  position: absolute;
+  right: 18px;
+  bottom: 10px;
+  left: 84px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--color-surface-sunk);
+}
+
+.slack-continue__bar span {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--color-accent);
+}
+
+.slack-continue__go {
+  flex-shrink: 0;
+  color: var(--color-accent);
+  font-size: 12px;
   font-weight: 600;
 }
 
-.slack-upload small {
-  color: var(--color-ink-faint);
-  font-size: 10px;
+.slack-toolbar__title {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+}
+
+.slack-add {
+  flex-shrink: 0;
+  padding: 8px 13px;
+  border: 1px dashed var(--color-line-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-ink-soft);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color 0.16s, color 0.16s, background 0.16s;
+}
+
+.slack-add:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
 }
 
 .slack-toolbar {
@@ -705,6 +769,41 @@
   text-align: center;
 }
 
+/* 空书架：整块主区都是落点暗示，把「拖进来 / 选文件 / 去找书」一次说清。 */
+.slack-empty--hero {
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  text-align: left;
+}
+
+.slack-empty--hero p {
+  margin-bottom: 18px;
+}
+
+.slack-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.slack-empty__find {
+  padding: 8px 14px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.16s, color 0.16s;
+}
+
+.slack-empty__find:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
 .slack-loading {
   padding: 30px 0;
   color: var(--color-ink-faint);
@@ -758,11 +857,110 @@
   font-size: 11px;
 }
 
-.slack-reader-toolbar__display {
+/* 排版控件收进 Aa 弹层：工具栏一行稳定放得下，也躲开右上挂件的悬挂区。 */
+.slack-aa {
+  position: relative;
+  margin-left: auto;
+}
+
+.slack-aa > button {
+  min-width: 34px;
+  font-weight: 650;
+  letter-spacing: 0.5px;
+}
+
+.slack-aa__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 248px;
+  padding: 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  animation: slack-pop-in 0.14s ease-out;
+}
+
+.slack-aa__row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-left: auto;
+  gap: 10px;
+}
+
+.slack-aa__label {
+  flex-shrink: 0;
+  width: 32px;
+  color: var(--color-ink-faint);
+  font-size: 10.5px;
+}
+
+.slack-aa__row .slack-font-control {
+  flex: 1;
+  justify-content: space-between;
+}
+
+.slack-aa__row .slack-font-control input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.slack-seg {
+  display: flex;
+  flex: 1;
+  gap: 3px;
+  padding: 2px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-canvas);
+}
+
+.slack-seg button {
+  flex: 1;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-ink-faint);
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.slack-seg button.active {
+  background: var(--color-surface);
+  color: var(--color-accent);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+@keyframes slack-pop-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.slack-font-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slack-font-control input[type="range"] {
+  width: 94px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+.slack-font-control output {
+  min-width: 34px;
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .slack-reader-loading {
@@ -787,6 +985,7 @@
 
 /* ---- 小说阅读 ------------------------------------------------------------ */
 .slack-novel {
+  --slack-page-paper: var(--color-canvas);
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -815,9 +1014,254 @@
   overflow-wrap: anywhere;
 }
 
+.slack-reader-scroll--paged {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  padding: clamp(18px, 3vh, 38px) clamp(18px, 3vw, 48px);
+}
+
+.slack-novel__edge {
+  position: absolute;
+  inset-block: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(18px, 3vw, 48px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink-soft);
+  font-size: 32px;
+  cursor: pointer;
+}
+
+.slack-novel__edge--previous { left: 0; }
+.slack-novel__edge--next { right: 0; }
+.slack-novel__edge span { opacity: 0; }
+.slack-novel__edge:hover:not(:disabled) span,
+.slack-novel__edge:focus-visible span { opacity: 0.65; }
+.slack-novel__edge:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -3px; }
+.slack-novel__edge:disabled { cursor: default; }
+
+.slack-book-turn {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  perspective: 1800px;
+  pointer-events: none;
+}
+
+.slack-book-turn__stationary {
+  position: absolute;
+  inset: 0;
+  background: var(--slack-page-paper);
+  clip-path: inset(0 50% 0 0);
+}
+
+.slack-book-turn--previous .slack-book-turn__stationary {
+  clip-path: inset(0 0 0 50%);
+}
+
+.slack-book-turn__leaf {
+  position: absolute;
+  inset: 0 0 0 50%;
+  transform-origin: left center;
+  transform-style: preserve-3d;
+  animation: slack-book-next 560ms cubic-bezier(0.32, 0.05, 0.3, 1) both;
+}
+
+.slack-book-turn--previous .slack-book-turn__leaf {
+  inset: 0 50% 0 0;
+  transform-origin: right center;
+  animation-name: slack-book-previous;
+}
+
+.slack-book-turn__face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--slack-page-paper);
+  backface-visibility: hidden;
+  box-shadow: 0 0 18px rgb(0 0 0 / 0.12);
+}
+
+.slack-book-turn__face--back { transform: rotateY(180deg); }
+
+.slack-book-turn__spread {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 200%;
+  height: 100%;
+}
+
+.slack-book-turn__face--back .slack-book-turn__spread,
+.slack-book-turn--previous .slack-book-turn__face--front .slack-book-turn__spread {
+  left: 0;
+}
+
+.slack-book-turn--previous .slack-book-turn__face--back .slack-book-turn__spread {
+  left: -100%;
+}
+
+@keyframes slack-book-next {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(-180deg); }
+}
+
+@keyframes slack-book-previous {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(180deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slack-book-turn { display: none; }
+}
+
+.slack-novel__pages {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  margin: 0 auto;
+  touch-action: pan-y;
+}
+
+.slack-novel__pages::after {
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 1px;
+  background: color-mix(in srgb, var(--color-ink-faint) 20%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+.slack-novel__pages .slack-prose {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  column-count: 2;
+  column-gap: clamp(28px, 4vw, 64px);
+  column-fill: auto;
+  orphans: 2;
+  widows: 2;
+}
+
+.slack-novel__pages .slack-prose__head,
+.slack-novel__pages .slack-prose__foot,
+.slack-novel__pages img,
+.slack-novel__pages tr {
+  break-inside: avoid;
+}
+
+.slack-novel__pages img {
+  max-height: max(1em, calc(var(--slack-page-height, 60vh) - 3em));
+  object-fit: contain;
+}
+
+/* 单行底栏：章节名 / 翻页 / 百分比一次读完，进度压成顶端细线。 */
+.slack-novel__footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+  padding: 9px 18px;
+  border-top: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.slack-novel__footer-progress {
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--color-surface-sunk);
+}
+
+.slack-novel__footer-progress span {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.15s;
+}
+
+.slack-novel__footer-chapter {
+  overflow: hidden;
+  max-width: 42%;
+  min-width: 0;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slack-novel__footer-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.slack-novel__footer-nav button {
+  padding: 5px 11px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  cursor: pointer;
+}
+
+.slack-novel__footer-nav button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.slack-novel__footer-nav button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.slack-novel__footer-percent {
+  flex-shrink: 0;
+  min-width: 34px;
+  text-align: right;
+}
+
 .slack-novel--paper .slack-reader-scroll {
   background: radial-gradient(125% 120% at 50% 0%, #fbf6ea 0%, #f0e6d2 100%);
 }
+
+.slack-novel--paper { --slack-page-paper: #f6eedf; }
+.slack-novel--night { --slack-page-paper: #121714; }
+
+.slack-novel--ink {
+  --slack-page-paper: #bcbdb7;
+  --color-surface: #c9cac4;
+  --color-canvas: #bcbdb7;
+  --color-line: #9c9f96;
+  --color-ink: #1e221d;
+  --color-ink-soft: #30352e;
+  --color-ink-faint: #4e534b;
+  --color-accent: #272e24;
+  --color-accent-soft: #adb1a6;
+  --color-surface-sunk: #a5a99e;
+}
+
+.slack-novel--ink .slack-reader-scroll {
+  background: var(--slack-page-paper);
+}
+
+.slack-novel--ink .slack-prose {
+  color: var(--color-ink);
+}
+
+.slack-novel--ink .slack-prose img { filter: grayscale(1); }
+.slack-novel--ink .slack-prose a { color: inherit; }
 
 .slack-novel--paper .slack-prose {
   color: #33291d;
@@ -1044,41 +1488,6 @@
   font-weight: 600;
 }
 
-.slack-reader-status {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-  padding: 8px 18px;
-  border-top: 1px solid var(--color-line);
-  background: var(--color-surface);
-  color: var(--color-ink-faint);
-  font-size: 10.5px;
-}
-
-.slack-reader-status > span:first-child {
-  overflow: hidden;
-  max-width: 45%;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.slack-reader-status__bar {
-  overflow: hidden;
-  flex: 1;
-  height: 4px;
-  border-radius: 99px;
-  background: var(--color-surface-sunk);
-}
-
-.slack-reader-status__bar span {
-  display: block;
-  height: 100%;
-  border-radius: 99px;
-  background: var(--color-accent);
-  transition: width 0.15s;
-}
-
 /* ---- 漫画阅读 ------------------------------------------------------------ */
 .slack-comic {
   display: flex;
@@ -1189,6 +1598,70 @@
   padding: 10px 18px;
   border-top: 1px solid #232a26;
   background: #101312;
+  transition: opacity 0.22s, transform 0.22s;
+}
+
+/* 底栏藏起来把整页图让给画面；键盘聚焦滑杆时必须回来。 */
+.slack-comic--bar-hidden .slack-comic__bar {
+  opacity: 0;
+  transform: translateY(100%);
+  pointer-events: none;
+}
+
+.slack-comic__bar:focus-within {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+/* 双页并排：日漫 RTL 时当前页在右，视觉顺序用 row-reverse 翻转。 */
+.slack-comic__spread {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.slack-comic__spread--rtl {
+  flex-direction: row-reverse;
+}
+
+.slack-comic__spread .slack-comic__image {
+  max-width: calc(50% - 5px);
+  max-height: 100%;
+}
+
+.slack-comic__blank {
+  flex: 1;
+  align-self: stretch;
+  max-width: calc(50% - 5px);
+  border: 1px dashed #2c3530;
+  border-radius: 2px;
+}
+
+/* 底栏藏起时的翻页反馈：页码短暂浮现后淡出。 */
+.slack-comic__pip {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgb(16 19 18 / 0.82);
+  color: #dfe7e2;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: slack-pip 1.7s ease-out forwards;
+}
+
+@keyframes slack-pip {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 .slack-comic__nav {
@@ -1524,14 +1997,6 @@
 }
 
 @media (max-width: 900px) {
-  .slack-hero {
-    grid-template-columns: 1fr;
-  }
-
-  .slack-upload {
-    min-height: 100px;
-  }
-
   .slack-topbar {
     gap: 10px;
     padding-left: 14px;
@@ -1548,14 +2013,9 @@
   .slack-reader-toolbar {
     padding-right: 88px;
   }
-
-  .slack-reader-toolbar__display {
-    width: 100%;
-    margin-left: 0;
-  }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .app-header {
     padding-right: 88px;
   }
@@ -1630,7 +2090,7 @@
 
 .slack-finder > * {
   width: 100%;
-  max-width: 1280px;
+  max-width: 1560px;
   margin-right: auto;
   margin-left: auto;
 }
@@ -1664,7 +2124,6 @@
   display: flex;
   align-items: center;
   gap: 11px;
-  max-width: 760px;
   margin-top: 22px;
   padding: 5px 6px 5px 13px;
   border: 1px solid var(--color-line);
@@ -1728,12 +2187,21 @@
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);
   gap: 16px;
-  min-height: 190px;
+  min-height: 150px;
   padding: 15px;
   border: 1px solid var(--color-line);
   border-radius: 15px;
   background: var(--color-surface);
   box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s;
+}
+
+.slack-finder__card:hover,
+.slack-finder__card:focus-visible {
+  border-color: var(--color-line-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .slack-finder__cover {
@@ -1788,7 +2256,14 @@
   overflow: hidden;
   margin-top: 6px;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
+}
+
+.slack-finder__open {
+  margin-top: auto;
+  padding-top: 8px;
+  color: var(--color-accent);
+  font-size: 10.5px;
 }
 
 .slack-finder__meta {
@@ -1857,11 +2332,11 @@
 }
 
 /* 多书源：Gutenberg / Legado */
+/* 书源标签与搜索框不再限宽：整行铺开，宽屏不留右侧空洞。 */
 .slack-finder__sources {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 7px;
-  max-width: 760px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
   margin-top: 18px;
 }
 
@@ -2345,7 +2820,7 @@
   .slack-finder { padding: 20px 18px 60px; }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .slack-section-nav { gap: 1px; }
   .slack-section-nav button { padding: 6px 8px; font-size: 10px; }
   .slack-finder__hero { padding: 22px 18px; }

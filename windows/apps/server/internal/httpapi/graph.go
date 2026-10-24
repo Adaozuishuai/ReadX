@@ -14,11 +14,11 @@
 //  3. 结论压力：提示词要求至少 3 条该论文自己的 conclusion、且 ≥30% 的关系指向 conclusion；
 //     服务端只统计（响应 stats + 日志）不硬性拒绝，避免过度拒绝抽出一张空图。
 //
-// 存储：app_state['knowledge-graph']（仿 ideas.go 的 load/replace 模式），顶层带
+// 存储：app_state['knowledge-graph']（经 appStateStore，每 key 锁），顶层带
 // promptVersion；版本不一致的旧记录整份视为「没抽过」（见 loadGraph 的版本门）。
-// 读改写持专用的 graphMu。模型调用长达 180s，绝不能持 appStateMu/graphMu 跨 AI 请求——
-// 两把锁都只在 load-modify-save 的短窗口内持有，否则一次抽取会把图谱读写和其它 app_state
-// 功能一起卡死。
+// 读-改-写在 mutateGraph 的每 key 锁内原子完成。模型调用长达 180s，绝不能在
+// 锁内跨 AI 请求——闭包只包住读-改-写本身，否则一次抽取会把图谱读写和其它
+// app_state 功能一起卡死。
 package httpapi
 
 import (
@@ -35,8 +35,12 @@ import (
 	"unicode"
 
 	"cbctv2/server/internal/ai"
+	"cbctv2/server/internal/appstate"
 	"cbctv2/server/internal/validate"
 )
+
+// errGraphDocMissing 是 mutateGraph 闭包里的 404 哨兵。
+var errGraphDocMissing = errors.New("这篇论文还没有抽取过知识图谱")
 
 const (
 	// graphStateKey 是知识图谱在 app_state 里的唯一键。
@@ -365,10 +369,8 @@ type graphModelOutput struct {
 
 // handleGraphList 合并所有文档的抽取结果成一张跨文献图谱。
 func (s *Server) handleGraphList(w http.ResponseWriter, r *http.Request) {
-	// 短锁读：loadGraph 完成即放锁，合并与计数都在锁外做。
-	s.graphMu.Lock()
+	// 读走 appStateStore 的每 key 读锁（原先的 graphMu 短锁），合并与计数都在锁外做。
 	graph, err := s.loadGraph(r.Context())
-	s.graphMu.Unlock()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -529,7 +531,7 @@ func (s *Server) handleGraphList(w http.ResponseWriter, r *http.Request) {
 // handleGraphExtract 对一篇论文抽实体与带证据的关系。
 //
 // 纪律：AI 调用期间**不持任何锁**（180s 的出站请求不能堵住图谱读写）；
-// 调完之后才在 graphMu 内 load-modify-save。
+// 模型调用结束后才做读-改-写（mutateGraph 的每 key 锁内）。
 func (s *Server) handleGraphExtract(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Key   string `json:"key"`
@@ -575,9 +577,7 @@ func (s *Server) handleGraphExtract(w http.ResponseWriter, r *http.Request) {
 	// 幂等：已有结果且未要求重抽 → 直接回当前 paper，不调模型、不烧额度。
 	// 这个短锁只覆盖读检查，不含模型调用。旧 promptVersion 的记录在 loadGraph 里已被
 	// 当作空图，所以过期的记录不会让这里误判成「已抽过」。
-	s.graphMu.Lock()
 	existing, loadErr := s.loadGraph(r.Context())
-	s.graphMu.Unlock()
 	if loadErr != nil {
 		writeError(w, http.StatusInternalServerError, loadErr.Error())
 		return
@@ -611,16 +611,11 @@ func (s *Server) handleGraphExtract(w http.ResponseWriter, r *http.Request) {
 		stats.ConclusionRatio*100, stats.MergedEntities, stats.Dropped,
 		stats.DroppedVocabulary, stats.DroppedEndpoint, stats.DroppedEvidence)
 
-	// 调完之后才在 graphMu 内 load-modify-save。
-	s.graphMu.Lock()
-	defer s.graphMu.Unlock()
-	graph, err := s.loadGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	graph.Docs[key] = record
-	if err := s.replaceGraph(r.Context(), graph); err != nil {
+	// 模型调用已结束；读-改-写收进 mutateGraph 的每 key 锁内原子完成。
+	if err := s.mutateGraph(r.Context(), func(graph *knowledgeGraph) (*knowledgeGraph, error) {
+		graph.Docs[key] = record
+		return graph, nil
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "保存知识图谱失败: "+err.Error())
 		return
 	}
@@ -635,19 +630,17 @@ func (s *Server) handleGraphDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.graphMu.Lock()
-	defer s.graphMu.Unlock()
-	graph, err := s.loadGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if _, found := graph.Docs[key]; !found {
-		writeError(w, http.StatusNotFound, "这篇论文还没有抽取过知识图谱")
-		return
-	}
-	delete(graph.Docs, key)
-	if err := s.replaceGraph(r.Context(), graph); err != nil {
+	if err := s.mutateGraph(r.Context(), func(graph *knowledgeGraph) (*knowledgeGraph, error) {
+		if _, found := graph.Docs[key]; !found {
+			return nil, errGraphDocMissing
+		}
+		delete(graph.Docs, key)
+		return graph, nil
+	}); err != nil {
+		if errors.Is(err, errGraphDocMissing) {
+			writeError(w, http.StatusNotFound, "这篇论文还没有抽取过知识图谱")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "删除知识图谱抽取失败: "+err.Error())
 		return
 	}
@@ -1125,20 +1118,15 @@ func graphStatsOf(record graphDocExtraction) graphStats {
 // 只会误导；同时 POST extract 的幂等检查看到空图自然会重抽。刻意不删除旧数据本身：
 // 重抽成功时由 replaceGraph 覆盖同一把 key。
 func (s *Server) loadGraph(ctx context.Context) (*knowledgeGraph, error) {
-	var body string
-	err := s.handle.QueryRowContext(ctx, `SELECT value_json FROM app_state WHERE key = ?`, graphStateKey).Scan(&body)
-	if errors.Is(err, sql.ErrNoRows) {
-		return newKnowledgeGraph(), nil
-	}
+	stored, exists, err := appstate.Load[knowledgeGraph](ctx, s.appStateStore, graphStateKey)
 	if err != nil {
+		if exists {
+			// 损坏时报错而不是返回空图：返回空会让下一次写入覆盖已有的全部抽取结果。
+			return nil, fmt.Errorf("知识图谱数据已损坏（app_state.%s 不是 JSON 对象）: %w", graphStateKey, err)
+		}
 		return nil, fmt.Errorf("读取知识图谱失败: %w", err)
 	}
-	stored := knowledgeGraph{}
-	if err := json.Unmarshal([]byte(body), &stored); err != nil {
-		// 损坏时报错而不是返回空图：返回空会让下一次写入覆盖已有的全部抽取结果。
-		return nil, fmt.Errorf("知识图谱数据已损坏（app_state.%s 不是 JSON 对象）: %w", graphStateKey, err)
-	}
-	if stored.PromptVersion != graphPromptVersion {
+	if !exists || stored.PromptVersion != graphPromptVersion {
 		return newKnowledgeGraph(), nil
 	}
 	if stored.Docs == nil {
@@ -1147,20 +1135,34 @@ func (s *Server) loadGraph(ctx context.Context) (*knowledgeGraph, error) {
 	return &stored, nil
 }
 
+// mutateGraph 在 knowledge-graph 键的每 key 锁内做原子读-改-写：版本门在锁内
+// 生效、promptVersion 在写回时统一盖章。模型调用绝不在闭包内——闭包只包住
+// 读-改-写本身（180s 的抽取仍发生在任何锁之外）。
+func (s *Server) mutateGraph(ctx context.Context, fn func(graph *knowledgeGraph) (*knowledgeGraph, error)) error {
+	return s.appStateStore.Update(ctx, graphStateKey, func(cur []byte, exists bool) ([]byte, error) {
+		stored := knowledgeGraph{}
+		if exists {
+			if err := json.Unmarshal(cur, &stored); err != nil {
+				return nil, fmt.Errorf("知识图谱数据已损坏（app_state.%s 不是 JSON 对象）: %w", graphStateKey, err)
+			}
+		}
+		if stored.PromptVersion != graphPromptVersion {
+			stored = *newKnowledgeGraph()
+		}
+		if stored.Docs == nil {
+			stored.Docs = map[string]graphDocExtraction{}
+		}
+		next, err := fn(&stored)
+		if err != nil || next == nil {
+			return nil, err
+		}
+		next.PromptVersion = graphPromptVersion
+		return json.Marshal(next)
+	})
+}
+
 // replaceGraph 写入整份图谱。promptVersion 由这里统一盖章（不依赖调用方记得设置），
 // 保证落库的记录一定是当前契约版本。
-func (s *Server) replaceGraph(ctx context.Context, graph *knowledgeGraph) error {
-	graph.PromptVersion = graphPromptVersion
-	encoded, err := json.Marshal(graph)
-	if err != nil {
-		return err
-	}
-	_, err = s.handle.ExecContext(ctx,
-		`INSERT INTO app_state(key, value_json, updated_at) VALUES(?, ?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-		graphStateKey, string(encoded), nowStamp())
-	return err
-}
 
 func hasString(list []string, value string) bool {
 	for _, item := range list {

@@ -3,8 +3,6 @@ import type {
   BootstrapInfo,
   DocumentDetail,
   DocumentsResponse,
-  HealthResponse,
-  ImportReport,
   LatexEngine,
   LatexBuild,
   LatexAutoFixEvent,
@@ -28,6 +26,7 @@ import type {
   WireStatus,
 } from '@cbct/shared';
 import { isApiFailure } from '@cbct/shared';
+import { downloadBlob } from '../lib/download';
 
 /**
  * API 客户端。
@@ -59,7 +58,7 @@ export function isTransportFailure(error: unknown): boolean {
   );
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init?: { signal?: AbortSignal; method?: string; body?: unknown },
 ): Promise<T> {
@@ -204,6 +203,15 @@ export interface GenerateProgress {
   message: string;
 }
 
+export interface ComparisonExperimentJob {
+  key: string;
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  percent: number;
+  message: string;
+  error?: string;
+  updatedAt: string;
+}
+
 export interface LatexAIEditProposal {
   summary: string;
   filePath: string;
@@ -228,6 +236,73 @@ export interface ChatChunk {
  * 服务端在流里既会发 delta 也会发 error（例如上游 finish_reason 不是 stop）——
  * 那种情况下已吐出的半句必须保留在界面上但标明「未保存」，不能假装成功。
  */
+/**
+ * 唯一的 SSE 传输与解析实现。原先 6 份同构的 reader+decoder+buffer+split('\n')
+ * 循环（streamChat / streamLatexAutoFix / streamPresentationTheme /
+ * streamPresentationPlan / attachArxivPDF / generate）收敛于此；线上协议不变，
+ * 各端点只保留事件分发与终止条件。uploadPublications 是 XHR 上传（进度语义不同）
+ * 与未使用的 importRemotePublication 暂不迁移，待 client.ts 按资源拆分时处理。
+ */
+
+/** 鉴权发起一个 SSE POST。fetch 层错误原样抛出（调用方按需包装）。 */
+async function fetchSSE(endpoint: string, requestBody: unknown, signal?: AbortSignal): Promise<Response> {
+  const { apiBase, token } = bootstrap();
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${apiBase}${endpoint}`, {
+    method: 'POST', headers, body: JSON.stringify(requestBody), signal, credentials: 'omit',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let message = `HTTP ${response.status}`;
+    try {
+      const parsed = JSON.parse(text) as ApiFailure;
+      if (isApiFailure(parsed)) message = parsed.error;
+    } catch {
+      if (text) message = text.slice(0, 200);
+    }
+    throw new ApiError(message, response.status);
+  }
+  return response;
+}
+
+/**
+ * 消费 SSE 流：逐行解析 data: 帧，JSON.parse 成功后交给 onEvent；
+ * onEvent 返回 true 表示该帧为终止帧（done/error/result 等，各端点自行判定）。
+ * 单帧解析失败跳过（缺终止帧会在收束处统一报 502，与原实现一致）。
+ */
+async function consumeSSE<T>(
+  response: Response,
+  emptyBodyMessage: string,
+  onEvent: (event: T) => boolean,
+  noTerminalMessage: string,
+): Promise<void> {
+  if (!response.body) throw new ApiError(emptyBodyMessage, response.status);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let terminal = false;
+  const processLine = (raw: string) => {
+    const line = raw.trim();
+    if (!line.startsWith('data:')) return;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === '[DONE]') return;
+    try {
+      if (onEvent(JSON.parse(payload) as T)) terminal = true;
+    } catch { /* 单帧解析失败不影响整体：缺终止帧会在下面统一报错。 */ }
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    lines.forEach(processLine);
+  }
+  processLine(buffer + decoder.decode());
+  if (!terminal) throw new ApiError(noTerminalMessage, 502);
+}
+
 export async function streamChat(
   request: {
     key: string;
@@ -245,62 +320,12 @@ export async function streamChat(
   signal?: AbortSignal,
   endpoint = '/v1/ai/chat',
 ): Promise<void> {
-  const { apiBase, token } = bootstrap();
-  const headers = new Headers({
-    'Content-Type': 'application/json',
-    Accept: 'text/event-stream',
-  });
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-
-  const response = await fetch(`${apiBase}${endpoint}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(request),
-    signal,
-    credentials: 'omit',
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    let message = `HTTP ${response.status}`;
-    try {
-      const parsed = JSON.parse(text) as ApiFailure;
-      if (isApiFailure(parsed)) message = parsed.error;
-    } catch {
-      if (text) message = text.slice(0, 200);
-    }
-    throw new ApiError(message, response.status);
-  }
-  if (!response.body)
-    throw new ApiError('接口没有返回流式内容。', response.status);
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let terminal = false;
-  const processLine = (raw: string) => {
-    const line = raw.trim();
-    if (!line.startsWith('data:')) return;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === '[DONE]') return;
-    let chunk: ChatChunk;
-    try {
-      chunk = JSON.parse(payload) as ChatChunk;
-    } catch {
-      return;
-    }
-    if (chunk.done || chunk.error) terminal = true;
+  const response = await fetchSSE(endpoint, request, signal);
+  await consumeSSE<ChatChunk>(response, '接口没有返回流式内容。', (chunk) => {
+    const terminal = Boolean(chunk.done || chunk.error);
     onChunk(chunk);
-  };
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    lines.forEach(processLine);
-  }
-  processLine(buffer + decoder.decode());
-  if (!terminal) throw new ApiError('连接中断，回答未完成，未保存。', 502);
+    return terminal;
+  }, '连接中断，回答未完成，未保存。');
 }
 
 export function streamLatexChat(
@@ -344,94 +369,22 @@ export async function streamLatexAutoFix(
   onEvent: (event: LatexAutoFixEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const { apiBase, token } = bootstrap();
-  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(`${apiBase}/v1/ai/latex-autofix`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(requestBody),
-    signal,
-    credentials: 'omit',
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    let message = `HTTP ${response.status}`;
-    try {
-      message = (JSON.parse(text) as ApiFailure).error || message;
-    } catch {
-      if (text) message = text.slice(0, 200);
-    }
-    throw new ApiError(message, response.status);
-  }
-  if (!response.body) throw new ApiError('自动修复服务没有返回流式内容。', response.status);
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let terminal = false;
-  const processLine = (raw: string) => {
-    const line = raw.trim();
-    if (!line.startsWith('data:')) return;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === '[DONE]') return;
-    try {
-      const event = JSON.parse(payload) as LatexAutoFixEvent;
-      if (event.done || event.error) terminal = true;
-      onEvent(event);
-    } catch {
-      /* 单帧解析失败不影响整体：缺终止帧会在下面统一报错。 */
-    }
-  };
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    lines.forEach(processLine);
-  }
-  processLine(buffer + decoder.decode());
-  if (!terminal) throw new ApiError('自动修复连接中断，未确认结果。', 502);
+  const response = await fetchSSE('/v1/ai/latex-autofix', requestBody, signal);
+  await consumeSSE<LatexAutoFixEvent>(response, '自动修复服务没有返回流式内容。', (event) => {
+    const terminal = Boolean(event.done || event.error);
+    onEvent(event);
+    return terminal;
+  }, '自动修复连接中断，未确认结果。');
 }
 
 /** 使用已配置的助教模型分析 PPT 模板摘要，不附带论文正文。 */
 export async function streamPresentationTheme(summary: string, onChunk: (chunk: ChatChunk) => void, signal?: AbortSignal): Promise<void> {
-  const { apiBase, token } = bootstrap();
-  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(`${apiBase}/v1/ai/presentation-theme`, { method: 'POST', headers, body: JSON.stringify({ summary }), signal, credentials: 'omit' });
-  if (!response.ok) {
-    const text = await response.text();
-    let message = `HTTP ${response.status}`;
-    try { message = (JSON.parse(text) as ApiFailure).error || message; } catch { if (text) message = text.slice(0, 200); }
-    throw new ApiError(message, response.status);
-  }
-  if (!response.body) throw new ApiError('模板分析服务没有返回流式内容。', response.status);
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let terminal = false;
-  const processLine = (raw: string) => {
-    const line = raw.trim();
-    if (!line.startsWith('data:')) return;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === '[DONE]') return;
-    try {
-      const chunk = JSON.parse(payload) as ChatChunk;
-      if (chunk.done || chunk.error) terminal = true;
-      onChunk(chunk);
-    } catch { /* Ignore malformed SSE frames; a missing terminal frame is reported below. */ }
-  };
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    lines.forEach(processLine);
-  }
-  processLine(buffer + decoder.decode());
-  if (!terminal) throw new ApiError('模板分析连接中断。', 502);
+  const response = await fetchSSE('/v1/ai/presentation-theme', { summary }, signal);
+  await consumeSSE<ChatChunk>(response, '模板分析服务没有返回流式内容。', (chunk) => {
+    const terminal = Boolean(chunk.done || chunk.error);
+    onChunk(chunk);
+    return terminal;
+  }, '模板分析连接中断。');
 }
 
 export interface PresentationPlanInput {
@@ -445,42 +398,12 @@ export interface PresentationPlanInput {
 
 /** Run the bundled baoyu-slide-deck skill through the configured AI provider. */
 export async function streamPresentationPlan(input: PresentationPlanInput, onChunk: (chunk: ChatChunk) => void, signal?: AbortSignal): Promise<void> {
-  const { apiBase, token } = bootstrap();
-  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(`${apiBase}/v1/ai/presentation-plan`, { method: 'POST', headers, body: JSON.stringify(input), signal, credentials: 'omit' });
-  if (!response.ok) {
-    const text = await response.text();
-    let message = `HTTP ${response.status}`;
-    try { message = (JSON.parse(text) as ApiFailure).error || message; } catch { if (text) message = text.slice(0, 200); }
-    throw new ApiError(message, response.status);
-  }
-  if (!response.body) throw new ApiError('baoyu-slide-deck 没有返回页面规划。', response.status);
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let terminal = false;
-  const processLine = (raw: string) => {
-    const line = raw.trim();
-    if (!line.startsWith('data:')) return;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === '[DONE]') return;
-    try {
-      const chunk = JSON.parse(payload) as ChatChunk;
-      if (chunk.done || chunk.error) terminal = true;
-      onChunk(chunk);
-    } catch { /* Ignore malformed SSE frames; a missing terminal frame is reported below. */ }
-  };
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    lines.forEach(processLine);
-  }
-  processLine(buffer + decoder.decode());
-  if (!terminal) throw new ApiError('baoyu-slide-deck 页面规划连接中断。', 502);
+  const response = await fetchSSE('/v1/ai/presentation-plan', input, signal);
+  await consumeSSE<ChatChunk>(response, 'baoyu-slide-deck 没有返回页面规划。', (chunk) => {
+    const terminal = Boolean(chunk.done || chunk.error);
+    onChunk(chunk);
+    return terminal;
+  }, 'baoyu-slide-deck 页面规划连接中断。');
 }
 
 export interface Annotation {
@@ -938,7 +861,7 @@ export interface ArxivDownloadProgress {
   total: number;
 }
 
-async function authenticatedFetch(
+export async function authenticatedFetch(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
@@ -971,57 +894,6 @@ export interface NewAnnotation {
   tags?: string[];
 }
 
-async function importRemotePublication(
-  value: string,
-  title?: string,
-  metadata?: { doi: string; authors: string[]; venue?: string; year?: number },
-  signal?: AbortSignal,
-  onProgress?: (received: number, total: number) => void,
-): Promise<ImportedDocument> {
-  const response = await authenticatedFetch('/v1/import/url', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify({ value, title, ...metadata }),
-    signal,
-  });
-  if (!response.body) throw new ApiError('下载服务未返回内容', 502);
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let result: ImportedDocument | undefined;
-  const process = (line: string) => {
-    if (!line.startsWith('data:')) return;
-    let event: {
-      progress?: { received: number; total: number };
-      result?: ImportedDocument;
-      error?: string;
-    };
-    try {
-      event = JSON.parse(line.slice(5).trim()) as typeof event;
-    } catch {
-      throw new ApiError('下载服务返回了无效的进度数据，导入状态未确认。', 502);
-    }
-    if (event.error) throw new ApiError(event.error, 502);
-    if (event.progress)
-      onProgress?.(event.progress.received, event.progress.total);
-    if (event.result) result = event.result;
-  };
-  for (;;) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    buffer += decoder.decode(chunk.value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    lines.forEach(process);
-  }
-  process(buffer + decoder.decode());
-  if (!result)
-    throw new ApiError('连接中断，未确认导入结果，请刷新书库。', 502);
-  return result;
-}
 
 export type CitationFormat = 'bibtex' | 'ris';
 
@@ -1196,27 +1068,6 @@ export interface CitationNetworkResponse {
 }
 
 export const api = {
-  searchFreeBooks: (pageURL: string, signal?: AbortSignal) => {
-    const params = new URLSearchParams({ page: pageURL });
-    return request<{
-      count: number;
-      next: string | null;
-      previous: string | null;
-      results: {
-        id: number;
-        title: string;
-        authors: { name: string }[];
-        summaries?: string[];
-        languages: string[];
-        download_count: number;
-        formats: Record<string, string>;
-      }[];
-    }>(`/v1/books/search?${params}`, { signal });
-  },
-  downloadFreeBook: async (url: string, signal?: AbortSignal) => {
-    const response = await authenticatedFetch(`/v1/books/download?${new URLSearchParams({ url })}`, { signal });
-    return response.blob();
-  },
   /** Legado 书源页面经本地 Go 服务抓取并校验公网 HTTPS 地址。 */
   fetchWebSourcePage: async (url: string, signal?: AbortSignal) => {
     const response = await authenticatedFetch(
@@ -1270,7 +1121,6 @@ export const api = {
   workbuddyLoginStatus: () => request<{ authenticated: boolean; nickname?: string; expiresAt?: number; login?: { state?: string; url?: string; pending: boolean; error?: string } }>('/v1/ai/workbuddy/login'),
   workbuddyLogout: () => request<{ authenticated: boolean }>('/v1/ai/workbuddy/login', { method: 'DELETE' }),
   upload: uploadPublications,
-  importURL: importRemotePublication,
   dailyRecommendations: (rules: DailyRecommendationRules, signal?: AbortSignal) => {
     const query = new URLSearchParams({
       field: rules.field,
@@ -1311,28 +1161,19 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify({ arxiv }), signal,
     });
-    if (!response.body) throw new ApiError('arXiv 下载服务没有返回进度流', 502);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
     let result: ImportedDocument | undefined;
     let streamError = '';
-    const processLine = (line: string) => {
-      if (!line.startsWith('data:')) return;
-      const event = JSON.parse(line.slice(5).trim()) as { progress?: ArxivDownloadProgress; result?: ImportedDocument; error?: string };
-      if (event.progress) onProgress?.(event.progress);
-      if (event.result) result = event.result;
-      if (event.error) streamError = event.error;
-    };
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      lines.forEach(processLine);
-    }
-    processLine(buffer + decoder.decode());
+    await consumeSSE<{ progress?: ArxivDownloadProgress; result?: ImportedDocument; error?: string }>(
+      response,
+      'arXiv 下载服务没有返回进度流',
+      (event) => {
+        if (event.progress) onProgress?.(event.progress);
+        if (event.result) result = event.result;
+        if (event.error) streamError = event.error;
+        return Boolean(event.result || event.error);
+      },
+      'arXiv 下载连接中断，未确认 PDF 已关联。',
+    );
     if (streamError) throw new ApiError(streamError, 502);
     if (!result) throw new ApiError('arXiv 下载连接中断，未确认 PDF 已关联。', 502);
     return result;
@@ -1394,11 +1235,7 @@ export const api = {
       `/v1/documents/${encodeURIComponent(key)}/location`,
       { method: 'PUT', body: location },
     ),
-  health: (signal?: AbortSignal) =>
-    request<HealthResponse>('/healthz', { signal }),
   meta: (signal?: AbortSignal) => request<MetaResponse>('/v1/meta', { signal }),
-  aiStatus: (signal?: AbortSignal) =>
-    request<AIStatus>('/v1/ai/status', { signal }),
   annotations: (key: string, signal?: AbortSignal) =>
     request<AnnotationListResponse>(
       `/v1/annotations/${encodeURIComponent(key)}`,
@@ -1449,14 +1286,7 @@ export const api = {
     const filename =
       /filename="([^"]+)"/.exec(disposition)?.[1] ?? `${key}-annotations.md`;
     const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, filename);
     return filename;
   },
   readings: (key: string, signal?: AbortSignal) =>
@@ -1506,14 +1336,7 @@ export const api = {
       /filename="([^"]+)"/.exec(disposition)?.[1] ??
       `readx-citations.${params.format === 'ris' ? 'ris' : 'bib'}`;
     const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, filename);
     return {
       filename,
       exported: Number(response.headers.get('X-ReadX-Exported') ?? '0'),
@@ -1560,12 +1383,13 @@ export const api = {
       `/v1/documents/${encodeURIComponent(key)}/job/cancel`,
       { method: 'POST', signal },
     ),
-  renderStatus: (signal?: AbortSignal) => request<RenderStatus>('/v1/render/status', { signal }),
   ocrSettings: (signal?: AbortSignal) => request<OCRSettings>('/v1/ocr/settings', { signal }),
   saveOCRSettings: (body: { token?: string; clearToken?: boolean; baseURL?: string; model?: string }, signal?: AbortSignal) =>
     request<OCRSettings>('/v1/ocr/settings', { method: 'PUT', body, signal }),
-  readPaperPage: (body: { key: string; page: number; fingerprint: string; cachedOnly?: boolean; images?: string[] }, signal?: AbortSignal) =>
-    request<{ cached: boolean; ready: boolean; page: number; issues?: string[] }>('/v1/ai/paper-page', { method: 'POST', body, signal }),
+  comparisonExperimentJob: (key: string, signal?: AbortSignal) =>
+    request<ComparisonExperimentJob>(`/v1/documents/${encodeURIComponent(key)}/comparison-experiment-job`, { signal }),
+  startComparisonExperiment: (key: string) =>
+    request<ComparisonExperimentJob>(`/v1/documents/${encodeURIComponent(key)}/comparison-experiment-job`, { method: 'POST' }),
   generate: async (
     key: string,
     kind: 'motivation' | 'method' | 'experiment' | 'results' | 'reproduction' | 'visuals',
@@ -1575,51 +1399,29 @@ export const api = {
     onEntry?: (kind: string, entry: ReadingEntry) => void,
     paper?: Omit<ReadingGenerationInput, 'visuals'>,
   ): Promise<GenerateResponse> => {
-    const { apiBase, token } = bootstrap();
-    const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
-    if (token) headers.set('Authorization', `Bearer ${token}`);
+    // fetch 层的包装（abort 透传、本地服务未响应映射为 status 0）是该端点专属行为，保留；
+    // 帧解析收敛进 consumeSSE。
     let response: Response;
     try {
-      response = await fetch(`${apiBase}/v1/ai/generate`, {
-        method: 'POST', headers, body: JSON.stringify({ key, kind, visuals, ...paper }), credentials: 'omit', signal,
-      });
+      response = await fetchSSE('/v1/ai/generate', { key, kind, visuals, ...paper }, signal);
     } catch (error) {
       if (signal?.aborted) throw error;
       throw new ApiError(error instanceof Error ? error.message : '本地服务未响应', 0);
     }
-    if (!response.ok) {
-      const text = await response.text();
-      let message = `HTTP ${response.status}`;
-      try { const parsed = JSON.parse(text) as ApiFailure; if (isApiFailure(parsed)) message = parsed.error; }
-      catch { if (text) message = text.slice(0, 200); }
-      throw new ApiError(message, response.status);
-    }
-    if (!response.body) throw new ApiError('精读生成没有返回进度流。', response.status);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
     let result: GenerateResponse | null = null;
     let streamError = '';
-    const processLine = (raw: string) => {
-      const line = raw.trim();
-      if (!line.startsWith('data:')) return;
-      try {
-        const event = JSON.parse(line.slice(5).trim()) as { progress?: GenerateProgress; result?: GenerateResponse; error?: string; entry?: ReadingEntry; kind?: string };
+    await consumeSSE<{ progress?: GenerateProgress; result?: GenerateResponse; error?: string; entry?: ReadingEntry; kind?: string }>(
+      response,
+      '精读生成没有返回进度流。',
+      (event) => {
         if (event.progress) onProgress?.(event.progress);
         if (event.entry && event.kind) onEntry?.(event.kind, event.entry);
         if (event.result) result = event.result;
         if (event.error) streamError = event.error;
-      } catch { /* Ignore incomplete or malformed progress events. */ }
-    };
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      lines.forEach(processLine);
-    }
-    processLine(buffer + decoder.decode());
+        return Boolean(event.result || event.error);
+      },
+      '生成连接中断，精读结果未确认保存。',
+    );
     if (streamError) throw new ApiError(streamError, 502);
     if (!result) throw new ApiError('生成连接中断，精读结果未确认保存。', 502);
     return result;
@@ -1662,11 +1464,6 @@ export const api = {
         body: { status },
       },
     ),
-  importLegacy: (forceBackup = false) =>
-    request<ImportReport>('/v1/import', {
-      method: 'POST',
-      body: { forceBackup },
-    }),
   documentsMeta: (signal?: AbortSignal) =>
     request<DocumentMetaResponse>('/v1/documents-meta', { signal }),
   emptyTrash: (keys: string[]) =>
@@ -1848,14 +1645,7 @@ export const api = {
     const disposition = response.headers.get('Content-Disposition') ?? '';
     const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'readx-latex-project.zip';
     const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, filename);
     return filename;
   },
 
@@ -1907,23 +1697,12 @@ export const api = {
     request<LatexRestoreReport>(`/v1/latex/snapshots/${encodeURIComponent(snapshotId)}`, {
       method: 'POST',
     }),
-  latexDeleteSnapshot: (snapshotId: string) =>
-    request<{ deleted: boolean }>(`/v1/latex/snapshots/${encodeURIComponent(snapshotId)}`, {
-      method: 'DELETE',
-    }),
   /** 下载 PDF 到本地。 */
   latexDownloadPdf: async (buildId: string, filename: string): Promise<void> => {
     const response = await authenticatedFetch(
       `/v1/latex/builds/${encodeURIComponent(buildId)}/pdf?download=1`,
     );
     const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, filename);
   },
 };

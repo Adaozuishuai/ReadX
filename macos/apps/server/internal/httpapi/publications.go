@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,9 +18,11 @@ import (
 	"strings"
 	"time"
 
+	"cbctv2/server/internal/booksources"
 	"cbctv2/server/internal/legacy"
 	"cbctv2/server/internal/ocr"
 	"cbctv2/server/internal/publication"
+	"cbctv2/server/internal/sseio"
 	"cbctv2/server/internal/translate"
 )
 
@@ -431,38 +432,36 @@ func (s *Server) runLocalPDFImport(
 // Public-only dialing applies again to redirects and DNS results, avoiding a URL import
 // becoming a way to read loopback services or private network files.
 func publicHTTPClient() *http.Client {
-	dialer := &net.Dialer{Timeout: 15 * time.Second}
-	transport := &http.Transport{ForceAttemptHTTP2: true, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 30 * time.Second, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		for _, addr := range ips {
-			ip := addr.IP
-			if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-				return nil, fmt.Errorf("联网导入只允许公开互联网地址")
-			}
-		}
-		var last error
-		for _, addr := range ips {
-			c, e := dialer.DialContext(ctx, network, net.JoinHostPort(addr.IP.String(), port))
-			if e == nil {
-				return c, nil
-			}
-			last = e
-		}
-		return nil, last
-	}}
-	return &http.Client{Transport: transport, Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) > 5 {
-			return fmt.Errorf("重定向过多")
-		}
-		return validateRemoteURL(req.URL)
-	}}
+	// 拨号防护共享 booksources 的实现：此前这里缺 CGNAT 100.64.0.0/10 与
+	// TEST-NET/240.0.0.0/4 等保留网段，https 起始的重定向链还允许降级到 http。
+	transport := &http.Transport{
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		DialContext:           booksources.DialPublicGuard(15*time.Second, nil),
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   90 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return publicRedirectCheck(via, req)
+		},
+	}
+}
+
+// publicRedirectCheck 重定向逐跳复检 URL 策略，且 https 起始的请求链不得降级到
+// http（此前允许）。http 起始的既有导入行为保持不变。
+func publicRedirectCheck(via []*http.Request, next *http.Request) error {
+	if len(via) > 5 {
+		return fmt.Errorf("重定向过多")
+	}
+	if err := validateRemoteURL(next.URL); err != nil {
+		return err
+	}
+	if len(via) > 0 && via[0].URL.Scheme == "https" && next.URL.Scheme == "http" {
+		return fmt.Errorf("重定向不得降级到 http")
+	}
+	return nil
 }
 func validateRemoteURL(u *url.URL) error {
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
@@ -694,16 +693,8 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Accel-Buffering", "no")
-	emit := func(payload any) {
-		encoded, _ := json.Marshal(payload)
-		fmt.Fprintf(w, "data: %s\n\n", encoded)
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-	}
+	out := sseio.Begin(w)
+	emit := out.Send
 
 	link := "https://arxiv.org/pdf/" + id
 	emit(map[string]any{"progress": map[string]any{"stage": "download", "message": "正在从 arXiv 下载论文 PDF", "received": 0, "total": 0}})
@@ -898,16 +889,12 @@ func (s *Server) handlePublicationURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stream := !body.DownloadOnly && strings.Contains(r.Header.Get("Accept"), "text/event-stream")
-	emit := func(payload any) {
-		body, _ := json.Marshal(payload)
-		fmt.Fprintf(w, "data: %s\n\n", body)
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-	}
+	// JSON 模式不发 SSE 头；emit 保持为空函数，与原实现「只在 stream 分支写帧」一致。
+	var out *sseio.Writer
+	emit := func(any) {}
 	if stream {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-store")
+		out = sseio.Begin(w)
+		emit = out.Send
 		emit(map[string]any{"progress": map[string]int64{"received": 0, "total": 0}})
 	}
 	fail := func(status int, message string) {

@@ -60,6 +60,19 @@ test('paragraph hit testing stays inside the correct column and ignores page whi
   assert.equal(paragraphAt(layout, 100 / 600, 300 / 800), null);
 });
 
+test('paragraph edge tolerance covers small OCR gaps without stealing exact hits or column whitespace', () => {
+  const layout = { width: 600, height: 800, blocks: [
+    { text: 'Left paragraph', x: 40, y: 100, width: 220, height: 30, fontSize: 10 },
+    { text: 'Right paragraph', x: 274, y: 100, width: 220, height: 30, fontSize: 10 },
+    { text: 'Next paragraph', x: 40, y: 133, width: 220, height: 30, fontSize: 10 },
+  ] };
+  assert.equal(paragraphAt(layout, 38 / 600, 115 / 800), null);
+  assert.equal(paragraphAt(layout, 38 / 600, 115 / 800, 4), 0);
+  assert.equal(paragraphAt(layout, 100 / 600, 134 / 800, 4), 2, 'an exact paragraph wins over a padded neighbor');
+  assert.equal(paragraphAt(layout, 267 / 600, 115 / 800, 4), null, 'the middle of the column gutter stays empty');
+  assert.equal(paragraphAt(layout, 100 / 600, 300 / 800, 4), null);
+});
+
 test('段落末行（短行）并入上一段，不再被切成独立段落', () => {
   const layout = buildPDFLayout(600, 800, [
     { text: 'Sparse-view CBCT reconstruction remains an ill-posed inverse problem that', x: 47, y: 180, width: 252, height: 10 },

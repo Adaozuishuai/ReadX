@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { contentHash } from '../components/slack/bookImport';
 import {
   deleteItemDeep,
   getChapters,
@@ -28,6 +29,7 @@ import {
 } from '../components/slack/import';
 import type {
   ImportJob,
+  DownloadedBookMetadata,
   ParsedAsset,
   ParsedComic,
   ParsedNovel,
@@ -44,7 +46,7 @@ function coverTone(title: string): number {
   return Math.abs(hash) % 6;
 }
 
-async function saveNovel(parsed: ParsedNovel, source?: string): Promise<SlackItem> {
+async function saveNovel(parsed: ParsedNovel, source?: string, metadata?: DownloadedBookMetadata): Promise<SlackItem> {
   const now = Date.now();
   const item: SlackItem = {
     id: newId(),
@@ -60,8 +62,14 @@ async function saveNovel(parsed: ParsedNovel, source?: string): Promise<SlackIte
     coverTone: coverTone(parsed.title),
     sizeBytes: parsed.sizeBytes,
     source: source?.trim() || undefined,
+    providerId: metadata?.providerId,
+    providerBookId: metadata?.providerBookId,
+    sourceUrl: metadata?.sourceUrl,
+    sourceLicense: metadata?.sourceLicense,
+    contentSha256: metadata?.contentSha256,
+    importedAt: metadata?.importedAt,
   };
-  await putLibraryEntry(
+  return await putLibraryEntry(
     item,
     parsed.chapters.map((chapter, order) => ({
       order,
@@ -71,7 +79,6 @@ async function saveNovel(parsed: ParsedNovel, source?: string): Promise<SlackIte
     })),
     parsed.assets,
   );
-  return item;
 }
 
 async function saveComic(parsed: ParsedComic, source?: string, author = ''): Promise<SlackItem> {
@@ -91,8 +98,7 @@ async function saveComic(parsed: ParsedComic, source?: string, author = ''): Pro
     sizeBytes: parsed.sizeBytes,
     source: source?.trim() || undefined,
   };
-  await putLibraryEntry(item, [], parsed.assets);
-  return item;
+  return await putLibraryEntry(item, [], parsed.assets);
 }
 
 /**
@@ -171,7 +177,7 @@ export function useSlackLibrary() {
               updateJob(id, { status: 'working', message: '解析 EPUB…' });
               const parsed = await parseEpubFile(file);
               updateJob(id, { message: '写入本地文库…' });
-              await saveNovel(parsed);
+              await saveNovel(parsed, undefined, { title: parsed.title, author: parsed.author, contentSha256: await contentHash(file) });
             },
           });
         } else if (isTextFile(file)) {
@@ -182,7 +188,7 @@ export function useSlackLibrary() {
               updateJob(id, { status: 'working', message: '解析文本…' });
               const parsed = await parseTextFile(file);
               updateJob(id, { message: '写入本地文库…' });
-              await saveNovel(parsed);
+              await saveNovel(parsed, undefined, { title: parsed.title, author: parsed.author, contentSha256: await contentHash(file) });
             },
           });
         } else {
@@ -227,7 +233,7 @@ export function useSlackLibrary() {
   );
 
   const importDownloadedBook = useCallback(
-    async (file: File, metadata: { title: string; author: string; source?: string }) => {
+    async (file: File, metadata: DownloadedBookMetadata): Promise<SlackItem> => {
       const id = newId();
       setError('');
       setJobs((current) => [
@@ -235,28 +241,39 @@ export function useSlackLibrary() {
         { id, name: metadata.title || file.name, status: 'working', message: '解析下载文件…' },
       ]);
       try {
+        const hash = await contentHash(file);
+        if (metadata.contentSha256 && metadata.contentSha256 !== hash) throw new Error('导入文件内容校验失败');
+        metadata = { ...metadata, contentSha256: hash, importedAt: Date.now() };
+        const existing = (await listItems()).find(item => item.contentSha256 === hash);
+        if (existing) {
+          updateJob(id, { status: 'done', message: '相同文件已在书架，已保留原有阅读进度' });
+          await refresh();
+          window.setTimeout(() => setJobs(current => current.filter(job => job.id !== id)), 3200);
+          return existing;
+        }
+        let saved: SlackItem;
         if (isEpubFile(file)) {
           const parsed = await parseEpubFile(file);
           parsed.title = metadata.title.trim() || parsed.title;
           parsed.author = metadata.author.trim() || parsed.author;
           updateJob(id, { message: '写入本地文库…' });
-          await saveNovel(parsed, metadata.source);
+          saved = await saveNovel(parsed, metadata.source, metadata);
         } else if (isTextFile(file)) {
           const parsed = await parseTextFile(file);
           parsed.title = metadata.title.trim() || parsed.title;
           parsed.author = metadata.author.trim() || parsed.author;
           updateJob(id, { message: '写入本地文库…' });
-          await saveNovel(parsed, metadata.source);
+          saved = await saveNovel(parsed, metadata.source, metadata);
         } else if (isComicArchive(file)) {
           const parsed = await parseComicArchive(file);
           parsed.title = metadata.title.trim() || parsed.title;
           updateJob(id, { message: '写入本地文库…' });
-          await saveComic(parsed, metadata.source, metadata.author);
+          saved = await saveComic(parsed, metadata.source, metadata.author);
         } else if (isImageFile(file)) {
           const title = metadata.title.trim() || comicTitleFromFiles([file]);
           const parsed = await parseComicImages([file], title);
           updateJob(id, { message: '写入本地文库…' });
-          await saveComic(parsed, metadata.source, metadata.author);
+          saved = await saveComic(parsed, metadata.source, metadata.author);
         } else {
           throw new Error('不支持该下载格式（支持 EPUB / TXT / CBZ / ZIP）');
         }
@@ -265,6 +282,7 @@ export function useSlackLibrary() {
         window.setTimeout(() => {
           setJobs((current) => current.filter((job) => job.id !== id));
         }, 3200);
+        return saved;
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
         updateJob(id, { status: 'error', message });

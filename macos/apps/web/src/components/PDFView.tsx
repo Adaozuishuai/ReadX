@@ -7,6 +7,7 @@ import {
 } from 'pdfjs-dist';
 import { fitPDFWidth, paragraphAt, mergePaperHeadings, type PaperHeading, type PDFLayout } from '@cbct/shared';
 import { headingsFromPDFPage } from '../api/pdfOutline';
+import { loadPDFParagraphLayout } from '../api/pdfParagraphs';
 import type { SelectedParagraph } from './ParagraphActions';
 import type { TextContent } from 'pdfjs-dist/types/src/display/api';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -385,6 +386,7 @@ export function usePDF(key: string | null, translated = false) {
 /** Continuous document canvas. It preserves a single scroll surface and renders nearby pages lazily. */
 export function PDFDocumentView({
   document,
+  documentKey,
   page,
   onPage,
   annotations,
@@ -398,8 +400,11 @@ export function PDFDocumentView({
   navigationRequest,
   find = null,
   onFind,
+  zoom,
+  onZoomChange,
 }: {
   document: PDFDocumentProxy;
+  documentKey?: string;
   page: number;
   onPage: (page: number) => void;
   annotations: Annotation[];
@@ -414,6 +419,8 @@ export function PDFDocumentView({
   find?: PDFFindState | null;
   /** 只有当前正在查找的那一栏会拿到 onFind，另一栏就不会重复扫描与标注。 */
   onFind?: (report: PDFFindReport) => void;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const slots = useRef(new Map<number, HTMLDivElement>());
@@ -421,13 +428,14 @@ export function PDFDocumentView({
   onPageRef.current = onPage;
   const activePageRef = useRef(page);
   activePageRef.current = page;
+  const readingAnchor = useRef({ page, ratio: 0 });
+  const geometry = useRef({ document, width: 0, zoom });
   const onFindRef = useRef(onFind);
   onFindRef.current = onFind;
   const findEnabled = Boolean(onFind);
   const [scrollRoot, setScrollRoot] = useState<HTMLElement | null>(null);
   const [nearPages, setNearPages] = useState<Set<number>>(() => new Set([page]));
   const [pageRatios, setPageRatios] = useState<number[]>([]);
-  const [zoom, setZoom] = useState(1);
   const [linkNavigation, setLinkNavigation] = useState<(PDFLocation & { nonce: number }) | null>(null);
   const [returnLocation, setReturnLocation] = useState<PDFLocation | null>(null);
   const [linkStatus, setLinkStatus] = useState('');
@@ -549,9 +557,27 @@ export function PDFDocumentView({
       nearObserver.observe(slot);
     }
     let frame = 0;
+    const restoreGeometry = () => {
+      const width = scrollRoot.clientWidth;
+      const previous = geometry.current;
+      geometry.current = { document, width, zoom };
+      if (previous.document !== document || previous.width === 0 || (previous.width === width && previous.zoom === zoom)) return;
+      const anchor = readingAnchor.current;
+      const slot = slots.current.get(anchor.page);
+      if (!slot) return;
+      cancelAnimationFrame(frame);
+      scrollRoot.scrollTop += slot.getBoundingClientRect().top - scrollRoot.getBoundingClientRect().top + anchor.ratio * slot.clientHeight;
+      activePageRef.current = anchor.page;
+      onPageRef.current(anchor.page);
+    };
+    const sizeObserver = new ResizeObserver(restoreGeometry);
+    sizeObserver.observe(scrollRoot);
+    // Zoom changes the page-slot height without changing the scroll viewport.
+    for (const slot of slots.current.values()) sizeObserver.observe(slot);
     const updateActivePage = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
+        if (geometry.current.width !== scrollRoot.clientWidth || geometry.current.zoom !== zoom) return;
         const rootBounds = scrollRoot.getBoundingClientRect();
         const marker = rootBounds.top + Math.min(96, rootBounds.height * 0.2);
         let nearestPage = 1;
@@ -573,16 +599,22 @@ export function PDFDocumentView({
           activePageRef.current = nearestPage;
           onPageRef.current(nearestPage);
         }
+        const activeSlot = slots.current.get(nearestPage);
+        if (activeSlot) readingAnchor.current = {
+          page: nearestPage,
+          ratio: Math.max(0, Math.min(1, (rootBounds.top - activeSlot.getBoundingClientRect().top) / Math.max(1, activeSlot.clientHeight))),
+        };
       });
     };
     scrollRoot.addEventListener('scroll', updateActivePage, { passive: true });
     updateActivePage();
     return () => {
       nearObserver.disconnect();
+      sizeObserver.disconnect();
       scrollRoot.removeEventListener('scroll', updateActivePage);
       cancelAnimationFrame(frame);
     };
-  }, [scrollRoot, document, pageRatios.length]);
+  }, [scrollRoot, document, pageRatios.length, zoom]);
 
   useEffect(() => {
     if (!scrollRoot || pageRatios.length !== document.numPages) return;
@@ -599,11 +631,10 @@ export function PDFDocumentView({
   return (
     <div className="pdf-reader pdf-document-reader">
       <div className="reader-format-tools">
-        <button onClick={() => setZoom((value) => Math.max(0.5, value - 0.2))} aria-label="缩小">−</button>
+        <button onClick={() => onZoomChange(Math.max(0.5, Math.round((zoom - 0.2) * 10) / 10))} disabled={zoom <= 0.5} aria-label="缩小">−</button>
         <span>{Math.round(zoom * 100)}%</span>
-        <button onClick={() => setZoom((value) => Math.min(3, value + 0.2))} aria-label="放大">＋</button>
-        <button onClick={() => setZoom(1)}>适合宽度</button>
-        <span className="pdf-document-page-count">第 {page} / {document.numPages} 页</span>
+        <button onClick={() => onZoomChange(Math.min(3, Math.round((zoom + 0.2) * 10) / 10))} disabled={zoom >= 3} aria-label="放大">＋</button>
+        <button onClick={() => onZoomChange(1)}>适合宽度</button>
         {returnLocation ? <button type="button" onClick={() => {
           setLinkNavigation((previous) => ({ ...returnLocation, nonce: (previous?.nonce ?? 0) + 1 }));
           onPageRef.current(returnLocation.page);
@@ -631,6 +662,7 @@ export function PDFDocumentView({
               {nearPages.has(pageNumber) ? (
                 <PDFPage
                   document={document}
+                  documentKey={documentKey}
                   page={pageNumber}
                   annotations={annotations}
                   focusedId={focusedId}
@@ -667,6 +699,7 @@ export function PDFDocumentView({
 
 export function PDFPage({
   document,
+  documentKey,
   page,
   annotations,
   focusedId,
@@ -683,6 +716,7 @@ export function PDFPage({
   onSourceLink,
 }: {
   document: PDFDocumentProxy;
+  documentKey?: string;
   page: number;
   annotations: Annotation[];
   focusedId: string | null;
@@ -698,7 +732,10 @@ export function PDFPage({
   find?: { query: string; caseSensitive: boolean; activeOccurrence: number | null; nonce: number } | null;
   onSourceLink?: (target: PDFLinkTarget) => void;
 }) {
-  const paragraphLayout = layout;
+  const [loadedParagraphLayout, setLoadedParagraphLayout] = useState<{ document: PDFDocumentProxy; page: number; layout: PDFLayout | null } | null>(null);
+  const paragraphLayout = documentKey
+    ? loadedParagraphLayout?.document === document && loadedParagraphLayout.page === page ? loadedParagraphLayout.layout : null
+    : layout;
   const container = useRef<HTMLDivElement>(null);
   const paper = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -715,7 +752,60 @@ export function PDFPage({
   const [rendering, setRendering] = useState(true);
   const [error, setError] = useState('');
   const [hoveredRegion, setHoveredRegion] = useState<{ kind: 'paragraph' | 'visual'; index: number } | null>(null);
-  useEffect(() => setHoveredRegion(null), [page, layout, paragraphMode]);
+  const hoverPointer = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!paragraphMode || !documentKey) return;
+    let cancelled = false;
+    void loadPDFParagraphLayout(document, documentKey, page).then((result) => {
+      if (!cancelled) setLoadedParagraphLayout({ document, page, layout: result });
+    }).catch(() => {
+      if (!cancelled) setLoadedParagraphLayout({ document, page, layout: null });
+    });
+    return () => { cancelled = true; };
+  }, [document, documentKey, page, paragraphMode, layout]);
+  useEffect(() => {
+    if (!paragraphMode || !paper.current) { setHoveredRegion(null); return; }
+    let frame = 0;
+    const update = () => {
+      const pointer = hoverPointer.current;
+      const element = paper.current;
+      let region: { kind: 'paragraph' | 'visual'; index: number } | null = null;
+      if (pointer && element && paragraphLayout) {
+        const bounds = element.getBoundingClientRect();
+        if (bounds.width > 0 && bounds.height > 0 && pointer.x >= bounds.left && pointer.x <= bounds.right
+          && pointer.y >= bounds.top && pointer.y <= bounds.bottom
+          && element.contains(window.document.elementFromPoint(pointer.x, pointer.y))) {
+          const x = (pointer.x - bounds.left) / bounds.width;
+          const y = (pointer.y - bounds.top) / bounds.height;
+          const visual = visualAt(paragraphLayout, x, y);
+          const paragraph = visual === null ? paragraphAt(paragraphLayout, x, y, 4 * paragraphLayout.width / bounds.width) : null;
+          if (visual !== null) region = { kind: 'visual', index: visual };
+          else if (paragraph !== null) region = { kind: 'paragraph', index: paragraph };
+        }
+      }
+      setHoveredRegion((previous) => previous?.kind === region?.kind && previous?.index === region?.index ? previous : region);
+    };
+    const move = (event: MouseEvent) => { hoverPointer.current = { x: event.clientX, y: event.clientY }; update(); };
+    const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(update); };
+    const clear = () => { hoverPointer.current = null; setHoveredRegion(null); };
+    const leave = (event: MouseEvent) => { if (!event.relatedTarget) clear(); };
+    window.addEventListener('mousemove', move, { passive: true });
+    window.addEventListener('blur', clear);
+    window.addEventListener('mouseout', leave);
+    const root = scrollRoot ?? container.current;
+    root?.addEventListener('scroll', schedule, { passive: true });
+    const observer = new ResizeObserver(schedule);
+    observer.observe(paper.current);
+    update();
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('blur', clear);
+      window.removeEventListener('mouseout', leave);
+      root?.removeEventListener('scroll', schedule);
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [page, paragraphLayout, paragraphMode, renderNonce, scrollRoot]);
   useEffect(() => {
     if (!container.current) return;
     let frame = 0;
@@ -894,23 +984,6 @@ export function PDFPage({
           data-rendering={rendering}
           ref={paper}
           onMouseUp={select}
-          onMouseMove={(event) => {
-            if (!paragraphMode || !paragraphLayout) return;
-            const bounds = event.currentTarget.getBoundingClientRect();
-            const x = (event.clientX - bounds.left) / bounds.width;
-            const y = (event.clientY - bounds.top) / bounds.height;
-            const visual = visualAt(paragraphLayout, x, y);
-            if (visual !== null) {
-              setHoveredRegion((previous) => previous?.kind === 'visual' && previous.index === visual ? previous : { kind: 'visual', index: visual });
-              return;
-            }
-            const paragraph = paragraphAt(paragraphLayout, x, y);
-            if (paragraph !== null) {
-              setHoveredRegion((previous) => previous?.kind === 'paragraph' && previous.index === paragraph ? previous : { kind: 'paragraph', index: paragraph });
-              return;
-            }
-            setHoveredRegion(null);
-          }}
           onMouseLeave={() => setHoveredRegion(null)}
           onClick={(event) => {
             if (event.detail > 1) return;
@@ -949,7 +1022,7 @@ export function PDFPage({
               }
               return;
             }
-            const index = paragraphAt(paragraphLayout, x, y);
+            const index = paragraphAt(paragraphLayout, x, y, 4 * paragraphLayout.width / bounds.width);
             if (index === null) return;
             const block = paragraphLayout.blocks[index]!;
             const targetY = block.y / paragraphLayout.height;

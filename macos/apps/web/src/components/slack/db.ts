@@ -93,21 +93,30 @@ export async function putLibraryEntry(
   item: SlackItem,
   chapters: SlackChapter[],
   assets: ParsedAsset[],
-): Promise<void> {
+): Promise<SlackItem> {
   const db = await openDatabase();
   const transaction = db.transaction([ITEMS, CHAPTERS, ASSETS], 'readwrite');
   const completion = done(transaction);
+  let saved = item;
   try {
-    transaction.objectStore(ITEMS).add(item);
-    transaction.objectStore(CHAPTERS).add({ itemId: item.id, chapters } satisfies ChapterSet);
-    const store = transaction.objectStore(ASSETS);
-    for (const asset of assets) store.add({ ...asset, itemId: item.id });
+    // Keep the duplicate check and all writes in one transaction, including
+    // simultaneous imports from another tab. Existing progress is untouched.
+    const request = transaction.objectStore(ITEMS).getAll();
+    request.onsuccess = () => {
+      const existing = item.contentSha256 && (request.result as SlackItem[]).find(value => value.contentSha256 === item.contentSha256);
+      if (existing) { saved = existing; return; }
+      transaction.objectStore(ITEMS).add(item);
+      transaction.objectStore(CHAPTERS).add({ itemId: item.id, chapters } satisfies ChapterSet);
+      const store = transaction.objectStore(ASSETS);
+      for (const asset of assets) store.add({ ...asset, itemId: item.id });
+    };
   } catch (cause) {
     transaction.abort();
     await completion.catch(() => {});
     throw cause;
   }
   await completion;
+  return saved;
 }
 
 export async function touchItem(id: string): Promise<SlackItem | null> {

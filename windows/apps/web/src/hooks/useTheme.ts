@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import { STORAGE_KEYS } from '../lib/storage';
 
 export type ThemeChoice = 'light' | 'dark' | 'paper' | 'system';
 
-const STORAGE_KEY = 'cbct-v2-theme';
+const STORAGE_KEY = STORAGE_KEYS.theme;
 const CHOICES: ThemeChoice[] = ['light', 'dark', 'paper', 'system'];
 
 function read(): ThemeChoice {

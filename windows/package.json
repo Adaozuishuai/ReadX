@@ -1,6 +1,7 @@
 {
   "name": "cbct-reading-v2",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "author": { "name": "Lee" },
   "private": true,
   "description": "ReadX — Go 后端 + React 前端 + Electron 壳（npm workspaces）",
   "workspaces": [
@@ -25,7 +26,8 @@
     "test:import": "node scripts/import-smoke.cjs",
     "test:presentation": "node scripts/test-presentation.cjs",
     "build:go": "node scripts/build-server.mjs",
-    "test": "npm run test:go && npm run test -w @cbct/shared && npm run test:latex && npm run typecheck && npm run test -w @cbct/desktop",
+    "test": "npm run test:go && npm run test -w @cbct/shared && npm run test:latex && npm run test:books && npm run typecheck && npm run test -w @cbct/desktop",
+    "test:books": "node --test scripts/book-sources.test.cjs",
     "test:latex": "node --test scripts/latex-state.test.cjs",
     "dev": "node scripts/dev.mjs",
     "start": "node scripts/dev.mjs --built",

@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"cbctv2/server/internal/appstate"
 )
 
 const (
@@ -438,12 +440,9 @@ func (s *Server) loadCitationNetworkCache(ctx context.Context, key string) (cita
 }
 
 func (s *Server) saveCitationNetworkCache(ctx context.Context, key string, payload citationNetworkPayload) {
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return
+	// 写入经 appStateStore（每 key 锁的统一入口；原先直写 SQL、无锁）。
+	// 读侧保留原查询：TTL 判断需要 updated_at 列，KV 接口刻意不暴露它。
+	if err := appstate.Save[citationNetworkPayload](ctx, s.appStateStore, citationNetworkKey(key), payload); err != nil {
+		return // 缓存写失败不致命，与原实现一致（原先忽略 Exec 错误）
 	}
-	_, _ = s.handle.ExecContext(ctx,
-		`INSERT INTO app_state(key, value_json, updated_at) VALUES(?,?,?)
-		 ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-		citationNetworkKey(key), string(encoded), nowStamp())
 }

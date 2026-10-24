@@ -119,7 +119,7 @@ func (job *DocumentJob) setStage(key, status, message string, completed, total i
 			if stage.StartedAt == "" {
 				stage.StartedAt = nowStamp()
 			}
-		case "done", "failed", "skipped":
+		case "done", "failed", "skipped", "cancelled", "interrupted":
 			if stage.StartedAt != "" && stage.FinishedAt == "" {
 				stage.FinishedAt = nowStamp()
 			}
@@ -139,10 +139,14 @@ func (job *DocumentJob) setStage(key, status, message string, completed, total i
 
 // beginImportJob 为新导入建立任务并登记可取消的上下文。
 func (s *Server) beginImportJob(key, name string, pages int, cancel context.CancelFunc) *DocumentJob {
+	previous, _ := s.loadImportJob(context.Background(), key)
 	job := newDocumentJob(key, name, pages)
 	s.jobsMu.Lock()
-	if previous, ok := s.importJobs[key]; ok && previous.job != nil {
-		job.Runs = append(job.Runs, previous.job.Runs...)
+	if runtime := s.importJobs[key]; runtime != nil && runtime.job != nil {
+		previous = runtime.job
+	}
+	if previous != nil {
+		job.Runs = append(append([]JobRun(nil), previous.Runs...), job.Runs...)
 		if len(job.Runs) > 10 {
 			job.Runs = job.Runs[len(job.Runs)-10:]
 		}
@@ -172,6 +176,9 @@ func (s *Server) updateImportJob(key string, mutate func(*DocumentJob)) {
 // jobStage 是阶段更新的便捷入口。
 func (s *Server) jobStage(key, stage, status, message string, completed, total int) {
 	s.updateImportJob(key, func(job *DocumentJob) {
+		if job.Status == "cancelled" && status != "cancelled" {
+			return
+		}
 		job.setStage(stage, status, message, completed, total)
 	})
 }
@@ -184,6 +191,7 @@ func (s *Server) finishImportJob(key, status, message string) {
 			return
 		}
 		job.Status = status
+		job.stopActiveStages(status, message)
 		if message != "" {
 			job.Error = message
 		}
@@ -195,6 +203,26 @@ func (s *Server) finishImportJob(key, status, message string) {
 			last.Pages = job.Pages
 		}
 	})
+}
+
+// Translation and rendering overlap. Ending the job must also stop every active
+// stage, preserving any completed stage and the stage that reported the failure.
+func (job *DocumentJob) stopActiveStages(status, message string) {
+	stageStatus := ""
+	switch status {
+	case "cancelled", "interrupted":
+		stageStatus = status
+	case "failed":
+		stageStatus = "interrupted"
+	default:
+		return
+	}
+	for index := range job.Stages {
+		stage := &job.Stages[index]
+		if stage.Status == "running" {
+			job.setStage(stage.Key, stageStatus, message, -1, -1)
+		}
+	}
 }
 
 func importFailureStatus(ctx context.Context, err error) string {
@@ -230,6 +258,7 @@ func (s *Server) loadImportJob(ctx context.Context, key string) (*DocumentJob, b
 	if runtime := s.importJobs[key]; runtime != nil && runtime.job != nil {
 		copy := cloneDocumentJob(runtime.job)
 		s.jobsMu.Unlock()
+		s.reconcileCompletedLeeJob(&copy)
 		return &copy, true
 	}
 	s.jobsMu.Unlock()
@@ -245,6 +274,7 @@ func (s *Server) loadImportJob(ctx context.Context, key string) (*DocumentJob, b
 	if json.Unmarshal([]byte(body), &job) != nil {
 		return nil, false
 	}
+	reconciled := s.reconcileCompletedLeeJob(&job)
 	// 进程重启后没有运行中的句柄：上次没收尾的任务标记为「已中断」，不要一直转圈。
 	if job.Status == "running" {
 		job.Status = "interrupted"
@@ -257,10 +287,46 @@ func (s *Server) loadImportJob(ctx context.Context, key string) (*DocumentJob, b
 			interruptedStage = true
 		}
 	}
-	if interruptedStage {
+	if interruptedStage || reconciled {
 		s.persistImportJob(&job)
 	}
 	return &job, true
+}
+
+// Older retranslation jobs saved the PDF but marked the document's render stage
+// instead of the retry job. Reconcile only successful jobs with their own output.
+func (s *Server) reconcileCompletedLeeJob(job *DocumentJob) bool {
+	if job.Status != "done" || job.Key == "" || filepath.Base(job.Key) != job.Key {
+		return false
+	}
+	root := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).DataDir(), "retain", "jobs", job.Key)
+	stage := job.stage("render")
+	translation := job.stage("translate")
+	fixRender := stage != nil && (stage.Status == "running" || stage.Status == "interrupted")
+	fixTranslation := translation != nil && translation.Status == "done" && (translation.Completed < translation.Total || translation.Unit == "页")
+	if (!fixRender && !fixTranslation) || !existingFile(filepath.Join(root, "rendered", "readx-translated.pdf")) {
+		return false
+	}
+	changed := false
+	if fixRender {
+		job.setStage("render", "done", fmt.Sprintf("Lee 已排版 %d 页译文", job.Pages), job.Pages, job.Pages)
+		stage.Unit, stage.Substage = "页", ""
+		if len(job.Runs) > 0 && job.Runs[len(job.Runs)-1].FinishedAt != "" {
+			stage.FinishedAt = job.Runs[len(job.Runs)-1].FinishedAt
+		}
+		changed = true
+	}
+	if fixTranslation {
+		if outputs, err := loadLeeTranslations(filepath.Join(root, "translated")); err == nil {
+			cached := translation.ResultCount
+			if cached == 0 {
+				cached = translation.Completed
+			}
+			job.completeLeeTranslation(len(outputs), cached)
+			changed = true
+		}
+	}
+	return changed
 }
 
 // linkImportJobDocument lets the library address an upload job by the durable
@@ -299,6 +365,7 @@ func (s *Server) cancelImportJob(key string) bool {
 	job := runtime.job
 	job.Status = "cancelled"
 	job.Error = "已取消"
+	job.stopActiveStages("cancelled", job.Error)
 	job.UpdatedAt = nowStamp()
 	if len(job.Runs) > 0 {
 		last := &job.Runs[len(job.Runs)-1]
@@ -390,6 +457,11 @@ func (s *Server) handleCancelDocumentJob(w http.ResponseWriter, r *http.Request)
 	key, ok := pathKey(w, r)
 	if !ok {
 		return
+	}
+	// The library reopens this panel using the document key, while a retry has
+	// its own runtime key. Resolve the same mapping used by the status endpoint.
+	if job, found := s.loadImportJobForDocument(r.Context(), key); found {
+		key = job.Key
 	}
 	cancelled := s.cancelImportJob(key)
 	writeJSON(w, http.StatusOK, map[string]any{"cancelled": cancelled})

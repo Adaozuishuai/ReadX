@@ -1,6 +1,8 @@
 import type { LatexEngine, LatexNode, LatexProject } from '@cbct/shared';
 import { LATEX_ENGINES } from '@cbct/shared';
 
+import { useConfirm } from '../ConfirmDialog';
+
 /**
  * 工作区顶部工具栏：项目名、根文档、引擎、自动编译、保存状态与导出。
  * 「编译 / 停止」在 PR3 接入编译引擎后出现在这里——不做占位死按钮。
@@ -34,6 +36,7 @@ export function LatexToolbar({
   extra?: React.ReactNode;
 }) {
   const texFiles = nodes.filter((node) => node.kind === 'tex');
+  const confirmDialog = useConfirm();
   return (
     <header className="latex-toolbar">
       <div className="latex-toolbar-row">
@@ -93,17 +96,19 @@ export function LatexToolbar({
             type="checkbox"
             checked={project.aiAutoFix}
             onChange={(event) => {
-              if (
-                event.target.checked &&
-                !window.confirm(
-                  '开启后，「自动修复」按钮可以直接改写项目里的 .tex 文件。\n\n' +
-                    '写入前自动创建源码快照，并强制编译验证；错误没有减少就自动回滚。聊天中的修改仍需逐次确认。\n\n' +
-                    '确定开启吗？',
-                )
-              ) {
+              if (event.target.checked) {
+                void confirmDialog.bridge
+                  .confirm(
+                    '开启后，「自动修复」按钮可以直接改写项目里的 .tex 文件。\n\n' +
+                      '写入前自动创建源码快照，并强制编译验证；错误没有减少就自动回滚。聊天中的修改仍需逐次确认。\n\n' +
+                      '确定开启吗？',
+                  )
+                  .then((ok) => {
+                    if (ok) onPatch({ aiAutoFix: true });
+                  });
                 return;
               }
-              onPatch({ aiAutoFix: event.target.checked });
+              onPatch({ aiAutoFix: false });
             }}
           />
           自动修复写入{project.aiAutoFix ? '（已开启）' : ''}
@@ -137,6 +142,7 @@ export function LatexToolbar({
           </label>
         </div>
       </div>
+      {confirmDialog.node}
     </header>
   );
 }

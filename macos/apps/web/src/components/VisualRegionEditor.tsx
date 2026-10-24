@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { api, type LeeVisualBlock } from '../api/client';
 import type { PaperVisual, ReadingKind, VisualBounds, VisualSelection } from '../hooks/usePaperVisuals';
+import { AppDialog } from './AppDialog';
 
 const STEPS: { value: ReadingKind; label: string }[] = [{ value: 'motivation', label: '实验动机' }, { value: 'method', label: '方法公式' }, { value: 'experiment', label: '实验配置' }, { value: 'results', label: '结果分析' }, { value: 'reproduction', label: '代码复现' }];
 function clamp(bounds: VisualBounds): VisualBounds {
@@ -13,7 +14,6 @@ export function VisualRegionEditor({ documentKey, document, visual, activeStep, 
   documentKey?: string; document: PDFDocumentProxy; visual: PaperVisual | null; activeStep: ReadingKind;
   onSave: (selection: VisualSelection) => Promise<void>; onClose: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [pageNumber, setPageNumber] = useState(visual?.page ?? 1);
   const [preview, setPreview] = useState('');
   const [bounds, setBounds] = useState<VisualBounds>({ x: 0.08, y: 0.08, width: 0.84, height: 0.4 });
@@ -28,7 +28,6 @@ export function VisualRegionEditor({ documentKey, document, visual, activeStep, 
   const [error, setError] = useState('');
   const drag = useRef<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState({ width: 612, height: 792 });
-  useEffect(() => { dialog.current?.showModal(); }, []);
   useEffect(() => {
     let cancelled = false;
     let url = '';
@@ -78,7 +77,7 @@ export function VisualRegionEditor({ documentKey, document, visual, activeStep, 
     const rect = event.currentTarget.getBoundingClientRect();
     return { x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) };
   };
-  return <dialog ref={dialog} className="app-dialog visual-region-dialog" aria-labelledby="visual-region-title" aria-busy={busy || loading} onCancel={(event) => { if (lock.current) event.preventDefault(); else onClose(); }}>
+  return <AppDialog open onClose={onClose} busy={() => Boolean(lock.current)} className="visual-region-dialog" aria-labelledby="visual-region-title" aria-busy={busy || loading}>
     <header><div><h2 id="visual-region-title">{visual ? '校正图表范围' : '补选遗漏图表'}</h2></div><button className="precision-button" disabled={busy} onClick={onClose} aria-label="关闭选区编辑">×</button></header>
     <div className="visual-region-body"><div className="visual-region-page-scroll">
       {loading && <p role="status">正在渲染原 PDF 页面…</p>}
@@ -104,5 +103,5 @@ export function VisualRegionEditor({ documentKey, document, visual, activeStep, 
       <fieldset disabled={busy || loading}><legend>微调边界（页面百分比）</legend>{([['x', '左边距'], ['y', '顶边距'], ['width', '宽度'], ['height', '高度']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={key === 'width' || key === 'height' ? 1 : 0} max={100} step={0.1} value={Math.round(bounds[key] * 1000) / 10} onChange={(e) => { if (e.target.value !== '') setBounds((b) => clamp({ ...b, [key]: Number(e.target.value) / 100 })); }} />%</label>)}</fieldset>
       {error && <p role="alert" className="text-bad">{error}</p>}
     </aside></div><footer><button className="precision-button" disabled={busy} onClick={onClose}>取消</button><button className="precision-button primary" disabled={busy || loading || !preview} onClick={() => void save()}>{busy ? '保存高清选区…' : '保存选区'}</button></footer>
-  </dialog>;
+  </AppDialog>;
 }

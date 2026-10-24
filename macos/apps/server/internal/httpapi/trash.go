@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,8 +35,10 @@ func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 			seen[key] = true
 		}
 	}
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
+	// Hold through file removal: a successful restoration cannot race the
+	// Deleted snapshot, row deletion, or removal of the restored PDF.
+	s.documentLifecycleMu.Lock()
+	defer s.documentLifecycleMu.Unlock()
 	all, err := s.loadAllMeta(r.Context())
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -106,10 +109,11 @@ func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, err.Error())
 			return
 		}
-		delete(all, key)
 		delete(statuses, key)
 	}
-	for stateKey, value := range map[string]any{"documents.meta": all, "documents.status": statuses} {
+	// documents.meta 的清理移出事务、改走 mutateAllMeta（见提交后）——原先在事务里
+	// 写「读事务前的旧快照」，docsmeta 迁移到每 key 锁之后该路径会覆盖并发的元数据更新。
+	for stateKey, value := range map[string]any{"documents.status": statuses} {
 		encoded, marshalErr := json.Marshal(value)
 		if marshalErr != nil {
 			writeError(w, 500, marshalErr.Error())
@@ -124,6 +128,16 @@ func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 	if err = tx.Commit(); err != nil {
 		writeError(w, 500, err.Error())
 		return
+	}
+	// 事务已删除文档行；这里把对应的元数据条目从 documents.meta 里原子摘除。
+	// 失败只留下无害的残留条目（文档行已删，列表以 documents 表为准），不回滚。
+	if err := s.mutateAllMeta(r.Context(), func(current map[string]DocumentMeta) (map[string]DocumentMeta, error) {
+		for _, key := range keys {
+			delete(current, key)
+		}
+		return current, nil
+	}); err != nil {
+		log.Printf("清空回收站后清理论文元数据失败: %v", err)
 	}
 	removedCopies := 0
 	for _, key := range keys {

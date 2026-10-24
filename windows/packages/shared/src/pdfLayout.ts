@@ -212,8 +212,8 @@ export function fitPDFWidth(clientWidth: number, padding = 40): number {
   return Math.max(1, Math.floor(clientWidth - padding));
 }
 
-/** Hit testing uses normalized page coordinates, independent of zoom and pane size. */
-export function paragraphAt(layout: PDFLayout, x: number, y: number): number | null {
+/** Coordinates are normalized; optional edge tolerance is in unscaled PDF units. */
+export function paragraphAt(layout: PDFLayout, x: number, y: number, tolerance = 0): number | null {
   const px = x * layout.width, py = y * layout.height;
   let index: number | null = null;
   for (let i = 0; i < layout.blocks.length; i++) {
@@ -221,6 +221,17 @@ export function paragraphAt(layout: PDFLayout, x: number, y: number): number | n
     if (px < block.x || px > block.x + block.width || py < block.y || py > block.y + block.height) continue;
     const previous = index === null ? null : layout.blocks[index]!;
     if (!previous || block.width * block.height < previous.width * previous.height) index = i;
+  }
+  if (index !== null || tolerance <= 0) return index;
+  let nearest = Infinity;
+  for (let i = 0; i < layout.blocks.length; i++) {
+    const block = layout.blocks[i]!;
+    const dx = Math.max(block.x - px, 0, px - block.x - block.width);
+    const dy = Math.max(block.y - py, 0, py - block.y - block.height);
+    const distance = Math.hypot(dx, dy);
+    if (distance > tolerance || distance >= nearest) continue;
+    nearest = distance;
+    index = i;
   }
   return index;
 }

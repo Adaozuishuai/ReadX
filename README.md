@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/1b377a2a-c36d-4e51-9923-feb28d1912d2
 
 ReadX 是一个面向科研阅读与论文写作的桌面工作区：导入论文、识别与翻译、逐页双语阅读、高亮批注、AI 精读与学术演示稿生成，都在同一个窗口里完成。LaTeX Studio 支持编辑真实项目文件、编译预览 PDF，并通过带确认卡片的 AI 对话修改源码。论文文件与阅读资料优先保存在本机。
 
-**v1.0.0**：新增 LaTeX 项目写作与对话内修改确认，完善编译诊断、模型配置和可调整布局；摸鱼界面使用淡绿色漫画窗帘切换。完整变更见 [v1.0.0 发布说明](windows/release-notes/v1.0.0.md)。
+**v1.0.1**：修复重新翻译渲染状态、取消任务与历史记录，完善论文阅读、找书和本地阅读体验；作者与 Windows 安装程序发布者署名为 Lee。完整变更见 [v1.0.1 发布说明](windows/release-notes/v1.0.1.md)。
 
 ### 一眼看懂 ReadX
 
@@ -195,7 +195,7 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 
 - **点击挂件切换**：科研与摸鱼界面之间以**淡绿色漫画窗帘**合拢、再展开，使用平涂色块、描边褶皱、扇形帘头和少量网点。按住挂件可沿窗口顶部拖动，位置会记住。也可按 `Ctrl+Shift+M` 切换，在摸鱼界面按 `Esc` 返回科研工作区。
 - **本地书架**：导入 TXT、EPUB、图片或 CBZ，在独立书架中阅读小说与漫画，阅读内容和进度保存在本机浏览器。
-- **找书并加入书架**：内建 Project Gutenberg 英文公版书搜索，下载 EPUB / TXT 后自动导入本地书架；中文连载支持导入兼容的 Legado 书源 JSON，按需获取并缓存章节，目录可更新。在线检索和章节获取需要网络及可用书源。
+- **找书并直接阅读**：统一书源入口支持 Project Gutenberg、Gutenberg 官方 OPDS、Z-Library 非官方 EAPI 及原有中文连载（本地文件导入统一在书架进行）。查看书籍详情、格式和来源权利后，可下载 EPUB / TXT，查看进度、取消或失败重试；校验成功自动加入本地书架并打开阅读器，相同文件保留原进度。Z-Library 可配置服务地址，连接自己的账号或会话；逐书确认权限并通过账号的文件权限检查后下载，会话仅保留到本次服务退出。中文连载继续支持兼容的 Legado 书源 JSON。在线操作需要网络、可用书源及相应账号权限；[书源范围、接口与验证说明](docs/book-sources.md)。
 
 ##### 挂件来源与致谢
 
@@ -208,7 +208,7 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 
 从[最新 Release](https://github.com/Leechion/ReadX/releases/latest)下载 Windows 或 macOS 安装包。启动后，在 **AI 助手设置**中选择模型服务并配置连接；Codex Desktop 用户可先登录 Codex，再从 ReadX 中连接。
 
-v1.0.0 提供 [Windows x64 安装包 ReadX-Setup-1.0.0.exe](https://github.com/Leechion/ReadX/releases/download/v1.0.0/ReadX-Setup-1.0.0.exe)。Release 中的 `.blockmap` 和 `latest.yml` 用于应用内自动更新，手动安装只需下载 `.exe`。
+v1.0.1 提供 [Windows x64 安装包 ReadX-Setup-1.0.1.exe](https://github.com/Leechion/ReadX/releases/download/v1.0.1/ReadX-Setup-1.0.1.exe)。Release 中的 `.blockmap` 和 `latest.yml` 用于应用内自动更新，手动安装只需下载 `.exe`。
 
 #### macOS 首次启动
 

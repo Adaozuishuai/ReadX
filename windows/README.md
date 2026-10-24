@@ -74,6 +74,8 @@ npm run shortcut -- --browser  # 改用 start-browser.ps1 的浏览器回退入�
 
 本地书架支持 TXT、EPUB、图片和 CBZ；「找书」支持 Project Gutenberg 英文公版书搜索，下载后自动加入书架。中文连载可导入兼容的 Legado 书源 JSON，按需获取、缓存章节并更新目录。阅读数据保存在本机浏览器；在线搜索、下载和章节获取需要网络及可用书源。
 
+统一书源支持官方 OPDS 目录、Z-Library 非官方 EAPI、本地导入和书源状态，详情展示格式与权利；下载支持进度、取消、重试、SHA-256 校验及导入后直接阅读，重复内容保留原进度。Z-Library 需在界面中配置服务地址并连接自己的账号或会话，逐书确认权限后按账号额度下载 EPUB/TXT；会话不写磁盘，重启后需重新连接。[接口、范围和测试说明](../docs/book-sources.md)。
+
 ## 导入文档
 
 首次在 Windows 开发目录运行 PDF 导入前，执行 `powershell -ExecutionPolicy Bypass -File windows/scripts/setup-retain-runtime.ps1`。脚本把 Lee 所需 Python wheel 安装到 `windows/.retain-runtime`（E 盘工作区内），只接受预编译 wheel，不需要安装单独的翻译引擎桌面端或 C/C++ Build Tools。桌面端上传/导入入口不变。

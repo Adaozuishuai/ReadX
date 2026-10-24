@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SlackAsset, SlackChapter, SlackItem, SlackProgress } from './types';
+import { STORAGE_KEYS } from '../../lib/storage';
 
-type ProseMode = 'paper' | 'plain' | 'night';
+type ProseMode = 'paper' | 'ink' | 'plain' | 'night';
+type PageTurn = { from: number; to: number; direction: 1 | -1 };
 
 interface NovelPrefs {
   fontSize: number;
@@ -10,11 +12,11 @@ interface NovelPrefs {
   mode: ProseMode;
 }
 
-const PREFS_KEY = 'readx-slack-novel-prefs';
+const PREFS_KEY = STORAGE_KEYS.novelPrefs;
 const LINE_HEIGHTS = [1.7, 1.9, 2.1, 2.4];
 const WIDTHS = [640, 760, 900];
-const MODES: ProseMode[] = ['paper', 'plain', 'night'];
-const MODE_LABEL: Record<ProseMode, string> = { paper: '纸张', plain: '跟随主题', night: '夜间' };
+const MODES: ProseMode[] = ['paper', 'ink', 'plain', 'night'];
+const MODE_LABEL: Record<ProseMode, string> = { paper: '纸张', ink: '水墨屏', plain: '跟随主题', night: '夜间' };
 const WIDTH_LABEL: Record<number, string> = { 640: '窄', 760: '中', 900: '宽' };
 
 function readPrefs(): NovelPrefs {
@@ -37,11 +39,6 @@ function readPrefs(): NovelPrefs {
   } catch {
     return fallback;
   }
-}
-
-function cycle<T>(list: T[], current: T): T {
-  const index = list.indexOf(current);
-  return list[(index + 1) % list.length] as T;
 }
 
 export function NovelReader({
@@ -67,7 +64,14 @@ export function NovelReader({
     return Math.min(Math.max(item.progress.chapter, 0), last);
   });
   const [tocOpen, setTocOpen] = useState(false);
+  const [displayOpen, setDisplayOpen] = useState(false);
+  const aaPanel = useRef<HTMLDivElement>(null);
   const [scrollRatio, setScrollRatio] = useState(item.progress.scroll);
+  const [spread, setSpread] = useState({ page: 0, count: 1, step: 0 });
+  const [pageTurn, setPageTurn] = useState<PageTurn | null>(null);
+  const turning = useRef(false);
+  const turnTimer = useRef<number | undefined>(undefined);
+  const requestedRatio = useRef<number | null>(null);
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef(onProgress);
@@ -76,6 +80,10 @@ export function NovelReader({
   const initialScroll = useRef(item.progress.scroll);
   const restored = useRef(false);
   const displayedChapter = useRef<number | null>(null);
+  const ratioRef = useRef(item.progress.scroll);
+  const spreadRef = useRef(spread);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const wheelTime = useRef(0);
   const restoring = useRef(true);
   const loadingRef = useRef<number | null>(null);
   const [loadingChapter, setLoadingChapter] = useState<number | null>(null);
@@ -89,10 +97,10 @@ export function NovelReader({
     if (!chapter?.html) return '';
     return chapter.html.replace(/slack-asset:\/\/([A-Za-z0-9-]+)/g, (_match, id: string) => assetUrls[id] ?? '');
   }, [assetUrls, chapter]);
-  const timer = useRef<number | undefined>(undefined);
 
   progressRef.current = onProgress;
   indexRef.current = index;
+  spreadRef.current = spread;
 
   useEffect(() => {
     try {
@@ -111,43 +119,58 @@ export function NovelReader({
     };
   }, [assets]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
-    if (restored.current && displayedChapter.current === index) return;
-    // 首次渲染时正文里的图片 URL 仍为空；先等 blob URL 写回，再等图片布局稳定。
     if (assets.some((asset) => !assetUrls[asset.id])) return;
-    window.clearTimeout(timer.current);
     restoring.current = true;
-    const ratio = !restored.current && index === initialChapter.current ? initialScroll.current : 0;
-    element.scrollTop = 0;
+    const prose = element.querySelector<HTMLElement>('.slack-prose');
+    if (!prose) return;
+    if (!restored.current) {
+      ratioRef.current = index === initialChapter.current ? initialScroll.current : 0;
+    } else if (displayedChapter.current !== index) {
+      ratioRef.current = requestedRatio.current ?? 0;
+    }
+    requestedRatio.current = null;
+    displayedChapter.current = index;
     const images = Array.from(element.querySelectorAll('img'));
     let frame = 0;
-    const restore = () => {
-      if (images.some((image) => !image.complete)) return;
+    const measure = () => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
-        const max = Math.max(0, element.scrollHeight - element.clientHeight);
-        element.scrollTop = max * ratio;
-        setScrollRatio(ratio);
+        element.style.setProperty('--slack-page-height', `${element.clientHeight}px`);
+        const style = getComputedStyle(prose);
+        const gap = parseFloat(style.columnGap) || 0;
+        const columns = Number(style.columnCount) || 2;
+        const step = prose.clientWidth + gap;
+        const columnWidth = (prose.clientWidth - gap * (columns - 1)) / columns;
+        const columnCount = Math.max(columns, Math.ceil((prose.scrollWidth + gap - 1) / (columnWidth + gap)));
+        const count = Math.max(1, Math.ceil(columnCount / columns));
+        const page = Math.min(count - 1, Math.round(ratioRef.current * (count - 1)));
+        const next = { page, count, step };
+        spreadRef.current = next;
+        setSpread(next);
+        setScrollRatio(ratioRef.current);
         restored.current = true;
-        displayedChapter.current = index;
         restoring.current = false;
       });
     };
     for (const image of images) {
-      image.addEventListener('load', restore);
-      image.addEventListener('error', restore);
+      image.addEventListener('load', measure);
+      image.addEventListener('error', measure);
     }
-    restore();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    measure();
     return () => {
       window.cancelAnimationFrame(frame);
+      observer.disconnect();
       for (const image of images) {
-        image.removeEventListener('load', restore);
-        image.removeEventListener('error', restore);
+        image.removeEventListener('load', measure);
+        image.removeEventListener('error', measure);
       }
     };
-  }, [assetUrls, assets, html, index]);
+  }, [assetUrls, assets, html, index, chapter, prefs, loadingChapter, chapterError]);
 
   useEffect(() => {
     setChapterError('');
@@ -185,49 +208,90 @@ export function NovelReader({
     progressRef.current({ chapter, page: 0, scroll });
   }, []);
 
+  const finishTurn = useCallback(() => {
+    window.clearTimeout(turnTimer.current);
+    turning.current = false;
+    setPageTurn(null);
+  }, []);
+
+  useEffect(() => {
+    finishTurn();
+    return () => window.clearTimeout(turnTimer.current);
+  }, [index, prefs, html, finishTurn]);
+
   const go = useCallback(
-    (delta: number) => {
-      setIndex((current) => {
-        const next = Math.min(Math.max(current + delta, 0), chapters.length - 1);
-        if (next !== current) setProgress(next, 0);
-        return next;
-      });
+    (delta: number, ratio = 0) => {
+      const current = indexRef.current;
+      const next = Math.min(Math.max(current + delta, 0), chapters.length - 1);
+      if (next !== current) {
+        requestedRatio.current = ratio;
+        ratioRef.current = ratio;
+        setIndex(next);
+        setProgress(next, ratio);
+      }
       setTocOpen(false);
     },
     [chapters.length, setProgress],
   );
 
-  const handleScroll = useCallback(() => {
-    if (restoring.current) return;
-    const element = scrollRef.current;
-    if (!element) return;
-    const max = element.scrollHeight - element.clientHeight;
-    const ratio = max > 0 ? Math.min(1, Math.max(0, element.scrollTop / max)) : 0;
+  const turnPage = useCallback((delta: number) => {
+    if (restoring.current || turning.current || tocOpen || loadingChapter !== null || chapterError) return;
+    const current = spreadRef.current;
+    const page = Math.min(Math.max(current.page + delta, 0), current.count - 1);
+    if (page === current.page) {
+      go(delta > 0 ? 1 : -1, delta > 0 ? 0 : 1);
+      return;
+    }
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      turning.current = true;
+      setPageTurn({ from: current.page, to: page, direction: delta > 0 ? 1 : -1 });
+      turnTimer.current = window.setTimeout(finishTurn, 650);
+    }
+    const ratio = current.count > 1 ? page / (current.count - 1) : 0;
+    ratioRef.current = ratio;
+    const next = { ...current, page };
+    spreadRef.current = next;
+    setSpread(next);
     setScrollRatio(ratio);
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setProgress(indexRef.current, ratio), 260);
-  }, [setProgress]);
+    setProgress(indexRef.current, ratio);
+  }, [setProgress, go, finishTurn, tocOpen, loadingChapter, chapterError]);
 
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => {
+    if (!displayOpen) return;
+    const close = (event: PointerEvent) => {
+      if (event.target instanceof Node && aaPanel.current?.contains(event.target)) return;
+      setDisplayOpen(false);
+    };
+    window.addEventListener('pointerdown', close, true);
+    return () => window.removeEventListener('pointerdown', close, true);
+  }, [displayOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
       const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-      if (event.key === 'ArrowRight') {
+      if (target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)) return;
+      if (event.key === 'Escape') {
+        // 排版弹层开着时，Esc 先收弹层，而不是退出摸鱼界面。
+        if (displayOpen) {
+          event.preventDefault();
+          setDisplayOpen(false);
+        }
+        return;
+      }
+      if (event.key === 'ArrowRight' || event.key === 'PageDown') {
         event.preventDefault();
-        go(1);
-      } else if (event.key === 'ArrowLeft') {
+        turnPage(1);
+      } else if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
         event.preventDefault();
-        go(-1);
+        turnPage(-1);
       } else if (event.key === 't' || event.key === 'T') {
         setTocOpen((value) => !value);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [go]);
+  }, [turnPage, displayOpen]);
 
   const paragraphs = useMemo(
     () => (chapter?.text ?? '').split(/\n+/).map((line) => line.trim()).filter(Boolean),
@@ -237,6 +301,53 @@ export function NovelReader({
   const overall = Math.min(1, (index + scrollRatio) / Math.max(chapters.length, 1));
   // EPUB 章节自带标题时不再重复渲染我们自己的 h2，只保留书名小字。
   const htmlHasHeading = /^\s*<h[1-6][\s>]/i.test(html);
+
+  const renderPage = (page: number) => (
+    <article
+      className="slack-prose"
+      style={{ fontSize: `${prefs.fontSize}px`, lineHeight: prefs.lineHeight, transform: `translateX(-${page * spread.step}px)` }}
+    >
+      <header className={`slack-prose__head${htmlHasHeading ? ' slack-prose__head--compact' : ''}`}>
+        <small>{item.title}{item.serial ? ' · 连载' : ''}</small>
+        {htmlHasHeading ? null : <h2>{chapter?.title ?? '正文'}</h2>}
+      </header>
+      {loadingChapter === index ? (
+        <p className="slack-loading" role="status">正在加载本章…</p>
+      ) : chapterError ? (
+        <div className="slack-chapter-error" role="alert">
+          <p>{chapterError}</p>
+          <button
+            type="button"
+            className="slack-primary"
+            onClick={() => {
+              setChapterError('');
+              setRetryToken((value) => value + 1);
+            }}
+          >
+            重试
+          </button>
+        </div>
+      ) : html ? (
+        <div className="slack-prose__html" dangerouslySetInnerHTML={{ __html: html }} />
+      ) : (
+        <div className="slack-prose__text">
+          {paragraphs.map((paragraph, order) => (
+            <p key={`${index}-${order}`}>{paragraph}</p>
+          ))}
+          {!paragraphs.length ? <p className="slack-muted">这一章没有内容。</p> : null}
+        </div>
+      )}
+      <footer className="slack-prose__foot">
+        {index < chapters.length - 1 ? (
+          <button type="button" className="slack-primary" onClick={() => go(1)}>继续阅读下一章 →</button>
+        ) : item.serial ? (
+          <span>— 已是最新一章 —</span>
+        ) : (
+          <span>— 全书完 —</span>
+        )}
+      </footer>
+    </article>
+  );
 
   return (
     <div className={`slack-novel slack-novel--${prefs.mode}`}>
@@ -260,42 +371,100 @@ export function NovelReader({
           <span>{index + 1} / {chapters.length}</span>
           <button type="button" disabled={index >= chapters.length - 1} onClick={() => go(1)}>下一章 →</button>
         </div>
-        <div className="slack-reader-toolbar__display">
+        <div className="slack-aa" ref={aaPanel}>
           <button
             type="button"
-            title="减小字号"
-            onClick={() => setPrefs((current) => ({ ...current, fontSize: Math.max(15, current.fontSize - 1) }))}
+            className={displayOpen ? 'active' : ''}
+            aria-expanded={displayOpen}
+            aria-haspopup="dialog"
+            title="排版与主题"
+            onClick={() => setDisplayOpen((value) => !value)}
           >
-            A−
+            Aa
           </button>
-          <button
-            type="button"
-            title="增大字号"
-            onClick={() => setPrefs((current) => ({ ...current, fontSize: Math.min(34, current.fontSize + 1) }))}
-          >
-            A＋
-          </button>
-          <button
-            type="button"
-            title="切换行距"
-            onClick={() => setPrefs((current) => ({ ...current, lineHeight: cycle(LINE_HEIGHTS, current.lineHeight) }))}
-          >
-            行距 {prefs.lineHeight.toFixed(1)}
-          </button>
-          <button
-            type="button"
-            title="切换版心宽度"
-            onClick={() => setPrefs((current) => ({ ...current, width: cycle(WIDTHS, current.width) }))}
-          >
-            宽度 {WIDTH_LABEL[prefs.width]}
-          </button>
-          <button
-            type="button"
-            title="切换阅读底色"
-            onClick={() => setPrefs((current) => ({ ...current, mode: cycle(MODES, current.mode) }))}
-          >
-            {MODE_LABEL[prefs.mode]}
-          </button>
+          {displayOpen ? (
+            <div className="slack-aa__panel" role="dialog" aria-label="排版设置">
+              <div className="slack-aa__row">
+                <span className="slack-aa__label">字号</span>
+                <div className="slack-font-control" role="group" aria-label="正文字号">
+                  <button
+                    type="button"
+                    title="减小字号"
+                    aria-label="减小字号"
+                    disabled={prefs.fontSize <= 15}
+                    onClick={() => setPrefs((current) => ({ ...current, fontSize: Math.max(15, current.fontSize - 1) }))}
+                  >
+                    A−
+                  </button>
+                  <input
+                    type="range"
+                    min="15"
+                    max="34"
+                    step="1"
+                    value={prefs.fontSize}
+                    aria-label="正文字号"
+                    aria-valuetext={`${prefs.fontSize} 像素`}
+                    onChange={(event) => setPrefs((current) => ({ ...current, fontSize: Number(event.target.value) }))}
+                  />
+                  <output>{prefs.fontSize}px</output>
+                  <button
+                    type="button"
+                    title="增大字号"
+                    aria-label="增大字号"
+                    disabled={prefs.fontSize >= 34}
+                    onClick={() => setPrefs((current) => ({ ...current, fontSize: Math.min(34, current.fontSize + 1) }))}
+                  >
+                    A＋
+                  </button>
+                </div>
+              </div>
+              <div className="slack-aa__row">
+                <span className="slack-aa__label">行距</span>
+                <div className="slack-seg" role="group" aria-label="行距">
+                  {LINE_HEIGHTS.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={prefs.lineHeight === value ? 'active' : ''}
+                      onClick={() => setPrefs((current) => ({ ...current, lineHeight: value }))}
+                    >
+                      {value.toFixed(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="slack-aa__row">
+                <span className="slack-aa__label">版心</span>
+                <div className="slack-seg" role="group" aria-label="版心宽度">
+                  {WIDTHS.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={prefs.width === value ? 'active' : ''}
+                      onClick={() => setPrefs((current) => ({ ...current, width: value }))}
+                    >
+                      {WIDTH_LABEL[value]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="slack-aa__row">
+                <span className="slack-aa__label">主题</span>
+                <div className="slack-seg" role="group" aria-label="阅读主题">
+                  {MODES.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={prefs.mode === value ? 'active' : ''}
+                      onClick={() => setPrefs((current) => ({ ...current, mode: value }))}
+                    >
+                      {MODE_LABEL[value]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -315,6 +484,7 @@ export function NovelReader({
                     type="button"
                     className={order === index ? 'active' : ''}
                     onClick={() => {
+                      ratioRef.current = 0;
                       setIndex(order);
                       setTocOpen(false);
                       setProgress(order, 0);
@@ -329,61 +499,94 @@ export function NovelReader({
           </>
         ) : null}
 
-        <div className="slack-reader-scroll" ref={scrollRef} onScroll={handleScroll}>
-          <article
-            className="slack-prose"
-            style={{ fontSize: `${prefs.fontSize}px`, lineHeight: prefs.lineHeight, maxWidth: `${prefs.width}px` }}
+        <div className="slack-reader-scroll slack-reader-scroll--paged" onClick={(event) => {
+          if (event.target !== event.currentTarget) return;
+          const bounds = event.currentTarget.getBoundingClientRect();
+          turnPage(event.clientX < bounds.left + bounds.width / 2 ? -1 : 1);
+        }}>
+          <button
+            type="button"
+            className="slack-novel__edge slack-novel__edge--previous"
+            aria-label="点击左侧，上一页"
+            title="上一页"
+            disabled={spread.page <= 0 && index <= 0}
+            onClick={() => turnPage(-1)}
+          ><span aria-hidden="true">‹</span></button>
+          <button
+            type="button"
+            className="slack-novel__edge slack-novel__edge--next"
+            aria-label="点击右侧，下一页"
+            title="下一页"
+            disabled={spread.page >= spread.count - 1 && index >= chapters.length - 1}
+            onClick={() => turnPage(1)}
+          ><span aria-hidden="true">›</span></button>
+          <div
+            className="slack-novel__pages"
+            ref={scrollRef}
+            style={{ maxWidth: `${prefs.width * 2}px` }}
+            onClick={(event) => {
+              if ((event.target as Element).closest('a, button, input, select, textarea, summary, [role="button"]')) return;
+              if (window.getSelection()?.toString()) return;
+              const bounds = event.currentTarget.getBoundingClientRect();
+              const position = (event.clientX - bounds.left) / bounds.width;
+              if (position <= 0.2) turnPage(-1);
+              else if (position >= 0.8) turnPage(1);
+            }}
+            onWheel={(event) => {
+              const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+              if (event.ctrlKey || Math.abs(delta) < 12 || Date.now() - wheelTime.current < 600) return;
+              wheelTime.current = Date.now();
+              turnPage(delta > 0 ? 1 : -1);
+            }}
+            onTouchStart={(event) => {
+              const touch = event.touches[0];
+              touchStart.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+            }}
+            onTouchEnd={(event) => {
+              const start = touchStart.current;
+              const touch = event.changedTouches[0];
+              touchStart.current = null;
+              if (!start || !touch) return;
+              const dx = touch.clientX - start.x;
+              if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(touch.clientY - start.y)) turnPage(dx < 0 ? 1 : -1);
+            }}
           >
-            <header className={`slack-prose__head${htmlHasHeading ? ' slack-prose__head--compact' : ''}`}>
-              <small>{item.title}{item.serial ? ' · 连载' : ''}</small>
-              {htmlHasHeading ? null : <h2>{chapter?.title ?? '正文'}</h2>}
-            </header>
-            {loadingChapter === index ? (
-              <p className="slack-loading" role="status">正在加载本章…</p>
-            ) : chapterError ? (
-              <div className="slack-chapter-error" role="alert">
-                <p>{chapterError}</p>
-                <button
-                  type="button"
-                  className="slack-primary"
-                  onClick={() => {
-                    setChapterError('');
-                    setRetryToken((value) => value + 1);
-                  }}
-                >
-                  重试
-                </button>
+            {renderPage(spread.page)}
+            {pageTurn ? (
+              <div
+                className={`slack-book-turn slack-book-turn--${pageTurn.direction > 0 ? 'next' : 'previous'}`}
+                aria-hidden="true"
+                ref={(node) => { node?.setAttribute('inert', ''); }}
+              >
+                <div className="slack-book-turn__stationary">{renderPage(pageTurn.from)}</div>
+                <div className="slack-book-turn__leaf" onAnimationEnd={(event) => {
+                  if (event.target === event.currentTarget) finishTurn();
+                }}>
+                  <div className="slack-book-turn__face slack-book-turn__face--front">
+                    <div className="slack-book-turn__spread">{renderPage(pageTurn.from)}</div>
+                  </div>
+                  <div className="slack-book-turn__face slack-book-turn__face--back">
+                    <div className="slack-book-turn__spread">{renderPage(pageTurn.to)}</div>
+                  </div>
+                </div>
               </div>
-            ) : html ? (
-              <div className="slack-prose__html" dangerouslySetInnerHTML={{ __html: html }} />
-            ) : (
-              <div className="slack-prose__text">
-                {paragraphs.map((paragraph, order) => (
-                  <p key={`${index}-${order}`}>{paragraph}</p>
-                ))}
-                {!paragraphs.length ? <p className="slack-muted">这一章没有内容。</p> : null}
-              </div>
-            )}
-            <footer className="slack-prose__foot">
-              {index < chapters.length - 1 ? (
-                <button type="button" className="slack-primary" onClick={() => go(1)}>继续阅读下一章 →</button>
-              ) : item.serial ? (
-                <span>— 已是最新一章 —</span>
-              ) : (
-                <span>— 全书完 —</span>
-              )}
-            </footer>
-          </article>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      <div className="slack-reader-status">
-        <span>{chapter?.title ?? ''}</span>
-        <div className="slack-reader-status__bar" aria-hidden="true">
+      <footer className="slack-novel__footer" aria-label="阅读翻页与进度">
+        <div className="slack-novel__footer-progress" aria-hidden="true">
           <span style={{ width: `${Math.round(overall * 100)}%` }} />
         </div>
-        <span>{Math.round(overall * 100)}%</span>
-      </div>
+        <span className="slack-novel__footer-chapter" title={chapter?.title ?? ''}>{chapter?.title ?? ''}</span>
+        <div className="slack-novel__footer-nav">
+          <button type="button" disabled={spread.page <= 0 && index <= 0} onClick={() => turnPage(-1)} aria-label="上一页">← 上一页</button>
+          <span aria-live="polite">{spread.page + 1} / {spread.count}</span>
+          <button type="button" disabled={spread.page >= spread.count - 1 && index >= chapters.length - 1} onClick={() => turnPage(1)} aria-label="下一页">下一页 →</button>
+        </div>
+        <span className="slack-novel__footer-percent">{Math.round(overall * 100)}%</span>
+      </footer>
     </div>
   );
 }

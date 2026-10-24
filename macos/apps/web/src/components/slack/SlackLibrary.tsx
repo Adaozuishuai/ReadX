@@ -86,6 +86,7 @@ export function SlackLibrary({
   onOpen,
   onDelete,
   onUpload,
+  onFind,
 }: {
   items: SlackItem[];
   ready: boolean;
@@ -96,6 +97,7 @@ export function SlackLibrary({
   onOpen: (id: string) => void;
   onDelete: (item: SlackItem) => void;
   onUpload: () => void;
+  onFind: () => void;
 }) {
   const novels = items.filter((item) => item.kind === 'novel').length;
   const comics = items.filter((item) => item.kind === 'comic').length;
@@ -109,56 +111,88 @@ export function SlackLibrary({
     });
   }, [filter, items, query]);
 
+  // 摸鱼回访的第一诉求是「接着上次看」：把最近打开的一本顶到首屏。
+  const latest = useMemo(
+    () => items.reduce<SlackItem | null>((best, item) => (!best || item.openedAt > best.openedAt ? item : best), null),
+    [items],
+  );
+  const showContinue = Boolean(latest && (filter === 'all' || latest.kind === filter) && !query.trim());
+
   return (
     <main className="slack-library">
-      <section className="slack-hero">
-        <div className="slack-hero__copy">
-          <h1>我的焚决</h1>
-          <div className="slack-hero__stats">
-            <span><strong>{items.length}</strong> 份资料</span>
-            <span><strong>{novels}</strong> 本小说</span>
-            <span><strong>{comics}</strong> 本漫画</span>
-          </div>
-        </div>
-        <button type="button" className="slack-upload" onClick={onUpload}>
-          <span className="slack-upload__plus" aria-hidden="true">＋</span>
-          <strong>添加资料</strong>
-          <small>拖拽文件到窗口也可以</small>
-        </button>
-      </section>
-
-      <div className="slack-toolbar">
-        <div className="slack-filters" role="group" aria-label="资料类型">
-          {([
-            ['all', `全部 ${items.length}`],
-            ['novel', `小说 ${novels}`],
-            ['comic', `漫画 ${comics}`],
-          ] as const).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={filter === value}
-              className={filter === value ? 'active' : ''}
-              onClick={() => onFilter(value)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <label className="slack-search">
-          <span aria-hidden="true">⌕</span>
-          <input
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
-            placeholder="搜索标题 / 作者"
-            aria-label="搜索本地资料"
-          />
-        </label>
-      </div>
-
       {!ready ? (
         <p className="slack-loading" role="status">正在读取本地书架…</p>
-      ) : filtered.length ? (
+      ) : !items.length ? (
+        <div className="slack-empty slack-empty--hero">
+          <div>
+            <h2>书架还是空的</h2>
+            <p>把 TXT / EPUB / 图片 / CBZ 拖到窗口任意位置，点「选择文件」导入，或者先去书源找一本。</p>
+            <div className="slack-empty__actions">
+              <button type="button" className="slack-primary" onClick={onUpload}>选择文件</button>
+              <button type="button" className="slack-empty__find" onClick={onFind}>去找书 →</button>
+            </div>
+          </div>
+          <img src="/slack/qwen.png" alt="" />
+        </div>
+      ) : (
+        <>
+          {showContinue && latest ? (
+            <section className="slack-continue" aria-label="继续阅读">
+              <button
+                type="button"
+                className="slack-continue__open"
+                onClick={() => onOpen(latest.id)}
+                title={`继续阅读《${latest.title}》`}
+              >
+                <Cover item={latest} />
+                <div className="slack-continue__info">
+                  <small>继续阅读 · {relativeTime(latest.openedAt)}</small>
+                  <strong>{latest.title}</strong>
+                  <span>{progressLabel(latest)}</span>
+                </div>
+                <div className="slack-continue__bar" aria-hidden="true">
+                  <span style={{ width: `${Math.round(progressRatio(latest) * 100)}%` }} />
+                </div>
+                <span className="slack-continue__go" aria-hidden="true">继续 →</span>
+              </button>
+            </section>
+          ) : null}
+
+          <div className="slack-toolbar">
+            <h1 className="slack-toolbar__title">我的焚决</h1>
+            <div className="slack-filters" role="group" aria-label="资料类型">
+              {([
+                ['all', `全部 ${items.length}`],
+                ['novel', `小说 ${novels}`],
+                ['comic', `漫画 ${comics}`],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={filter === value}
+                  className={filter === value ? 'active' : ''}
+                  onClick={() => onFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <label className="slack-search">
+              <span aria-hidden="true">⌕</span>
+              <input
+                value={query}
+                onChange={(event) => onQuery(event.target.value)}
+                placeholder="搜索标题 / 作者"
+                aria-label="搜索本地资料"
+              />
+            </label>
+            <button type="button" className="slack-add" onClick={onUpload}>＋ 添加资料</button>
+          </div>
+        </>
+      )}
+
+      {ready && items.length ? (
+        filtered.length ? (
         <div className="slack-grid">
           {filtered.map((item) => {
             const ratio = progressRatio(item);
@@ -198,21 +232,12 @@ export function SlackLibrary({
             );
           })}
         </div>
-      ) : items.length ? (
+      ) : (
         <div className="slack-empty slack-empty--small">
           <h2>没有匹配的资料</h2>
           <p>换个关键词，或者切回「全部」。</p>
         </div>
-      ) : (
-        <div className="slack-empty">
-          <img src="/slack/qwen.png" alt="" />
-          <div>
-            <h2>书架还是空的</h2>
-            <p>拖入 TXT / EPUB / 图片 / CBZ，或者点「添加资料」。</p>
-            <button type="button" className="slack-primary" onClick={onUpload}>选择文件</button>
-          </div>
-        </div>
-      )}
+      )) : null}
     </main>
   );
 }

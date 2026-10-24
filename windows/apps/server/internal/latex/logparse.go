@@ -18,9 +18,9 @@ type Diagnostic struct {
 	// 有些警告来自宏包而不是用户正文，标出来能省掉「我这一行看着没问题」的困惑。
 	Source string `json:"source,omitempty"`
 	// LocationSource 说明位置是怎么来的：
-//   - "log"    —— 日志行直接给出的 file:line（最可信）；
-//   - "search" —— 在项目源码里找到了这个引用键（\cite/\ref 的键），位置是确定的；
-//   - "" —— 没有位置。警告常常说不出文件，硬猜会把人带错地方。
+	//   - "log"    —— 日志行直接给出的 file:line（最可信）；
+	//   - "search" —— 在项目源码里找到了这个引用键（\cite/\ref 的键），位置是确定的；
+	//   - "" —— 没有位置。警告常常说不出文件，硬猜会把人带错地方。
 	LocationSource string `json:"locationSource,omitempty"`
 	// Snippet 是出错处的源码片段（TeX 日志里的 l.NN 行，可能左边被截断）。
 	Snippet string `json:"snippet,omitempty"`

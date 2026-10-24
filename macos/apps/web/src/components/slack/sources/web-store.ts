@@ -1,6 +1,7 @@
 import type { WebBookSource, WebSourceRules } from './web-types';
+import { STORAGE_KEYS } from '../../../lib/storage';
 
-const STORAGE_KEY = 'readx-slack-web-sources';
+const STORAGE_KEY = STORAGE_KEYS.slackWebSources;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)

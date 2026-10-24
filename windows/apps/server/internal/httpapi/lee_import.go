@@ -622,11 +622,11 @@ func tailTextFile(path string, limit int) string {
 	return text
 }
 
-func (s *Server) adoptLeeTranslatedPDF(key, source string, pages int) error {
+func (s *Server) adoptLeeTranslatedPDF(jobKey, documentKey, source string, pages int) error {
 	if strings.TrimSpace(source) == "" {
 		return errors.New("Lee 译文 PDF 路径为空")
 	}
-	target := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), key+"-translated.pdf")
+	target := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).LibraryDir(), documentKey+"-translated.pdf")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
@@ -651,7 +651,12 @@ func (s *Server) adoptLeeTranslatedPDF(key, source string, pages int) error {
 	if err = os.Rename(tempPath, target); err != nil {
 		return fmt.Errorf("保存 Lee 译文 PDF 失败: %w", err)
 	}
-	s.jobStage(key, "render", "done", fmt.Sprintf("Lee 已排版 %d 页译文", pages), pages, pages)
+	s.updateImportJob(jobKey, func(job *DocumentJob) {
+		job.setStage("render", "done", fmt.Sprintf("Lee 已排版 %d 页译文", pages), pages, pages)
+		if stage := job.stage("render"); stage != nil {
+			stage.Unit, stage.Substage = "页", ""
+		}
+	})
 	return nil
 }
 

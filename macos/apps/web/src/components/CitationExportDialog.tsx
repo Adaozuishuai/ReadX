@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, type CitationFormat, type CitationPreview } from '../api/client';
+import { AppDialog } from './AppDialog';
 
 /**
  * 导出书目（BibTeX / RIS）。
@@ -24,7 +25,6 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 export function CitationExportDialog({ keys, category, scopeLabel, onClose }: Props) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [format, setFormat] = useState<CitationFormat>('bibtex');
   const [preview, setPreview] = useState<CitationPreview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,10 +34,6 @@ export function CitationExportDialog({ keys, category, scopeLabel, onClose }: Pr
   const [expanded, setExpanded] = useState(false);
 
   const keySignature = keys?.join(',') ?? '';
-
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -97,14 +93,7 @@ export function CitationExportDialog({ keys, category, scopeLabel, onClose }: Pr
   };
 
   return (
-    <dialog
-      className="app-dialog citation-dialog"
-      ref={dialog}
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-    >
+    <AppDialog open onClose={onClose} className="citation-dialog">
       <header>
         <div>
           <h2>导出书目</h2>
@@ -204,6 +193,6 @@ export function CitationExportDialog({ keys, category, scopeLabel, onClose }: Pr
           {busy ? '导出中…' : '导出'}
         </button>
       </footer>
-    </dialog>
+    </AppDialog>
   );
 }

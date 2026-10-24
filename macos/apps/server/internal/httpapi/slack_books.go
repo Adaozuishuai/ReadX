@@ -8,13 +8,24 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"cbctv2/server/internal/booksources"
 )
 
 const gutendexBooksURL = "https://gutendex.com/books/"
 
-var bookSourceHTTPClient = func() *http.Client {
+var bookSourceHTTPClient = newBookSourceClient(sourceProxyFromEnvironment)
+
+// newBookSourceClient 构造 slack 书源出网客户端。proxy 参数化便于测试注入 nil
+// 做确定性验证（环境里有系统代理时，回环请求会经代理转发，无法在包级变量上断言）。
+func newBookSourceClient(proxy func(*http.Request) (*url.URL, error)) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = sourceProxyFromEnvironment
+	transport.Proxy = proxy
+	// 出网防护共享 booksources 的同一份实现：解析后逐 IP 校验（含保留网段表）
+	// 并按 IP 拨号。此前这里完全没有 IP/私网检查，只有重定向主机白名单——
+	// DNS rebinding 或源站解析到内网地址时可直接触达本机/内网服务。
+	// 用户显式配置的代理沿用 booksources 的既有信任规则（代理地址直接放行）。
+	transport.DialContext = booksources.DialPublicGuard(10*time.Second, proxy)
 	return &http.Client{
 		Timeout:   2 * time.Minute,
 		Transport: transport,
@@ -29,7 +40,7 @@ var bookSourceHTTPClient = func() *http.Client {
 			return nil
 		},
 	}
-}()
+}
 
 func (s *Server) handleSlackBookSearch(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))

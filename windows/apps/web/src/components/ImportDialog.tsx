@@ -8,6 +8,7 @@ import {
 import { useImportProgress } from './ImportProgressPanel';
 import { UploadShotStage, type ActiveImport } from './UploadShotStage';
 import { DocumentJobDialog } from './DocumentJobDialog';
+import { AppDialog } from './AppDialog';
 
 const MAX_PDF_BYTES = 512 * 1048576;
 const MAX_EPUB_BYTES = 100 * 1048576;
@@ -23,7 +24,7 @@ export function ImportDialog({
   onImported: () => void;
   onOpenDocument?: (id: string) => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => () => controller.current?.abort(), []);
   const started = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const [busy, setBusy] = useState(false);
@@ -40,10 +41,6 @@ export function ImportDialog({
   const sources = useRef(new WeakMap<File, string>());
   const metadataHints = useRef(new WeakMap<File, ImportCandidate>());
   const activity = useImportProgress();
-  useEffect(() => {
-    dialog.current?.showModal();
-    return () => controller.current?.abort();
-  }, []);
   // ref 同步加锁，阻止 React 更新 busy 前的重复提交。
   const startRequest = () => {
     if (controller.current) return null;
@@ -163,9 +160,10 @@ export function ImportDialog({
   };
   return (
     <>
-    <dialog
-      className="app-dialog import-dialog"
-      ref={dialog}
+    <AppDialog
+      open
+      onClose={onClose}
+      className="import-dialog"
       onCancel={(event) => {
         event.preventDefault();
         controller.current?.abort();
@@ -257,7 +255,7 @@ export function ImportDialog({
           完成
         </button>
       </footer>
-    </dialog>
+    </AppDialog>
     {jobFile ? (
       <DocumentJobDialog
         document={{ key: activity.jobKey || '', title: active?.result?.document?.title || jobFile.name, authors: active?.result?.document?.authors || [], format: /\.epub$/i.test(jobFile.name) || jobFile.type === 'application/epub+zip' ? 'epub' : 'pdf' }}

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { STORAGE_KEYS } from '../../lib/storage';
 
 export type WorkspaceMode = 'research' | 'slack';
 
-const POSITION_KEY = 'readx-mode-pendant-left';
+const POSITION_KEY = STORAGE_KEYS.pendantPosition;
 const PENDANT_WIDTH = 68;
 const EDGE_GAP = 8;
 

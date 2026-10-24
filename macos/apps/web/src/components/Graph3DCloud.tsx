@@ -16,6 +16,7 @@
  *   - **回调与选中不进场景依赖**：否则每选一个点就重建 WebGL 场景、相机也跟着跳。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFullscreen } from '../hooks/useFullscreen';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
@@ -126,23 +127,9 @@ export function Graph3DCloud({ nodes, edges, papers, selectedId, onPick, onHover
   const [autoRotate, setAutoRotate] = useState(true);
   const [hovered, setHovered] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const { isFullscreen, toggleFullscreen } = useFullscreen(() => shell.current?.closest<HTMLElement>('.graph-section') ?? shell.current);
   const [webGLError, setWebGLError] = useState(false);
 
-  // 真·全屏：连应用顶栏一起盖住，不依赖操作系统窗口按钮。
-  useEffect(() => {
-    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
-  const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      void document.exitFullscreen();
-      return;
-    }
-    const graphSection = shell.current?.closest<HTMLElement>('.graph-section');
-    void (graphSection ?? shell.current)?.requestFullscreen?.();
-  }, []);
 
   // 回调与选中都走 ref：它们变化不该重建 WebGL 场景。
   const pickRef = useRef(onPick);

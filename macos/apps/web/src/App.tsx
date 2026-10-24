@@ -21,9 +21,20 @@ const LatexStudio = lazy(() => import('./components/latex/LatexStudio').then((mo
 const SlackWorkspace = lazy(() => import('./components/slack/SlackWorkspace').then((module) => ({ default: module.SlackWorkspace })));
 import { ModePendant, type WorkspaceMode } from './components/slack/ModePendant';
 import './components/slack/slack.css';
+import { STORAGE_KEYS } from './lib/storage';
 type Screen = 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex';
 
-const MODE_KEY = 'cbct-v2-workspace-mode';
+const MODE_KEY = STORAGE_KEYS.workspaceMode;
+
+function readReaderPopupTarget(): { documentId: string; page: number | null } | null {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('readxWindow') !== 'reader') return null;
+  const documentId = params.get('documentId') ?? '';
+  if (!/^[\w-]{1,128}$/.test(documentId)) return null;
+  const pageValue = params.get('page');
+  const page = pageValue && /^\d{1,5}$/.test(pageValue) && Number(pageValue) > 0 ? Number(pageValue) : null;
+  return { documentId, page };
+}
 
 function readWorkspaceMode(): WorkspaceMode {
   try {
@@ -45,6 +56,7 @@ function readWorkspaceMode(): WorkspaceMode {
  * 知识图谱/复现是独立入口，从书库侧栏进入。
  */
 export default function App() {
+  const popupTarget = useMemo(readReaderPopupTarget, []);
   const {
     phase,
     allDocuments,
@@ -52,7 +64,7 @@ export default function App() {
     setFilters,
     reload,
   } = useWorkspace();
-  const [screen, commitScreen] = useState<Screen>('library');
+  const [screen, commitScreen] = useState<Screen>(() => popupTarget ? 'reader' : 'library');
   const currentScreen = useRef(screen);
   currentScreen.current = screen;
   const latexBeforeLeave = useRef<(() => Promise<boolean>) | null>(null);
@@ -67,7 +79,7 @@ export default function App() {
       commitScreen(next);
     }
   }, []);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => popupTarget?.documentId ?? null);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
   const [retranslateDocument, setRetranslateDocument] = useState<DocumentSummary | null>(null);
   const [processingDocument, setProcessingDocument] = useState<DocumentSummary | null>(null);
@@ -140,9 +152,9 @@ export default function App() {
   const libraryMeta = useLibraryMeta();
   const theme = useTheme();
   // 后端从「未连接」变为「已连接」时重取库元数据：首次请求可能在 token 注入前发出并留下错误。
-  const [page, setPage] = useState<number | null>(null);
+  const [page, setPage] = useState<number | null>(() => popupTarget?.page ?? null);
   const [cite, setCite] = useState<{ page: number; nonce: number } | null>(
-    null,
+    () => popupTarget?.page != null ? { page: popupTarget.page, nonce: 1 } : null,
   );
   const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(
     null,
@@ -340,6 +352,12 @@ export default function App() {
           page={page}
           onPage={setPage}
           onBack={() => setScreen('library')}
+          onPopout={() => {
+            if (!selected) return;
+            const params = new URLSearchParams({ readxWindow: 'reader', documentId: selected.id });
+            if (page != null) params.set('page', String(page));
+            window.open(`${window.location.origin}/?${params.toString()}`, '_blank');
+          }}
           cite={cite}
           onCite={citePage}
           annotations={annotations}
@@ -456,7 +474,7 @@ export default function App() {
 }
 
 /**
- * 全局工作区导航：书库、图谱、日历、主题与导入入口在各页面保持一致。
+ * 全局工作区导航：书库、PPT、LaTeX Studio 与主题、导入入口在各页面保持一致。
  */
 function HeaderBar({
   phase,
@@ -487,35 +505,10 @@ function HeaderBar({
       <button
         type="button"
         onClick={() => onScreen('library')}
-        aria-current={screen === 'library' || screen === 'reader' ? 'page' : undefined}
-        className={screen === 'library' || screen === 'reader' ? 'active' : ''}
+        aria-current={['library', 'reader', 'graph', 'calendar', 'compare', 'reproduction'].includes(screen) ? 'page' : undefined}
+        className={['library', 'reader', 'graph', 'calendar', 'compare', 'reproduction'].includes(screen) ? 'active' : ''}
       >
         <WorkspaceIcon name="library" size={16} /><span>书库</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onScreen('graph')}
-        aria-current={screen === 'graph' ? 'page' : undefined}
-        className={screen === 'graph' ? 'active' : ''}
-      >
-        <WorkspaceIcon name="graph" size={16} /><span>图谱</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onScreen('calendar')}
-        aria-current={screen === 'calendar' ? 'page' : undefined}
-        className={screen === 'calendar' ? 'active' : ''}
-      >
-        <WorkspaceIcon name="calendar" size={16} /><span>日历</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onScreen('compare')}
-        aria-current={screen === 'compare' ? 'page' : undefined}
-        className={screen === 'compare' ? 'active' : ''}
-        title="跨文献对照：选 2–4 篇并排看实验配置"
-      >
-        <WorkspaceIcon name="panel" size={16} /><span>对照</span>
       </button>
       <button type="button" onClick={onPresentation} aria-current={screen === 'presentation' ? 'page' : undefined} className={screen === 'presentation' ? 'active' : ''} title="从书库选择论文生成演示稿">
         <WorkspaceIcon name="file" size={16} /><span>PPT</span>

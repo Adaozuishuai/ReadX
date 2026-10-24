@@ -31,6 +31,9 @@ function cleanHeadingTitle(value: string): string {
 export function detectPaperHeadings(lines: HeadingLine[], page: number, pageHeight: number): PaperHeading[] {
   const heights = lines.filter((line) => line.text.trim().length > 50).map((line) => line.height).sort((a, b) => a - b);
   const body = heights[Math.floor(heights.length / 2)] ?? 10;
+  const frontMatterEnd = Math.min(pageHeight * 0.55, ...lines
+    .filter((line) => /^(?:(?:\d+(?:\.\d+)*|[IVXLCDM]+)[.)]?\s+)?(?:abstract\b|introduction\b|摘要|引言|绪论)/i.test(cleanHeadingTitle(line.text)))
+    .map((line) => line.y));
   const known = /^(abstract|introduction|background|related work|materials?(?: and methods)?|methods?|methodology|proposed (?:method|approach)|experiments?(?: and results)?|results?(?: and discussion)?|discussion|conclusions?|limitations?|acknowledg(?:e)?ments?|references|bibliography|appendix(?: [A-Z])?|supplementary(?: material)?|摘要|引言|绪论|相关工作|方法|实验(?:结果)?|讨论|结论|参考文献|附录)$/i;
   const found: PaperHeading[] = [];
   for (const line of lines) {
@@ -41,6 +44,12 @@ export function detectPaperHeadings(lines: HeadingLine[], page: number, pageHeig
     const number = title.match(/^(\d+(?:\.\d+)*|[IVXLCDM]+)[.)]?\s+(.+)$/);
     const letter = title.match(/^[A-Z][.)]\s+(.+)$/);
     const name = number?.[2] ?? letter?.[1] ?? title;
+    // Affiliation indices and footnote numbers use the same syntax as sections.
+    // Only treat institution names as front matter before the first body heading.
+    if (page === 1 && line.y < frontMatterEnd && /\b(?:universit(?:y|ies)|institut(?:e|ion)|department|school of|college|laborator(?:y|ies)|academy|hospital|research cent(?:er|re))\b|大学|学院|研究所|实验室|医院/iu.test(name)) continue;
+    if (/https?:\/\/|www\.|[\w.+-]+@[\w.-]+\.[a-z]{2,}|(?:[\w-]+\.)+(?:edu|org|com|net|io|ai|cn|ac|gov)\b/i.test(name)
+      || /^(?:project|code|data(?:set)?)\s+(?:page|website|repository|url)\s*:/i.test(name)) continue;
+    if (number && /^[\p{L}'’‐-]+(?:\s+[\p{L}'’‐-]+)*,\s*\p{Lu}\./u.test(name)) continue;
     const naturalTitle = /^[A-Z\u4e00-\u9fff]/u.test(name) && (/[A-Za-z]{3,}/.test(name) || /[\u4e00-\u9fff]{2}/u.test(name));
     const short = name.split(/\s+/).length <= 14 && !/[;,!?。；，]$/.test(name) && !/[.!?]\s+[A-Z]/.test(name);
     const numbered = !!number && naturalTitle && short && !/[.:]$/.test(name) && line.height >= body * 0.85;
@@ -87,9 +96,11 @@ export function mergePaperHeadings(bookmarks: PaperHeading[], inferred: PaperHea
       }
       if (a.sectionPath.length !== b.sectionPath.length) return a.sectionPath.length - b.sectionPath.length;
     }
-    return a.x !== undefined && b.x !== undefined
-      ? a.x - b.x || (a.y ?? 0) - (b.y ?? 0)
-      : (a.y ?? 0) - (b.y ?? 0);
+    // PDF text anchors on the same column can differ by a fraction of a point.
+    // Treat small offsets as alignment noise so bibliography entries cannot
+    // precede their References heading; distinct columns still sort left first.
+    if (a.x !== undefined && b.x !== undefined && Math.abs(a.x - b.x) > 0.02) return a.x - b.x;
+    return (a.y ?? 0) - (b.y ?? 0);
   });
   return ordered.filter((entry) => {
     if (/^(?:\d+[. ]+)?(?:references|bibliography|参考文献)$/i.test(entry.title)) { references = true; return true; }

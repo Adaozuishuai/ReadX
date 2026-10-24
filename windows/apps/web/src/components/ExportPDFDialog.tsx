@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type TranslatedPDFResponse } from '../api/client';
+import { AppDialog } from './AppDialog';
+import { downloadBlob } from '../lib/download';
 
 /**
  * 生成保留排版的译文 PDF。
@@ -15,7 +17,6 @@ interface Props {
 }
 
 export function ExportPDFDialog({ documentKey, pageCount, onClose }: Props) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -23,7 +24,6 @@ export function ExportPDFDialog({ documentKey, pageCount, onClose }: Props) {
   const cancelled = useRef(false);
 
   useEffect(() => {
-    dialog.current?.showModal();
     cancelled.current = false;
     return () => {
       cancelled.current = true;
@@ -32,14 +32,7 @@ export function ExportPDFDialog({ documentKey, pageCount, onClose }: Props) {
 
   const download = async () => {
     const blob = await api.downloadTranslatedPDF(documentKey);
-    const url = URL.createObjectURL(blob);
-    const link = window.document.createElement('a');
-    link.href = url;
-    link.download = `${documentKey}-translated.pdf`;
-    window.document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `${documentKey}-translated.pdf`);
   };
 
   const run = async () => {
@@ -64,14 +57,7 @@ export function ExportPDFDialog({ documentKey, pageCount, onClose }: Props) {
   };
 
   return (
-    <dialog
-      className="app-dialog export-pdf-dialog"
-      ref={dialog}
-      onCancel={(event) => {
-        event.preventDefault();
-        if (phase !== 'working') onClose();
-      }}
-    >
+    <AppDialog open onClose={onClose} busy={phase === 'working'} className="export-pdf-dialog">
       <header>
         <div>
           <h2>导出译文 PDF</h2>
@@ -102,6 +88,6 @@ export function ExportPDFDialog({ documentKey, pageCount, onClose }: Props) {
           {phase === 'working' ? '准备下载…' : '下载译文 PDF'}
         </button>
       </footer>
-    </dialog>
+    </AppDialog>
   );
 }

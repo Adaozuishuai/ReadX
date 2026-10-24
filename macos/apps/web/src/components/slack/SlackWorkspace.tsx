@@ -145,17 +145,19 @@ export function SlackWorkspace({
         </div>
 
         <div className="slack-topbar__actions">
-          <select
-            className="slack-theme"
-            aria-label="界面主题"
-            value={theme}
-            onChange={(event) => onThemeChange(event.target.value as ThemeChoice)}
-          >
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-            <option value="paper">纸张</option>
-            <option value="system">跟随系统</option>
-          </select>
+          {current ? null : (
+            <select
+              className="slack-theme"
+              aria-label="界面主题"
+              value={theme}
+              onChange={(event) => onThemeChange(event.target.value as ThemeChoice)}
+            >
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+              <option value="paper">纸张</option>
+              <option value="system">跟随系统</option>
+            </select>
+          )}
           <button type="button" className="slack-boss" onClick={onExit} title="立即返回科研界面（Esc）">
             ← 返回工作区
           </button>
@@ -173,9 +175,14 @@ export function SlackWorkspace({
           />
         ) : section === 'find' ? (
           <BookFinder
+            items={items}
+            onOpen={handleOpen}
+            onUpload={() => uploadInput.current?.click()}
             onImport={async (file, metadata) => {
-              await importDownloadedBook(file, metadata);
+              const item = await importDownloadedBook(file, metadata);
               setSection('shelf');
+              setOpenId(item.id);
+              void open(item.id);
             }}
             onImportWebNovel={async (source, book) => {
               const item = await importWebNovel(source, book);
@@ -195,6 +202,7 @@ export function SlackWorkspace({
             onOpen={handleOpen}
             onDelete={setConfirmItem}
             onUpload={() => uploadInput.current?.click()}
+            onFind={() => setSection('find')}
           />
         )}
       </div>

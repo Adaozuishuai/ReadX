@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary, PDFLayout } from '@cbct/shared';
 import { pageParagraphs, segmentParagraph, statusLabel } from '@cbct/shared';
-import { api, type Annotation, type EPUBSection, type TranslationPreview } from '../api/client';
+import { api, type Annotation, type DocumentJob, type EPUBSection, type TranslationPreview } from '../api/client';
+import { useFullscreen } from '../hooks/useFullscreen';
 import type { DocumentPhase } from '../hooks/useDocument';
 import { AssistantSidebar, type AssistantTab } from './AssistantPanels';
 import type { useAnnotations } from '../hooks/useAnnotations';
 import { PDFDocumentView, usePDF, usePDFData, type PDFFindReport, type PDFFindState, type PendingSelection } from './PDFView';
-import type { LeeParagraphs } from '../api/client';
+import { loadPDFParagraphLayout } from '../api/pdfParagraphs';
 import { ResizeHandle } from './ResizeHandle';
 import { EPUBView } from './EPUBView';
 import { ParagraphActions, type SelectedParagraph, type ParagraphQuestion } from './ParagraphActions';
@@ -14,6 +15,7 @@ import { ExportPDFDialog } from './ExportPDFDialog';
 import { CitationExportDialog } from './CitationExportDialog';
 import { CitationNetworkDialog } from './CitationNetworkDialog';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { STORAGE_KEYS } from '../lib/storage';
 
 type ReadingMode = 'source' | 'parallel' | 'translation';
 
@@ -23,6 +25,7 @@ interface Props {
   page: number | null;
   onPage: (page: number) => void;
   onBack: () => void;
+  onPopout: () => void;
   cite: { page: number; nonce: number } | null;
   onCite: (page: number) => void;
   annotations: ReturnType<typeof useAnnotations>;
@@ -34,37 +37,13 @@ interface Props {
   onOpenDocument?: (key: string) => void;
 }
 
-// Lee document.v1 的段落块直接给 PDFView 做命中测试；坐标单位与 page 宽高保持一致。
-function leeLayout(paragraphs: LeeParagraphs): PDFLayout {
-  return {
-    width: paragraphs.width,
-    height: paragraphs.height,
-    blocks: paragraphs.blocks.map((block) => ({
-      text: block.text,
-      x: block.box[0],
-      y: block.box[1],
-      width: Math.max(0, block.box[2] - block.box[0]),
-      height: Math.max(0, block.box[3] - block.box[1]),
-      fontSize: Math.max(8, (block.box[3] - block.box[1]) * 0.8),
-    })),
-    visuals: (paragraphs.visuals ?? []).map((block) => ({
-      text: block.text,
-      x: block.box[0],
-      y: block.box[1],
-      width: Math.max(0, block.box[2] - block.box[0]),
-      height: Math.max(0, block.box[3] - block.box[1]),
-      kind: block.kind,
-      label: block.text || (block.kind === 'table' ? 'OCR 表格' : block.kind === 'formula' ? 'OCR 公式' : 'OCR 图片'),
-    })),
-  };
-}
-
 export function ReaderScreen({
   detail,
   selected,
   page,
   onPage,
   onBack,
+  onPopout,
   cite,
   onCite,
   annotations,
@@ -86,7 +65,16 @@ export function ReaderScreen({
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth >= 1200);
   const [tab, setTab] = useState<AssistantTab>('chat');
   const [swapped, setSwapped] = useState(false);
-  const [divider, setDivider] = useState(50);
+  const [divider, setDivider] = useState(() => readReaderNumber('divider', 50, 5, 95));
+  const [sourceZoom, setSourceZoom] = useState(() => readReaderNumber('sourceZoom', 1, 0.5, 3));
+  const [translatedZoom, setTranslatedZoom] = useState(() => readReaderNumber('translatedZoom', 1, 0.5, 3));
+  const readerRoot = useRef<HTMLDivElement>(null);
+  const readerToolbar = useRef<HTMLElement>(null);
+  const [focusMode, setFocusMode] = useState(false);
+  const [focusEdge, setFocusEdge] = useState<'top' | 'left' | 'right' | null>(null);
+  const { isFullscreen, enterFullscreen, exitFullscreen } = useFullscreen(readerRoot);
+  const wasFullscreen = useRef(false);
+  const [documentJob, setDocumentJob] = useState<DocumentJob | null>(null);
   const [leftWidth, setLeftWidth] = useState(() => readPanelWidth('toc', 220));
   const [rightWidth, setRightWidth] = useState(() => readPanelWidth('assistant', 440));
   const [panelSpace, setPanelSpace] = useState(window.innerWidth);
@@ -104,13 +92,51 @@ export function ReaderScreen({
     if (!epub && translatedPDF.document) setMode('translation');
   }, [documentKey, epub, translatedPDF.document]);
   useEffect(() => {
-    try { localStorage.setItem('cbct.reader.panels', JSON.stringify({ toc: leftWidth, assistant: rightWidth })); } catch { /* Storage may be disabled. */ }
+    try { localStorage.setItem(STORAGE_KEYS.readerPanels, JSON.stringify({ toc: leftWidth, assistant: rightWidth })); } catch { /* Storage may be disabled. */ }
   }, [leftWidth, rightWidth]);
-  const desiredLeft = leftOpen ? leftWidth : 0;
-  const desiredRight = rightOpen ? rightWidth : 0;
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEYS.readerLayout, JSON.stringify({ divider, sourceZoom, translatedZoom })); } catch { /* The layout still applies for this session. */ }
+  }, [divider, sourceZoom, translatedZoom]);
+  const leaveFocus = useCallback(() => {
+    setFocusMode(false);
+    setFocusEdge(null);
+    void exitFullscreen();
+  }, [exitFullscreen]);
+  const toggleFocus = useCallback(() => {
+    if (focusMode) { leaveFocus(); return; }
+    setFocusMode(true);
+    setFocusEdge(null);
+    void enterFullscreen();
+  }, [focusMode, leaveFocus, enterFullscreen]);
+  useEffect(() => {
+    if (wasFullscreen.current && !isFullscreen) {
+      setFocusMode(false);
+      setFocusEdge(null);
+    }
+    wasFullscreen.current = isFullscreen;
+  }, [isFullscreen]);
+  useEffect(() => {
+    if (!focusMode) return;
+    document.body.classList.add('reader-focus-active');
+    return () => document.body.classList.remove('reader-focus-active');
+  }, [focusMode]);
+  useEffect(() => {
+    if (!readerToolbar.current || !readerRoot.current) return;
+    const update = () => readerRoot.current?.style.setProperty('--reader-toolbar-height', `${readerToolbar.current?.offsetHeight ?? 64}px`);
+    const observer = new ResizeObserver(update);
+    observer.observe(readerToolbar.current);
+    update();
+    return () => observer.disconnect();
+  }, []);
+  const actualLeftOpen = focusMode ? focusEdge === 'left' : leftOpen;
+  const actualRightOpen = focusMode ? focusEdge === 'right' : rightOpen;
+  const desiredLeft = !focusMode && leftOpen ? leftWidth : 0;
+  const desiredRight = !focusMode && rightOpen ? rightWidth : 0;
   const panelScale = Math.min(1, Math.max(0, panelSpace - 252) / (desiredLeft + desiredRight || 1));
   const visibleLeft = desiredLeft * panelScale;
   const visibleRight = desiredRight * panelScale;
+  const focusLeftWidth = Math.min(leftWidth, Math.max(0, panelSpace - 64));
+  const focusRightWidth = Math.min(rightWidth, Math.max(0, panelSpace - 64));
   const resizeLeft = (value: number) => {
     const next = Math.max(0, Math.min(value, panelSpace - visibleRight - 252));
     setLeftOpen(next >= 48);
@@ -127,6 +153,7 @@ export function ReaderScreen({
   const [section, setSection] = useState<EPUBSection | null>(null);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<PendingSelection | null>(null);
+  const selectionToolbar = useRef<HTMLDivElement>(null);
   const [selectedParagraph, setSelectedParagraph] = useState<SelectedParagraph | null>(null);
   const [selectedNavigationIndex, setSelectedNavigationIndex] = useState<number | null>(null);
   useEffect(() => setSelectedNavigationIndex(null), [documentKey]);
@@ -161,6 +188,24 @@ export function ReaderScreen({
     ? sections.length
     : (pdf.document?.numPages ?? cachedPages.length);
   const current = Math.max(1, Math.min(page ?? 1, count || 1));
+  const [pageDraft, setPageDraft] = useState(String(current));
+  useEffect(() => setPageDraft(String(current)), [current]);
+  useEffect(() => {
+    setDocumentJob(null);
+    if (!documentKey || epub) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const refresh = async () => {
+      try {
+        const response = await api.documentJob(documentKey, controller.signal);
+        if (controller.signal.aborted) return;
+        setDocumentJob(response.job ?? null);
+        if (response.job?.status === 'running') timer = window.setTimeout(() => void refresh(), 1500);
+      } catch { /* Keep the current page's translation status if the task is unavailable. */ }
+    };
+    void refresh();
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [documentKey, epub]);
   useEffect(() => {
     setLiveTranslationPreview(null);
     setLiveTranslationProgress('等待本页译文…');
@@ -443,9 +488,9 @@ export function ReaderScreen({
           }
         } else if (pdf.document) {
           // 段落识别直接用 Lee document.v1 的块与坐标，不再用 PDF.js 重新切段。
-          const retained = await api.paragraphs(documentKey, current, controller.signal);
-          if (!cancelled && retained.available) {
-            setPDFLayout(leeLayout(retained));
+          const retained = await loadPDFParagraphLayout(pdf.document, documentKey, current);
+          if (!cancelled && retained) {
+            setPDFLayout(retained);
             setSourceText(retained.blocks.map((block) => block.text).join('\n\n'));
           } else if (!cancelled) {
             setPDFLayout(null);
@@ -473,13 +518,36 @@ export function ReaderScreen({
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        if (findOpen) { setFindOpen(false); return; }
+        if (focusMode && !pending && !selectedParagraph && !document.querySelector('dialog[open]')) leaveFocus();
         setPending(null);
         setSelectedParagraph(null);
       }
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
-  }, []);
+  }, [findOpen, focusMode, pending, selectedParagraph, leaveFocus]);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleFocus();
+      }
+    };
+    window.addEventListener('keydown', shortcut, true);
+    return () => window.removeEventListener('keydown', shortcut, true);
+  }, [toggleFocus]);
+  useEffect(() => {
+    if (!pending) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || selectionToolbar.current?.contains(event.target)) return;
+      setPending(null);
+      window.getSelection()?.removeAllRanges();
+    };
+    document.addEventListener('pointerdown', dismiss, true);
+    return () => document.removeEventListener('pointerdown', dismiss, true);
+  }, [pending]);
   const select = (value: PendingSelection) => {
     setSelectedParagraph(null);
     setPending(value);
@@ -543,7 +611,7 @@ export function ReaderScreen({
       window.getSelection()?.removeAllRanges();
       if (result) {
         onFocusAnnotation(result.id, result.page);
-        setRightOpen(true);
+        if (focusMode) setFocusEdge('right'); else setRightOpen(true);
         setTab('notes');
       }
     } catch (cause) {
@@ -568,11 +636,14 @@ export function ReaderScreen({
       ?.querySelector(`[data-annotation-id="${CSS.escape(id)}"]`)
       ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   };
-  const startDrag = (event: React.MouseEvent) => {
+  // pointer 事件（原先是 mouse 事件——触摸/触控笔拖不动分隔条）；
+  // setPointerCapture 保证手指拖出分隔条后事件仍持续送达。
+  const startDrag = (event: React.PointerEvent) => {
     event.preventDefault();
     const bounds = panes.current?.getBoundingClientRect();
     if (!bounds) return;
-    const move = (next: MouseEvent) => {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const move = (next: PointerEvent) => {
       const ratio = Math.min(
         95,
         Math.max(5, ((next.clientX - bounds.left) / bounds.width) * 100),
@@ -580,16 +651,32 @@ export function ReaderScreen({
       setDivider(swapped ? 100 - ratio : ratio);
     };
     const stop = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', stop);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
       dragCleanup.current = null;
     };
     dragCleanup.current?.();
     dragCleanup.current = stop;
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', stop);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
   };
   useEffect(() => () => dragCleanup.current?.(), []);
+  const runningStage = documentJob?.stages.find((stage) => stage.status === 'running');
+  const translationStage = documentJob?.stages.find((stage) => stage.key === 'translate');
+  const translationStatus = epub ? 'EPUB 原文'
+    : documentJob?.status === 'failed' ? '处理失败'
+    : documentJob?.status === 'running' ? runningStage?.key === 'translate' ? '翻译中' : `${runningStage?.label || '处理'}中`
+    : translatedPDF.document ? '已翻译'
+    : liveRenderedPDF.document ? '本页已翻译'
+    : liveTranslationPreview?.available && (liveTranslationPreview.translatedBlocks ?? 0) < (liveTranslationPreview.totalBlocks ?? 0) ? '翻译中'
+    : liveTranslationPreview?.available && (liveTranslationPreview.totalBlocks ?? 0) > 0 ? '本页已翻译'
+    : translationStage?.status === 'done' ? '已翻译'
+    : ['cancelled', 'interrupted'].includes(documentJob?.status ?? '') ? '处理已暂停'
+    : '暂无译文';
+  const processingDetail = documentJob?.error || runningStage?.message || (translatedPDF.document ? '排版译文已准备好' : liveTranslationProgress);
+  const readingPercent = count ? Math.round(current / count * 100) : 0;
   const source = (
     <div
       className="publication-pane"
@@ -612,6 +699,9 @@ export function ReaderScreen({
       ) : pdf.document ? (
         <PDFDocumentView
           document={pdf.document}
+          documentKey={documentKey ?? undefined}
+          zoom={sourceZoom}
+          onZoomChange={setSourceZoom}
           page={current}
           onPage={(value) => onPage(Math.min(value, count || value))}
           navigationRequest={navigationRequest}
@@ -661,6 +751,8 @@ export function ReaderScreen({
       ) : translatedPDF.document ? (
         <PDFDocumentView
           document={translatedPDF.document}
+          zoom={translatedZoom}
+          onZoomChange={setTranslatedZoom}
           page={Math.min(current, translatedPDF.document.numPages)}
           onPage={(value) => onPage(Math.min(value, count || value))}
           navigationRequest={translationNavigationRequest}
@@ -675,6 +767,8 @@ export function ReaderScreen({
       ) : liveRenderedPDF.document ? (
         <PDFDocumentView
           document={liveRenderedPDF.document}
+          zoom={translatedZoom}
+          onZoomChange={setTranslatedZoom}
           page={1}
           onPage={() => undefined}
           navigationRequest={{ page: 1, nonce: current }}
@@ -686,7 +780,6 @@ export function ReaderScreen({
         />
       ) : liveTranslationPreview?.blocks.length ? (
         <div className="translation-document live-translation-preview" aria-live="polite">
-          <p className="live-translation-status">第 {current} 页 · {liveTranslationProgress}</p>
           {liveTranslationPreview.blocks.map((block, index) => (
             <p className="live-translation-block" key={`${index}-${block.source.slice(0, 32)}`}>{block.target}</p>
           ))}
@@ -699,13 +792,35 @@ export function ReaderScreen({
     </div>
   );
   return (
-    <div className="workspace-reader">
-      <header className="reader-toolbar">
+    <div
+      ref={readerRoot}
+      className={`workspace-reader${focusMode ? ' reader--focus' : ''}`}
+      data-focus-edge={focusEdge ?? ''}
+      onPointerMove={(event) => {
+        if (!focusMode || event.pointerType === 'touch') return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const x = event.clientX - bounds.left, y = event.clientY - bounds.top;
+        if (y <= 10) setFocusEdge('top');
+        else if (x <= 10) setFocusEdge('left');
+        else if (x >= bounds.width - 10) setFocusEdge('right');
+        else if (focusEdge === 'top' && y <= (readerToolbar.current?.offsetHeight ?? 64) + 56) return;
+        else if (focusEdge === 'left' && x <= focusLeftWidth + 12) return;
+        else if (focusEdge === 'right' && x >= bounds.width - focusRightWidth - 12) return;
+        else if (!(event.target as Element).closest('input, textarea, select') && !readerRoot.current?.querySelector('.reader-sidebar:focus-within, .assistant-sidebar:focus-within')) setFocusEdge(null);
+      }}
+    >
+      {focusMode ? <div className="reader-focus-edges" aria-label="专注模式边缘工具">
+        <button className="reader-focus-edge reader-focus-edge--top" aria-label="显示阅读工具栏" onPointerEnter={() => setFocusEdge('top')} onFocus={() => setFocusEdge('top')} onClick={() => setFocusEdge('top')} />
+        <button className="reader-focus-edge reader-focus-edge--left" aria-label="显示目录" onPointerEnter={() => setFocusEdge('left')} onFocus={() => setFocusEdge('left')} onClick={() => setFocusEdge('left')} />
+        <button className="reader-focus-edge reader-focus-edge--right" aria-label="显示助教" onPointerEnter={() => setFocusEdge('right')} onFocus={() => setFocusEdge('right')} onClick={() => setFocusEdge('right')} />
+      </div> : null}
+      <header className="reader-toolbar" ref={readerToolbar}>
         <div className="reader-title-group">
           <button onClick={onBack}>← 书库</button>
           <button
-            aria-pressed={leftOpen}
+            aria-pressed={actualLeftOpen}
             onClick={() => {
+              if (focusMode) { setFocusEdge('left'); return; }
               setLeftOpen((value) => !value);
               if (window.innerWidth < 1000) setRightOpen(false);
             }}
@@ -715,9 +830,10 @@ export function ReaderScreen({
           <span className="reader-title" title={[selected?.title, selected?.translatedTitle].filter(Boolean).join('\n')}>
             {selected?.title ?? '未选择文档'}
           </span>
-          <small>{selected && statusLabel(selected.status)}</small>
+          <button type="button" onClick={onPopout} disabled={!selected} title="在独立窗口中打开当前论文">弹出阅读窗口</button>
         </div>
         <div className="toolbar-actions">
+          <button type="button" aria-pressed={focusMode} onClick={toggleFocus} title="专注阅读（Ctrl+Shift+Enter）">{focusMode ? '退出专注' : '专注'}</button>
           <span className="mode-pills">
             {(['source', 'parallel', 'translation'] as const).map((item) => (
               <button
@@ -761,24 +877,26 @@ export function ReaderScreen({
             </button>
           ) : null}
           <button
-            aria-pressed={rightOpen && tab === 'chat'}
+            aria-pressed={actualRightOpen && tab === 'chat'}
             onClick={() => {
               const shouldOpen = !rightOpen || tab !== 'chat';
               setTab('chat');
-              setRightOpen(shouldOpen);
-              if (shouldOpen && window.innerWidth < 1000) setLeftOpen(false);
+              if (focusMode) setFocusEdge('right');
+              else setRightOpen(shouldOpen);
+              if (!focusMode && shouldOpen && window.innerWidth < 1000) setLeftOpen(false);
             }}
           >
             AI 助教
           </button>
           {!epub && (
             <button
-              aria-pressed={rightOpen && tab === 'reading'}
+              aria-pressed={actualRightOpen && tab === 'reading'}
               onClick={() => {
                 const shouldOpen = !rightOpen || tab !== 'reading';
                 setTab('reading');
-                setRightOpen(shouldOpen);
-                if (shouldOpen && window.innerWidth < 1000) setLeftOpen(false);
+                if (focusMode) setFocusEdge('right');
+                else setRightOpen(shouldOpen);
+                if (!focusMode && shouldOpen && window.innerWidth < 1000) setLeftOpen(false);
               }}
             >
               精读五重奏
@@ -786,73 +904,10 @@ export function ReaderScreen({
           )}
         </div>
       </header>
-      {findOpen && !epub ? (
-        <div className="reader-find-bar" role="search">
-          <input
-            ref={findInput}
-            type="text"
-            value={findQuery}
-            onChange={(event) => {
-              setFindQuery(event.target.value);
-              setFindIndex(0);
-              setFindNonce((value) => value + 1);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                stepFind(event.shiftKey ? -1 : 1);
-              } else if (event.key === 'Escape') {
-                event.preventDefault();
-                setFindOpen(false);
-              }
-            }}
-            placeholder={findScope === 'translated' ? '在译文中查找' : '在原文中查找'}
-            aria-label="查找内容"
-          />
-          <span className="reader-find-count" aria-live="polite">{findStatus}</span>
-          <button type="button" onClick={() => stepFind(-1)} disabled={!findTotal} title="上一处（Shift+Enter）" aria-label="上一处">↑</button>
-          <button type="button" onClick={() => stepFind(1)} disabled={!findTotal} title="下一处（Enter）" aria-label="下一处">↓</button>
-          <label className="reader-find-option">
-            <input
-              type="checkbox"
-              checked={findCase}
-              onChange={(event) => {
-                setFindCase(event.target.checked);
-                setFindIndex(0);
-                setFindNonce((value) => value + 1);
-              }}
-            />
-            区分大小写
-          </label>
-          <button type="button" onClick={() => setFindOpen(false)}>关闭</button>
-        </div>
-      ) : null}
       <div className="reader-panels" ref={panelRoot}>
-        <aside className="reader-sidebar" data-open={leftOpen} style={{ width: visibleLeft, flexBasis: visibleLeft }}>
-          <p className="panel-label">{epub ? '章节目录' : 'PDF 目录与页码'}</p>
-          <div className="reader-page-nav">
-            <button disabled={current <= 1} onClick={() => navigatePage(current - 1)}>
-              上一{epub ? '章' : '页'}
-            </button>
-            <input
-              aria-label={epub ? '章节序号' : '页码'}
-              type="number"
-              min={1}
-              max={count || 1}
-              value={current}
-              onChange={(event) => {
-                const value = Number(event.target.value);
-                if (value >= 1 && value <= count) navigatePage(value);
-              }}
-            />
-            <span>/ {count || '—'}</span>
-            <button
-              disabled={current >= count}
-              onClick={() => navigatePage(current + 1)}
-            >
-              下一{epub ? '章' : '页'}
-            </button>
-          </div>
+        <aside className="reader-sidebar" data-open={actualLeftOpen} aria-hidden={!actualLeftOpen} inert={!actualLeftOpen} style={{ width: focusMode ? actualLeftOpen ? focusLeftWidth : 0 : visibleLeft, flexBasis: visibleLeft }}>
+          <p className="panel-label">{epub ? '章节目录' : 'PDF 目录'}</p>
+
           <div className="toc-tree">
             {navigation.length
               ? navigation.map((item, index) => (
@@ -891,6 +946,47 @@ export function ReaderScreen({
           ref={panes}
           className={`translation-panes${flashing ? ' cite-flash' : ''}`}
         >
+          {findOpen && !epub ? (
+            <div className="reader-find-bar" role="search">
+              <input
+                ref={findInput}
+                type="text"
+                value={findQuery}
+                onChange={(event) => {
+                  setFindQuery(event.target.value);
+                  setFindIndex(0);
+                  setFindNonce((value) => value + 1);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    stepFind(event.shiftKey ? -1 : 1);
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setFindOpen(false);
+                  }
+                }}
+                placeholder={findScope === 'translated' ? '在译文中查找' : '在原文中查找'}
+                aria-label="查找内容"
+              />
+              <span className="reader-find-count" aria-live="polite">{findStatus}</span>
+              <button type="button" onClick={() => stepFind(-1)} disabled={!findTotal} title="上一处（Shift+Enter）" aria-label="上一处">↑</button>
+              <button type="button" onClick={() => stepFind(1)} disabled={!findTotal} title="下一处（Enter）" aria-label="下一处">↓</button>
+              <label className="reader-find-option">
+                <input
+                  type="checkbox"
+                  checked={findCase}
+                  onChange={(event) => {
+                    setFindCase(event.target.checked);
+                    setFindIndex(0);
+                    setFindNonce((value) => value + 1);
+                  }}
+                />
+                区分大小写
+              </label>
+              <button type="button" onClick={() => setFindOpen(false)} aria-label="关闭查找" title="关闭查找（Esc）">×</button>
+            </div>
+          ) : null}
           {mode === 'source' ? (
             source
           ) : mode === 'translation' ? (
@@ -907,7 +1003,7 @@ export function ReaderScreen({
                 aria-valuenow={divider}
                 aria-label="调整原文和译文宽度"
                 tabIndex={0}
-                onMouseDown={startDrag}
+                onPointerDown={startDrag}
                 onKeyDown={(event) => {
                   if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
                   event.preventDefault();
@@ -929,8 +1025,8 @@ export function ReaderScreen({
         </div>
         <ResizeHandle label="调整 AI 助教侧栏宽度" value={visibleRight}
           onStart={() => { const start = visibleRight; return (delta) => resizeRight(start - delta); }}
-          onStep={(delta) => resizeRight(visibleRight - delta)} onReset={() => { setRightWidth(440); setRightOpen(true); }} />
-        <aside className="assistant-sidebar" data-open={rightOpen} style={{ width: visibleRight, flexBasis: visibleRight }}>
+          onStep={(delta) => resizeRight(visibleRight - delta)} onReset={() => { setRightWidth(440); if (focusMode) setFocusEdge('right'); else setRightOpen(true); }} />
+        <aside className="assistant-sidebar" data-open={actualRightOpen} aria-hidden={!actualRightOpen} inert={!actualRightOpen} style={{ width: focusMode ? actualRightOpen ? focusRightWidth : 0 : visibleRight, flexBasis: visibleRight }}>
           <AssistantSidebar
             key={documentKey}
             apiKey={documentKey}
@@ -946,13 +1042,38 @@ export function ReaderScreen({
           />
         </aside>
       </div>
+      <footer className="reader-statusbar" aria-label="阅读状态">
+        <div className="reader-statusbar__pages">
+          <button type="button" aria-label={epub ? '上一章' : '上一页'} title={epub ? '上一章' : '上一页'} disabled={current <= 1 || !count} onClick={() => navigatePage(current - 1)}>‹</button>
+          <input
+            type="number" min={1} max={count || 1} disabled={!count}
+            aria-label={epub ? '章节序号' : '页码'} value={pageDraft}
+            onChange={(event) => setPageDraft(event.target.value)}
+            onBlur={() => {
+              const value = Number(pageDraft);
+              if (Number.isInteger(value) && value >= 1 && value <= count) { if (value !== current) navigatePage(value); }
+              else setPageDraft(String(current));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
+              else if (event.key === 'Escape') { event.stopPropagation(); setPageDraft(String(current)); }
+            }}
+          />
+          <span>/ {count || '—'} {epub ? '章' : '页'}</span>
+          <button type="button" aria-label={epub ? '下一章' : '下一页'} title={epub ? '下一章' : '下一页'} disabled={current >= count || !count} onClick={() => navigatePage(current + 1)}>›</button>
+        </div>
+        <div className="reader-statusbar__progress"><progress value={count ? current : 0} max={count || 1} aria-label="阅读进度" /><span>{readingPercent}%</span></div>
+        <span className="reader-statusbar__document">{selected && statusLabel(selected.status)}</span>
+        <span className="reader-statusbar__processing" title={processingDetail} role="status"><i data-busy={documentJob?.status === 'running' || translationStatus === '翻译中'} />{translationStatus}</span>
+        {focusMode ? <button type="button" className="reader-focus-exit" onClick={leaveFocus} title="退出专注（Ctrl+Shift+Enter / Esc）">退出专注</button> : null}
+      </footer>
       {selectedParagraph && documentKey && <ParagraphActions
         key={`${current}-${selectedParagraph.index}-${selectedParagraph.text}`}
         paragraph={selectedParagraph}
         onClose={() => setSelectedParagraph(null)}
         onTranslate={() => openParagraphTranslation(selectedParagraph)}
         onAsk={() => {
-          setRightOpen(true);
+          if (focusMode) setFocusEdge('right'); else setRightOpen(true);
           setTab('chat');
           setParagraphQuestion((previous) => ({ text: selectedParagraph.text, position: selectedParagraph.position, kind: selectedParagraph.kind, nonce: (previous?.nonce ?? 0) + 1 }));
           setSelectedParagraph(null);
@@ -965,6 +1086,7 @@ export function ReaderScreen({
       )}
       {pending && (
         <div
+          ref={selectionToolbar}
           role="dialog"
           aria-label="选区批注"
           className="selection-toolbar"
@@ -1025,7 +1147,7 @@ export function ReaderScreen({
             ))}
             <button
               onClick={() => {
-                setRightOpen(true);
+                if (focusMode) setFocusEdge('right'); else setRightOpen(true);
                 setTab('chat');
                 window.dispatchEvent(
                   new CustomEvent('cbct-quote', {
@@ -1040,7 +1162,6 @@ export function ReaderScreen({
             >
               问 AI
             </button>
-            <button onClick={() => setPending(null)}>关闭</button>
           </div>
           {error && (
             <p role="alert" className="text-bad">
@@ -1076,7 +1197,14 @@ export function ReaderScreen({
 
 function readPanelWidth(name: string, fallback: number): number {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem('cbct.reader.panels') ?? '{}')[name];
+    const value: unknown = JSON.parse(localStorage.getItem(STORAGE_KEYS.readerPanels) ?? '{}')[name];
     return typeof value === 'number' && Number.isFinite(value) && value >= 48 && value <= 2000 ? value : fallback;
+  } catch { return fallback; }
+}
+
+function readReaderNumber(name: string, fallback: number, min: number, max: number): number {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(STORAGE_KEYS.readerLayout) ?? '{}')[name];
+    return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
   } catch { return fallback; }
 }

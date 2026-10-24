@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"cbctv2/server/internal/catalog"
+	"cbctv2/server/internal/appstate"
 	"cbctv2/server/internal/validate"
 )
 
@@ -74,8 +75,6 @@ func (s *Server) handleReproductionGet(w http.ResponseWriter, r *http.Request) {
 // 与 v1 一致：没有全文缓存就拒绝（无原文依据无法校验）；校验不过不落库，
 // 如实回错误而不是让半成品进库。
 func (s *Server) handleReproductionAnalyze(w http.ResponseWriter, r *http.Request) {
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
 	key, ok := pathKey(w, r)
 	if !ok {
 		return
@@ -109,22 +108,19 @@ func (s *Server) handleReproductionAnalyze(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	revision := validate.Fingerprint(analysis)
-
-	checklist, err := s.loadReproduction(r.Context(), key)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	encoded, err := json.Marshal(analysis)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	checklist.Analyses[revision] = encoded
-	if _, seen := checklist.Revisions[revision]; !seen {
-		checklist.Revisions[revision] = map[string]ReproductionTask{}
-	}
-	if err := s.saveReproduction(r.Context(), key, checklist); err != nil {
+	// 读-改-写在 reproduction:<key> 的每 key 锁内原子完成（原先靠 appStateMu）。
+	if err := s.mutateReproduction(r.Context(), key, func(checklist ReproductionChecklist) (ReproductionChecklist, error) {
+		checklist.Analyses[revision] = encoded
+		if _, seen := checklist.Revisions[revision]; !seen {
+			checklist.Revisions[revision] = map[string]ReproductionTask{}
+		}
+		return checklist, nil
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "保存复现分析失败: "+err.Error())
 		return
 	}
@@ -141,8 +137,6 @@ func (s *Server) handleReproductionAnalyze(w http.ResponseWriter, r *http.Reques
 // handleReproductionTask 更新某个核对项的状态/备注。revision 与 id 必须过保留名检查：
 // revision="__proto__" 之类会污染内存映射（v1 明确记录过这条 C3 复发路径）。
 func (s *Server) handleReproductionTask(w http.ResponseWriter, r *http.Request) {
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
 	key, ok := pathKey(w, r)
 	if !ok {
 		return
@@ -177,31 +171,30 @@ func (s *Server) handleReproductionTask(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	checklist, err := s.loadReproduction(r.Context(), key)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if _, seen := checklist.Revisions[body.Revision]; !seen {
-		checklist.Revisions[body.Revision] = map[string]ReproductionTask{}
-	}
-	task := checklist.Revisions[body.Revision][body.ItemID]
-	if task.Status == "" {
-		task.Status = "todo"
-	}
-	if body.Status != nil {
-		task.Status = *body.Status
-	}
-	if body.Note != nil {
-		task.Note = *body.Note
-	}
-	task.UpdatedAt = nowStamp()
-	checklist.Revisions[body.Revision][body.ItemID] = task
-	if err := s.saveReproduction(r.Context(), key, checklist); err != nil {
+	var updated ReproductionTask
+	if err := s.mutateReproduction(r.Context(), key, func(checklist ReproductionChecklist) (ReproductionChecklist, error) {
+		if _, seen := checklist.Revisions[body.Revision]; !seen {
+			checklist.Revisions[body.Revision] = map[string]ReproductionTask{}
+		}
+		task := checklist.Revisions[body.Revision][body.ItemID]
+		if task.Status == "" {
+			task.Status = "todo"
+		}
+		if body.Status != nil {
+			task.Status = *body.Status
+		}
+		if body.Note != nil {
+			task.Note = *body.Note
+		}
+		task.UpdatedAt = nowStamp()
+		checklist.Revisions[body.Revision][body.ItemID] = task
+		updated = task
+		return checklist, nil
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "保存核对结果失败: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "task": task})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "task": updated})
 }
 
 // handleRepoChecks 从代码快照提取依赖/数据/权重核对项（规则扫描，纯函数）。
@@ -219,21 +212,8 @@ func (s *Server) handleRepoChecks(w http.ResponseWriter, r *http.Request) {
 
 // ---- 数据访问 ----
 
-func (s *Server) loadReproduction(ctx context.Context, key string) (ReproductionChecklist, error) {
-	var body string
-	err := s.handle.QueryRowContext(ctx,
-		`SELECT value_json FROM app_state WHERE key = ?`, "reproduction:"+key).Scan(&body)
-	if errors.Is(err, sql.ErrNoRows) {
-		return emptyChecklist(key), nil
-	}
-	if err != nil {
-		return ReproductionChecklist{}, fmt.Errorf("读取复现核对清单失败: %w", err)
-	}
-	checklist := emptyChecklist(key)
-	if err := json.Unmarshal([]byte(body), &checklist); err != nil {
-		// 损坏时报错而不是当空清单：回空会让下一次写入覆盖用户已核对的进度。
-		return ReproductionChecklist{}, fmt.Errorf("复现核对清单已损坏（不是合法 JSON 对象）: %w", err)
-	}
+// fixReproduction 补全缺省字段——读取路径（无论来自 SQL 还是泛型 Load）共用这一份。
+func fixReproduction(checklist ReproductionChecklist, key string) ReproductionChecklist {
 	if checklist.Revisions == nil {
 		checklist.Revisions = map[string]map[string]ReproductionTask{}
 	}
@@ -244,19 +224,55 @@ func (s *Server) loadReproduction(ctx context.Context, key string) (Reproduction
 		checklist.RepoChecks = map[string]ReproductionTask{}
 	}
 	checklist.Key = key
-	return checklist, nil
+	return checklist
+}
+
+// parseReproduction 反序列化并补全（损坏明确报错：回空会让下一次写入覆盖已核对的进度）。
+func parseReproduction(body []byte, key string) (ReproductionChecklist, error) {
+	checklist := emptyChecklist(key)
+	if err := json.Unmarshal(body, &checklist); err != nil {
+		return ReproductionChecklist{}, fmt.Errorf("复现核对清单已损坏（不是合法 JSON 对象）: %w", err)
+	}
+	return fixReproduction(checklist, key), nil
+}
+
+// loadReproduction 经 appStateStore 读出（SQL 样板收进 internal/appstate）。
+func (s *Server) loadReproduction(ctx context.Context, key string) (ReproductionChecklist, error) {
+	checklist, exists, err := appstate.Load[ReproductionChecklist](ctx, s.appStateStore, "reproduction:"+key)
+	if err != nil {
+		if exists {
+			return ReproductionChecklist{}, fmt.Errorf("复现核对清单已损坏（不是合法 JSON 对象）: %w", err)
+		}
+		return ReproductionChecklist{}, fmt.Errorf("读取复现核对清单失败: %w", err)
+	}
+	if !exists {
+		return emptyChecklist(key), nil
+	}
+	return fixReproduction(checklist, key), nil
+}
+
+// mutateReproduction 在 reproduction:<key> 键的每 key 锁内做原子读-改-写，
+// 取代原先「appStateMu + load → 改 → save 三步」。
+func (s *Server) mutateReproduction(ctx context.Context, key string, fn func(checklist ReproductionChecklist) (ReproductionChecklist, error)) error {
+	return s.appStateStore.Update(ctx, "reproduction:"+key, func(cur []byte, exists bool) ([]byte, error) {
+		checklist := emptyChecklist(key)
+		if exists {
+			parsed, err := parseReproduction(cur, key)
+			if err != nil {
+				return nil, err
+			}
+			checklist = parsed
+		}
+		next, err := fn(checklist)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(next)
+	})
 }
 
 func (s *Server) saveReproduction(ctx context.Context, key string, checklist ReproductionChecklist) error {
-	encoded, err := json.Marshal(checklist)
-	if err != nil {
-		return err
-	}
-	_, err = s.handle.ExecContext(ctx,
-		`INSERT INTO app_state(key, value_json, updated_at) VALUES(?,?,?)
-		 ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-		"reproduction:"+key, string(encoded), nowStamp())
-	return err
+	return appstate.Save(ctx, s.appStateStore, "reproduction:"+key, checklist)
 }
 
 // reproductionUnknownCount 未知项仍计入总数：未知是「待核对」，不是「已确认」。

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
 import { api, type DailyRecommendation, type DailyRecommendationRules } from '../api/client';
+import { STORAGE_KEYS } from '../lib/storage';
 
-const CACHE_KEY = 'cbct-v2-daily-recommendations';
-const RULES_KEY = 'readx-daily-recommendation-rules';
+const CACHE_KEY = STORAGE_KEYS.dailyRecommendations;
+const RULES_KEY = STORAGE_KEYS.dailyRecommendationRules;
 type RuleDraft = Omit<DailyRecommendationRules, 'keywords' | 'exclude' | 'venues'> & { keywords: string; exclude: string; venues: string };
 type DailyCache = { day: string; rulesKey: string; fetchedAt: string; papers: DailyRecommendation[] };
 

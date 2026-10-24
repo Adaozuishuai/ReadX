@@ -10,11 +10,12 @@ package httpapi
 
 import (
 	"context"
-	"crypto/rand"
-	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+
+	"cbctv2/server/internal/appstate"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -76,8 +77,6 @@ func (s *Server) handleIdeaList(w http.ResponseWriter, r *http.Request) {
 
 // handleIdeaCreate 新建想法。带 origin=论文原文 的证据在此强制逐字核验。
 func (s *Server) handleIdeaCreate(w http.ResponseWriter, r *http.Request) {
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
 	var body struct {
 		Question    string         `json:"question"`
 		Observation string         `json:"observation"`
@@ -104,7 +103,9 @@ func (s *Server) handleIdeaCreate(w http.ResponseWriter, r *http.Request) {
 	if idea.Evidence == nil {
 		idea.Evidence = []IdeaEvidence{}
 	}
-	if err := s.saveIdeas(r.Context(), idea, false); err != nil {
+	if err := s.mutateIdeas(r.Context(), func(ideas []ResearchIdea) ([]ResearchIdea, error) {
+		return append(ideas, idea), nil
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "保存想法失败: "+err.Error())
 		return
 	}
@@ -112,9 +113,9 @@ func (s *Server) handleIdeaCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleIdeaPatch 更新想法：只改提供的字段，状态必须是五个合法值之一。
+// 读-改-写在 mutateIdeas 的每 key 锁内原子完成（原先靠 appStateMu 护住
+// load → 改 → replace 三步）。
 func (s *Server) handleIdeaPatch(w http.ResponseWriter, r *http.Request) {
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
 	id := r.PathValue("id")
 	if err := safekeyID(id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -132,100 +133,108 @@ func (s *Server) handleIdeaPatch(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &body); err != nil {
 		return
 	}
-	ideas, err := s.loadIdeas(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	index := -1
-	for i, idea := range ideas {
-		if idea.ID == id {
-			index = i
-			break
-		}
-	}
-	if index < 0 {
-		writeError(w, http.StatusNotFound, "没有这条想法")
-		return
-	}
-	current := ideas[index]
 	if body.Status != nil {
 		if _, ok := IdeaStatuses[*body.Status]; !ok {
 			writeError(w, http.StatusBadRequest, "status 只能是 Idea / Planned / Running / Rejected / Adopted")
 			return
 		}
-		current.Status = *body.Status
 	}
-	if body.Question != nil {
-		current.Question = strings.TrimSpace(*body.Question)
-	}
-	if body.Observation != nil {
-		current.Observation = strings.TrimSpace(*body.Observation)
-	}
-	if body.Hypothesis != nil {
-		current.Hypothesis = strings.TrimSpace(*body.Hypothesis)
-	}
-	if body.Method != nil {
-		current.Method = strings.TrimSpace(*body.Method)
-	}
-	if body.Experiment != nil {
-		current.Experiment = strings.TrimSpace(*body.Experiment)
-	}
-	if body.Evidence != nil {
-		current.Evidence = *body.Evidence
-	}
-	if err := s.validateIdeaFields(r.Context(), &struct {
-		Question    string         `json:"question"`
-		Observation string         `json:"observation"`
-		Hypothesis  string         `json:"hypothesis"`
-		Method      string         `json:"method"`
-		Experiment  string         `json:"experiment"`
-		Status      string         `json:"status"`
-		Evidence    []IdeaEvidence `json:"evidence"`
-	}{
-		Question: current.Question, Observation: current.Observation, Hypothesis: current.Hypothesis,
-		Method: current.Method, Experiment: current.Experiment, Status: current.Status, Evidence: current.Evidence,
-	}); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	var updated ResearchIdea
+	err := s.mutateIdeas(r.Context(), func(ideas []ResearchIdea) ([]ResearchIdea, error) {
+		index := -1
+		for i, idea := range ideas {
+			if idea.ID == id {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return nil, errIdeaNotFound
+		}
+		current := ideas[index]
+		if body.Status != nil {
+			current.Status = *body.Status
+		}
+		if body.Question != nil {
+			current.Question = strings.TrimSpace(*body.Question)
+		}
+		if body.Observation != nil {
+			current.Observation = strings.TrimSpace(*body.Observation)
+		}
+		if body.Hypothesis != nil {
+			current.Hypothesis = strings.TrimSpace(*body.Hypothesis)
+		}
+		if body.Method != nil {
+			current.Method = strings.TrimSpace(*body.Method)
+		}
+		if body.Experiment != nil {
+			current.Experiment = strings.TrimSpace(*body.Experiment)
+		}
+		if body.Evidence != nil {
+			current.Evidence = *body.Evidence
+		}
+		if err := s.validateIdeaFields(r.Context(), &struct {
+			Question    string         `json:"question"`
+			Observation string         `json:"observation"`
+			Hypothesis  string         `json:"hypothesis"`
+			Method      string         `json:"method"`
+			Experiment  string         `json:"experiment"`
+			Status      string         `json:"status"`
+			Evidence    []IdeaEvidence `json:"evidence"`
+		}{
+			Question: current.Question, Observation: current.Observation, Hypothesis: current.Hypothesis,
+			Method: current.Method, Experiment: current.Experiment, Status: current.Status, Evidence: current.Evidence,
+		}); err != nil {
+			return nil, ideaValidationError{err}
+		}
+		current.UpdatedAt = nowStamp()
+		ideas[index] = current
+		updated = current
+		return ideas, nil
+	})
+	switch {
+	case errors.Is(err, errIdeaNotFound):
+		writeError(w, http.StatusNotFound, errIdeaNotFound.Error())
 		return
-	}
-	current.UpdatedAt = nowStamp()
-	ideas[index] = current
-	if err := s.replaceIdeas(r.Context(), ideas); err != nil {
+	case err != nil:
+		var validation ideaValidationError
+		if errors.As(err, &validation) {
+			writeError(w, http.StatusBadRequest, validation.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "保存想法失败: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, current)
+	writeJSON(w, http.StatusOK, updated)
 }
 
 // handleIdeaDelete 删除想法。
 func (s *Server) handleIdeaDelete(w http.ResponseWriter, r *http.Request) {
-	s.appStateMu.Lock()
-	defer s.appStateMu.Unlock()
 	id := r.PathValue("id")
 	if err := safekeyID(id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ideas, err := s.loadIdeas(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	kept := ideas[:0]
-	removed := false
-	for _, idea := range ideas {
-		if idea.ID == id {
-			removed = true
-			continue
+	err := s.mutateIdeas(r.Context(), func(ideas []ResearchIdea) ([]ResearchIdea, error) {
+		kept := ideas[:0]
+		removed := false
+		for _, idea := range ideas {
+			if idea.ID == id {
+				removed = true
+				continue
+			}
+			kept = append(kept, idea)
 		}
-		kept = append(kept, idea)
-	}
-	if !removed {
-		writeError(w, http.StatusNotFound, "没有这条想法")
+		if !removed {
+			return nil, errIdeaNotFound
+		}
+		return kept, nil
+	})
+	switch {
+	case errors.Is(err, errIdeaNotFound):
+		writeError(w, http.StatusNotFound, errIdeaNotFound.Error())
 		return
-	}
-	if err := s.replaceIdeas(r.Context(), kept); err != nil {
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "删除想法失败: "+err.Error())
 		return
 	}
@@ -284,18 +293,27 @@ func (s *Server) validateIdeaFields(ctx context.Context, body *struct {
 
 // ---- 数据访问 ----
 
+// errIdeaNotFound 是 mutateIdeas 闭包里的 404 哨兵：handler 据此映射 404。
+var errIdeaNotFound = errors.New("没有这条想法")
+
+// ideaValidationError 包住校验错误：handler 据此映射 400（与原实现一致，
+// 存储/解析错误仍为 500）。
+type ideaValidationError struct{ error }
+
+// loadIdeas 经 appStateStore 读出（SQL 与 JSON 样板收进 internal/appstate）。
 func (s *Server) loadIdeas(ctx context.Context) ([]ResearchIdea, error) {
-	var body string
-	err := s.handle.QueryRowContext(ctx, `SELECT value_json FROM app_state WHERE key = 'ideas'`).Scan(&body)
-	if errors.Is(err, sql.ErrNoRows) {
-		return []ResearchIdea{}, nil
-	}
+	ideas, exists, err := appstate.Load[[]ResearchIdea](ctx, s.appStateStore, "ideas")
 	if err != nil {
+		if exists {
+			return nil, fmt.Errorf("想法数据已损坏（app_state.ideas 不是 JSON 数组）: %w", err)
+		}
 		return nil, fmt.Errorf("读取想法失败: %w", err)
 	}
-	ideas := []ResearchIdea{}
-	if err := json.Unmarshal([]byte(body), &ideas); err != nil {
-		return nil, fmt.Errorf("想法数据已损坏（app_state.ideas 不是 JSON 数组）: %w", err)
+	if !exists {
+		return []ResearchIdea{}, nil
+	}
+	if ideas == nil {
+		ideas = []ResearchIdea{}
 	}
 	for index := range ideas {
 		if ideas[index].Evidence == nil {
@@ -305,24 +323,33 @@ func (s *Server) loadIdeas(ctx context.Context) ([]ResearchIdea, error) {
 	return ideas, nil
 }
 
-func (s *Server) saveIdeas(ctx context.Context, idea ResearchIdea, _ bool) error {
-	ideas, err := s.loadIdeas(ctx)
-	if err != nil {
-		return err
-	}
-	return s.replaceIdeas(ctx, append(ideas, idea))
+// mutateIdeas 在 "ideas" 键的每 key 锁内做原子读-改-写：fn 拿到的列表一定是
+// 最新值，返回 (nil, nil) 表示放弃修改不写回，返回错误同样不写回。
+// 取代原先「appStateMu + loadIdeas + replaceIdeas 三步」——锁范围从「全部
+// app_state 使用者」收窄到「同一个 ideas 键的写者」。
+func (s *Server) mutateIdeas(ctx context.Context, fn func(ideas []ResearchIdea) ([]ResearchIdea, error)) error {
+	return s.appStateStore.Update(ctx, "ideas", func(cur []byte, exists bool) ([]byte, error) {
+		ideas := []ResearchIdea{}
+		if exists {
+			if err := json.Unmarshal(cur, &ideas); err != nil {
+				return nil, fmt.Errorf("想法数据已损坏（app_state.ideas 不是 JSON 数组）: %w", err)
+			}
+		}
+		for index := range ideas {
+			if ideas[index].Evidence == nil {
+				ideas[index].Evidence = []IdeaEvidence{}
+			}
+		}
+		next, err := fn(ideas)
+		if err != nil || next == nil {
+			return nil, err
+		}
+		return json.Marshal(next)
+	})
 }
 
 func (s *Server) replaceIdeas(ctx context.Context, ideas []ResearchIdea) error {
-	encoded, err := json.Marshal(ideas)
-	if err != nil {
-		return err
-	}
-	_, err = s.handle.ExecContext(ctx,
-		`INSERT INTO app_state(key, value_json, updated_at) VALUES('ideas', ?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-		string(encoded), nowStamp())
-	return err
+	return appstate.Save(ctx, s.appStateStore, "ideas", ideas)
 }
 
 func newIdeaID() string {
