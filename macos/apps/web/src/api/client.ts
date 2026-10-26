@@ -27,6 +27,7 @@ import type {
 } from '@cbct/shared';
 import { isApiFailure } from '@cbct/shared';
 import { downloadBlob } from '../lib/download';
+import type { RealtimeEvent } from '../lib/rtex/wire';
 
 /**
  * API 客户端。
@@ -328,6 +329,18 @@ export async function streamChat(
   }, '连接中断，回答未完成，未保存。');
 }
 
+export async function streamLatexRealtime(
+  projectId: string,
+  onEvent: (event: RealtimeEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const response = await fetchSSE(`/v1/latex/projects/${encodeURIComponent(projectId)}/realtime`, {}, signal);
+  await consumeSSE<RealtimeEvent>(response, '实时预览没有返回数据', event => {
+    onEvent(event);
+    return 'event' in event && (event.event === 'ReadXStopped' || event.event === 'ReadXError');
+  }, '实时预览连接已中断，请重试。');
+}
+
 export function streamLatexChat(
   request: { key: string; projectId: string; projectTitle: string; filePath: string; source: string; question: string; history?: Array<{ role: string; text: string }> },
   onChunk: (chunk: ChatChunk) => void,
@@ -489,6 +502,7 @@ export interface OCRSettings {
   model: string;
   configured: boolean;
   documentation?: string;
+  providers?: Record<'paddle' | 'mineru', { baseURL: string; model: string; configured: boolean }>;
 }
 
 /** 导入任务的一个阶段（OCR / 翻译 / 渲染）。 */
@@ -524,6 +538,10 @@ export interface DocumentJob {
   pages: number;
   stages: JobStage[];
   runs: JobRun[];
+}
+
+export interface DocumentProcessingJob extends DocumentJob {
+  documentKey?: string;
 }
 
 export interface DocumentMeta {
@@ -1372,6 +1390,9 @@ export const api = {
     }
     return response.blob();
   },
+  /** 全部文档的处理任务，包含尚未入库的上传任务。 */
+  documentJobs: (signal?: AbortSignal) =>
+    request<{ jobs: DocumentProcessingJob[] }>('/v1/document-jobs', { signal }),
   /** 这篇文档最近一次导入任务（OCR → 翻译 → 渲染），供任务进度面板轮询。 */
   documentJob: (key: string, signal?: AbortSignal) =>
     request<{ available: boolean; job?: DocumentJob }>(
@@ -1384,7 +1405,7 @@ export const api = {
       { method: 'POST', signal },
     ),
   ocrSettings: (signal?: AbortSignal) => request<OCRSettings>('/v1/ocr/settings', { signal }),
-  saveOCRSettings: (body: { token?: string; clearToken?: boolean; baseURL?: string; model?: string }, signal?: AbortSignal) =>
+  saveOCRSettings: (body: { provider?: 'paddle' | 'mineru'; token?: string; clearToken?: boolean; baseURL?: string; model?: string }, signal?: AbortSignal) =>
     request<OCRSettings>('/v1/ocr/settings', { method: 'PUT', body, signal }),
   comparisonExperimentJob: (key: string, signal?: AbortSignal) =>
     request<ComparisonExperimentJob>(`/v1/documents/${encodeURIComponent(key)}/comparison-experiment-job`, { signal }),

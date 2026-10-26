@@ -10,6 +10,7 @@ import { useDebouncedValue } from '../hooks/useWorkspace';
 import type { useLibraryMeta } from '../hooks/useLibraryMeta';
 import { CATEGORY_COLORS, categoryDot, categoryLabel } from '../categories';
 import { LibraryCard } from './LibraryCard';
+import { LibraryProcessingControl } from './LibraryProcessingControl';
 import { LibraryTrashButton } from './LibraryTrashButton';
 import { EmptyTrashDialog } from './EmptyTrashDialog';
 import { CitationExportDialog } from './CitationExportDialog';
@@ -642,6 +643,7 @@ export function LibraryScreen({
                 aria-label={searchMode === 'meta' ? '搜索文献标题、作者或会场' : '在全库正文里检索'}
               />
             </label>
+            <LibraryProcessingControl documents={allDocuments} onOpenDocument={onOpenDocument} onReload={onReload} />
             <span style={{ flex: 1 }} />
             {meta.tags.map((tag) => (
               <button

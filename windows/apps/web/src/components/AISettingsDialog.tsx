@@ -63,12 +63,16 @@ type TestState = 'idle' | 'testing' | 'ok' | 'fail';
 export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<AISettings | null>(null);
   const [ocrSettings, setOCRSettings] = useState<OCRSettings | null>(null);
+  const [ocrProvider, setOCRProvider] = useState<'paddle' | 'mineru'>('paddle');
   const [ocrToken, setOCRToken] = useState('');
   const [ocrBaseURL, setOCRBaseURL] = useState('');
   const [ocrModel, setOCRModel] = useState('');
   const [clearOCRToken, setClearOCRToken] = useState(false);
   const [savingOCR, setSavingOCR] = useState(false);
   const [ocrNotice, setOCRNotice] = useState('');
+  const ocrLabel = ocrProvider === 'mineru' ? 'MinerU' : 'PaddleOCR';
+  const ocrConfigured = ocrSettings?.providers?.[ocrProvider]?.configured
+    ?? (ocrSettings?.provider === ocrProvider && ocrSettings.configured);
   const [provider, setProvider] = useState('openai');
   const [baseURL, setBaseURL] = useState('');
   const [model, setModel] = useState('');
@@ -155,6 +159,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
     void api.ocrSettings().then((value) => {
       if (!alive) return;
       setOCRSettings(value);
+      setOCRProvider(value.provider === 'mineru' ? 'mineru' : 'paddle');
       setOCRBaseURL(value.baseURL);
       setOCRModel(value.model);
     }).catch((cause) => {
@@ -223,21 +228,34 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const selectOCRProvider = (selected: 'paddle' | 'mineru') => {
+    const profile = ocrSettings?.providers?.[selected];
+    setOCRProvider(selected);
+    setOCRBaseURL(profile?.baseURL ?? (selected === 'mineru' ? 'https://mineru.net' : 'https://paddleocr.aistudio-app.com'));
+    setOCRModel(profile?.model ?? (selected === 'mineru' ? 'vlm' : 'PaddleOCR-VL-1.6'));
+    setOCRToken('');
+    setClearOCRToken(false);
+    setOCRNotice('');
+  };
+
   const saveOCR = async () => {
     if (savingOCR) return;
     setSavingOCR(true);
     setOCRNotice('');
     try {
       const value = await api.saveOCRSettings({
+        provider: ocrProvider,
         token: ocrToken,
         clearToken: clearOCRToken,
         baseURL: ocrBaseURL,
         model: ocrModel,
       });
       setOCRSettings(value);
+      setOCRBaseURL(value.baseURL);
+      setOCRModel(value.model);
       setOCRToken('');
       setClearOCRToken(false);
-      setOCRNotice(value.configured ? 'PaddleOCR 设置已保存在本机。' : 'PaddleOCR 令牌已清除。');
+      setOCRNotice(`${ocrLabel} 设置已保存在本机。${value.configured ? '' : '尚未配置访问令牌。'}`);
     } catch (cause) {
       setOCRNotice(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -609,11 +627,18 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
         <section className="ai-card ai-ocr-card">
           <header>
             <span className="ai-card-icon" aria-hidden="true">▤</span>
-            PaddleOCR
-            <span className={`ai-chip${ocrSettings?.configured ? ' ok' : ''}`}>
-              {ocrSettings?.configured ? '已配置' : ocrSettings ? '未配置' : '读取中'}
+            {ocrLabel}
+            <span className={`ai-chip${ocrConfigured ? ' ok' : ''}`}>
+              {ocrConfigured ? '已配置' : ocrSettings ? '未配置' : '读取中'}
             </span>
           </header>
+          <label>
+            OCR 服务
+            <select value={ocrProvider} disabled={savingOCR || !ocrSettings} onChange={(event) => selectOCRProvider(event.target.value as 'paddle' | 'mineru')} aria-label="OCR 服务">
+              <option value="paddle">PaddleOCR</option>
+              <option value="mineru">MinerU</option>
+            </select>
+          </label>
           <label>
             访问令牌
             <input
@@ -622,35 +647,41 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
               value={ocrToken}
               disabled={savingOCR}
               onChange={(event) => { setOCRToken(event.target.value); setClearOCRToken(false); }}
-              placeholder={ocrSettings?.configured ? '已保存；留空保持不变' : '填写 PaddleOCR 访问令牌'}
-              aria-label="PaddleOCR 访问令牌"
+              placeholder={ocrConfigured ? '已保存；留空保持不变' : `填写 ${ocrLabel} 访问令牌`}
+              aria-label={`${ocrLabel} 访问令牌`}
             />
           </label>
-          {ocrSettings?.configured ? (
+          {ocrConfigured ? (
             <label className="checkbox-label">
               <input type="checkbox" checked={clearOCRToken} disabled={savingOCR} onChange={(event) => setClearOCRToken(event.target.checked)} />
-              清除已保存的 PaddleOCR 令牌
+              清除已保存的 {ocrLabel} 令牌
             </label>
           ) : null}
           <label>
             服务地址
-            <input value={ocrBaseURL} disabled={savingOCR} onChange={(event) => setOCRBaseURL(event.target.value)} aria-label="PaddleOCR 服务地址" />
+            <input value={ocrBaseURL} disabled={savingOCR} onChange={(event) => setOCRBaseURL(event.target.value)} aria-label={`${ocrLabel} 服务地址`} />
           </label>
           <label>
             模型
-            <input value={ocrModel} disabled={savingOCR} onChange={(event) => setOCRModel(event.target.value)} aria-label="PaddleOCR 模型" />
+            {ocrProvider === 'mineru' ? (
+              <select value={ocrModel} disabled={savingOCR} onChange={(event) => setOCRModel(event.target.value)} aria-label="MinerU 模型">
+                <option value="vlm">vlm（视觉语言模型）</option>
+                <option value="pipeline">pipeline（传统解析模型）</option>
+              </select>
+            ) : <input value={ocrModel} disabled={savingOCR} onChange={(event) => setOCRModel(event.target.value)} aria-label="PaddleOCR 模型" />}
           </label>
-          <p className="ai-hint">LeePDF 会使用此 OCR 服务完成整篇识别。上传上限默认 512 MB，实际页数与文件限制由 OCR 服务决定；令牌仅保存在本机配置中。</p>
+          <p className="ai-hint">LeePDF 会使用所选服务完成整篇识别。{ocrProvider === 'mineru' ? 'MinerU 每份 PDF 最多 200 MB、200 页。' : '实际页数与文件限制由 PaddleOCR 服务决定。'}各服务的地址、模型和令牌独立保存。</p>
+          {ocrProvider === 'mineru' ? <p className="ai-hint"><a href="https://mineru.net/apiManage/docs" target="_blank" rel="noopener noreferrer">MinerU 官方 API 文档与令牌管理</a></p> : null}
           <div className="ai-ocr-actions">
             <button type="button" className="ai-save-button" disabled={savingOCR || !ocrSettings} onClick={() => void saveOCR()}>
               {savingOCR ? '保存中…' : '保存 OCR 设置'}
             </button>
           </div>
-          {ocrNotice ? <p role="status" className={`ai-result${ocrSettings?.configured ? ' ok' : ''}`}>{ocrNotice}</p> : null}
+          {ocrNotice ? <p role="status" className={`ai-result${ocrConfigured ? ' ok' : ''}`}>{ocrNotice}</p> : null}
         </section>
 
         <p className="ai-hint">
-          调用时相关文档内容会发送给所选服务；AI Key 与 PaddleOCR 令牌保存在本机 <code>app/config.json</code>，不会回传界面。
+          调用时相关文档内容会发送给所选服务；AI Key 与 OCR 令牌保存在本机 <code>app/config.json</code>，不会回传界面。
         </p>
         {notice ? <p role="status" className="ai-result">{notice}</p> : null}
       </div>

@@ -66,12 +66,13 @@ func engineCandidates(name string) []string {
 			)
 		}
 		dirs = append(dirs,
-			`C:\texlive\2025\bin\windows`, `C:\texlive\2024\bin\windows`,
+			`C:\texlive\2026\bin\windows`, `C:\texlive\2025\bin\windows`, `C:\texlive\2024\bin\windows`,
 			`C:\Program Files\MiKTeX\miktex\bin\x64`,
 		)
 	case "darwin":
 		dirs = append(dirs,
 			"/Library/TeX/texbin", // MacTeX
+			"/usr/local/texlive/2026/bin/universal-darwin",
 			"/usr/local/texlive/2025/bin/universal-darwin",
 			"/usr/local/texlive/2024/bin/universal-darwin",
 			"/opt/homebrew/bin", // Homebrew（Apple Silicon）

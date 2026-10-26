@@ -80,6 +80,7 @@ def main() -> None:
     runtime_root = Path(__file__).resolve().parent
     sys.path.insert(0, str(runtime_root))
     from retainpdf_pipeline.ocr.document_schema import (
+        PROVIDER_MINERU,
         PROVIDER_PADDLE,
         adapt_payload_to_document_v1_with_report,
         build_validation_report,
@@ -87,6 +88,7 @@ def main() -> None:
 
     paddle_normalizer = _load_retain_paddle_normalizer(runtime_root)
     request = json.load(sys.stdin)
+    provider = request.get("provider", "paddle")
     payload = {
         "layoutParsingResults": request.get("layoutParsingResults") or [],
         # The page adapter safely falls back to each prunedResult's own
@@ -94,15 +96,18 @@ def main() -> None:
         "dataInfo": {},
         "_meta": {"source": "readx_paddle_layout_results"},
     }
+    if provider == "mineru":
+        payload = {"pdf_info": request.get("layoutParsingResults") or []}
     document, report = adapt_payload_to_document_v1_with_report(
         payload=payload,
-        provider=PROVIDER_PADDLE,
+        provider=PROVIDER_MINERU if provider == "mineru" else PROVIDER_PADDLE,
         document_id=str(request.get("documentId", "readx-ocr")),
         source_json_path=Path("<readx-paddle-result>"),
         provider_version=str(request.get("providerVersion", "")),
     )
     _rescale_document(document, request.get("pageSizes") or [], paddle_normalizer)
-    paddle_normalizer.post_rescale_rebuild_paddle_text_geometry(document)
+    if provider != "mineru":
+        paddle_normalizer.post_rescale_rebuild_paddle_text_geometry(document)
     validation = build_validation_report(document)
     report["validation"] = validation
     report["coordinate_space"] = "pdf_point"

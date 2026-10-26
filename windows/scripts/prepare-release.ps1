@@ -54,6 +54,7 @@ $backendSource = Join-Path $windowsRoot 'vendor/retainpdf/backend'
 Copy-Item -Path $backendSource -Destination (Join-Path $resourceRoot 'vendor/retainpdf/backend') -Recurse -Force
 Copy-Item -Path (Join-Path $windowsRoot 'resources/rendering-engine') -Destination (Join-Path $resourceRoot 'rendering-engine') -Recurse -Force
 Copy-Item -Path (Join-Path $windowsRoot 'resources/fonts') -Destination (Join-Path $resourceRoot 'fonts') -Recurse -Force
+Copy-Item -Path (Join-Path $windowsRoot 'resources/realtime-tex') -Destination (Join-Path $resourceRoot 'realtime-tex') -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $resourceRoot 'licenses') -Force | Out-Null
 Copy-Item -Path (Join-Path $windowsRoot 'vendor/retainpdf/LICENSE') -Destination (Join-Path $resourceRoot 'licenses/retainpdf-LICENSE') -Force
 

@@ -122,12 +122,12 @@ func (s *Server) prepareOCRLayoutTranslations(ctx context.Context, pdf []byte, s
 	}
 	sum := sha256.Sum256(pdf)
 	key := "doc-" + hex.EncodeToString(sum[:16])
-	s.jobStage(key, "ocr", "running", "Paddle 已接收任务，等待排队", 0, -1)
+	s.jobStage(key, "ocr", "running", "OCR 已接收任务，等待排队", 0, -1)
 	client.OnState = func(state string) {
 		message := "OCR 识别中"
 		switch state {
 		case "submitted":
-			message = "Paddle 已接收任务，等待排队"
+			message = "OCR 已接收任务，等待排队"
 		case "done", "finished", "succeeded", "success":
 			message = "OCR 识别完成，正在整理段落"
 		}
@@ -138,7 +138,7 @@ func (s *Server) prepareOCRLayoutTranslations(ctx context.Context, pdf []byte, s
 		s.jobStage(key, "ocr", "failed", err.Error(), 0, -1)
 		return false, fmt.Errorf("导入时 OCR 失败: %w", err)
 	}
-	pages, err := ocr.MapLayoutsContext(ctx, layouts, sizes)
+	pages, err := client.MapLayouts(ctx, layouts, sizes)
 	if err != nil {
 		s.jobStage(key, "ocr", "failed", err.Error(), 0, -1)
 		return false, fmt.Errorf("OCR 结果解析失败: %w", err)
@@ -577,7 +577,7 @@ func (s *Server) ocrFirstPageText(ctx context.Context, pdf []byte) string {
 	if err != nil || len(layouts) == 0 {
 		return ""
 	}
-	pages, err := ocr.MapLayoutsContext(ctx, layouts, nil)
+	pages, err := client.MapLayouts(ctx, layouts, nil)
 	if err != nil || len(pages) == 0 {
 		return ""
 	}
@@ -796,7 +796,7 @@ func (s *Server) handleTranslatedPage(w http.ResponseWriter, r *http.Request) {
 		}
 		sizes := make([]ocr.Size, len(layouts))
 		sizes[pageNumber-1] = ocr.Size{Width: body.Width, Height: body.Height}
-		pages, err = ocr.MapLayoutsContext(ctx, layouts, sizes)
+		pages, err = client.MapLayouts(ctx, layouts, sizes)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "OCR 结果解析失败: "+err.Error())
 			return
@@ -833,6 +833,10 @@ func (s *Server) cachedOCRLayouts(ctx context.Context, key string, pdf []byte, c
 	dir := s.translationCacheDir()
 	sum := sha256.Sum256(pdf)
 	path := filepath.Join(dir, "ocr-"+hex.EncodeToString(sum[:16])+".json")
+	if client.Provider == "mineru" {
+		identity := sha256.Sum256([]byte(client.BaseURL + "\n" + client.Model))
+		path = filepath.Join(dir, "ocr-mineru-"+hex.EncodeToString(identity[:8])+"-"+hex.EncodeToString(sum[:16])+".json")
+	}
 	if data, err := os.ReadFile(path); err == nil {
 		var layouts []json.RawMessage
 		if json.Unmarshal(data, &layouts) == nil && len(layouts) > 0 {

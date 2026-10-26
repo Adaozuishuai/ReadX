@@ -47,6 +47,7 @@ type leePageSize struct {
 }
 
 type leeNormalizationRequest struct {
+	Provider             string            `json:"provider"`
 	LayoutParsingResults []json.RawMessage `json:"layoutParsingResults"`
 	PageSizes            []leePageSize     `json:"pageSizes"`
 	DocumentID           string            `json:"documentId"`
@@ -120,6 +121,10 @@ type leeSegment struct {
 }
 
 func normalizeWithLee(ctx context.Context, raw []json.RawMessage, sizes []Size) (leeDocument, error) {
+	return normalizeWithLeeProvider(ctx, raw, sizes, "paddle", DefaultModel)
+}
+
+func normalizeWithLeeProvider(ctx context.Context, raw []json.RawMessage, sizes []Size, provider, model string) (leeDocument, error) {
 	if len(raw) == 0 {
 		return leeDocument{}, errors.New("LeePDF OCR 归一化没有收到页面")
 	}
@@ -136,10 +141,11 @@ func normalizeWithLee(ctx context.Context, raw []json.RawMessage, sizes []Size) 
 		pageSizes[index] = leePageSize{Width: size.Width, Height: size.Height}
 	}
 	request := leeNormalizationRequest{
+		Provider:             provider,
 		LayoutParsingResults: raw,
 		PageSizes:            pageSizes,
-		DocumentID:           "readx-paddle-ocr",
-		ProviderVersion:      DefaultModel,
+		DocumentID:           "readx-" + provider + "-ocr",
+		ProviderVersion:      model,
 	}
 	input, err := json.Marshal(request)
 	if err != nil {
@@ -167,7 +173,7 @@ func normalizeWithLee(ctx context.Context, raw []json.RawMessage, sizes []Size) 
 		return leeDocument{}, fmt.Errorf("LeePDF OCR 归一化结果不是合法 JSON: %w", err)
 	}
 	if len(result.Document.Pages) != len(raw) {
-		return leeDocument{}, fmt.Errorf("LeePDF document.v1 返回 %d 页，PaddleOCR 返回 %d 页", len(result.Document.Pages), len(raw))
+		return leeDocument{}, fmt.Errorf("LeePDF document.v1 返回 %d 页，OCR 返回 %d 页", len(result.Document.Pages), len(raw))
 	}
 	return result.Document, nil
 }

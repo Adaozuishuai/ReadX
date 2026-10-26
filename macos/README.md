@@ -32,6 +32,12 @@ AI 渠道包括 OpenAI 兼容 API、Anthropic、Codex Desktop / CLI、Claude CLI
 
 具体交互见 [Windows 功能指南](../windows/README.md)。平台安装以本文为准。
 
+## OCR 服务选择
+
+在「AI 助手设置 → 文档识别」选择 **PaddleOCR** 或 **MinerU**，填写对应服务的访问令牌，再点击「保存 OCR 设置」。两家服务的地址、模型和令牌分别保存在本机配置中，切换时不会混用。
+
+MinerU 接入[官方远程解析 API](https://mineru.net/apiManage/docs)，支持 `vlm` 和 `pipeline` 模型，每份 PDF 最多 200 MB、200 页。导入、重新识别和阅读器的 OCR 版式回填均使用所选服务；后续翻译和 PDF 排版沿用 Lee 引擎。
+
 ## LaTeX 写作与对话确认
 
 顶栏「LaTeX Studio」支持新建项目、导入 Overleaf ZIP、编辑 `.tex` / `.bib` 和预览本机 TeX 编译的 PDF，需要先安装可用的 TeX 发行版。
@@ -122,3 +128,9 @@ xattr -cr /Applications/ReadX.app
 打包测试使用独立书库与 Electron 配置目录，不操作日常书库。CI 使用完整 ZIP 打包，拒绝缺少 `app-update.yml` 的应用目录。
 
 本机构建不会创建线上更新。更新源缺少 macOS 更新清单时会尝试读取最新公开发布版本，并提示该平台暂不可更新；不能据此判断当前版本已是最新。更新测试还覆盖并发、重试、窗口重开、超时、安装前置条件，以及 Mac 下载完成后等待原生更新器校验的顺序。
+
+### LaTeX 实时预览
+
+LaTeX Studio 工具栏新增“实时预览”，基于 [realtime-tex（rtex）](https://github.com/HenryXiaoYang/realtime-tex) v0.0.5。项目需要使用 LuaLaTeX；其他引擎的项目可在面板内切换。首次预览会排版整篇文档，后续正文改动直接更新段落，分页、引用和复杂图形由后台整页排版更新。面板显示段落耗时、整页同步状态和可跳转的 LaTeX 诊断；复杂页面使用 PDF 回退并标明状态。
+
+本机需要 MiKTeX 或 TeX Live 中的 LuaLaTeX。面板可下载并安装官方 rtex 发行版，安装前校验固定 SHA-256，运行时位于 `<数据根>/app/runtime/rtex/0.0.5/`。自定义安装可设置 `READX_RTEX_BIN` 指向 `rtex` 可执行文件，并保留发行包的 `share/rtex/tex` 目录（也可设置 `RTEX_TEXDIR`）。打包时包含 Node 桥接程序和上游 MIT 许可证，rtex 引擎按需下载。普通编译及 PDF 导出仍通过现有编译功能使用。

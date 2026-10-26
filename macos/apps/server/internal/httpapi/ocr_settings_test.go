@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"net/http"
@@ -57,5 +59,74 @@ func TestOCRSettingsPersistWithoutLeakingToken(t *testing.T) {
 	_, payload = post(t, bundle, http.MethodGet, "/v1/ocr/settings", "")
 	if payload["configured"] != false {
 		t.Fatalf("令牌应已清除: %v", payload)
+	}
+}
+
+func TestOCRProviderSwitchKeepsCredentialsSeparate(t *testing.T) {
+	bundle, _ := newImportServer(t)
+	for _, body := range []string{
+		`{"provider":"paddle","token":"paddle-private","baseURL":"https://paddle.example.com","model":"paddle-custom"}`,
+		`{"provider":"mineru"}`,
+	} {
+		res, payload := post(t, bundle, http.MethodPut, "/v1/ocr/settings", body)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("save failed: %d %v", res.StatusCode, payload)
+		}
+	}
+	_, payload := post(t, bundle, http.MethodGet, "/v1/ocr/settings", "")
+	if payload["configured"] != false || payload["model"] != "vlm" || payload["baseURL"] != "https://mineru.net" {
+		t.Fatalf("Paddle credentials/config leaked into MinerU: %v", payload)
+	}
+	res, payload := post(t, bundle, http.MethodPut, "/v1/ocr/settings", `{"provider":"mineru","token":"mineru-private","model":"pipeline"}`)
+	if res.StatusCode != http.StatusOK || payload["configured"] != true {
+		t.Fatalf("MinerU save failed: %v", payload)
+	}
+	for _, provider := range []string{"paddle", "mineru"} {
+		res, payload = post(t, bundle, http.MethodPut, "/v1/ocr/settings", `{"provider":"`+provider+`"}`)
+		if res.StatusCode != http.StatusOK || payload["configured"] != true {
+			t.Fatalf("saved profile lost: %v", payload)
+		}
+		encoded, _ := json.Marshal(payload)
+		if strings.Contains(string(encoded), "private") {
+			t.Fatalf("OCR response leaked a token: %s", encoded)
+		}
+	}
+	if res, _ := post(t, bundle, http.MethodPut, "/v1/ocr/settings", `{"clearToken":true}`); res.StatusCode != http.StatusOK {
+		t.Fatal(res.StatusCode)
+	}
+	_, payload = post(t, bundle, http.MethodPut, "/v1/ocr/settings", `{"provider":"paddle"}`)
+	if payload["configured"] != true || payload["model"] != "paddle-custom" || payload["baseURL"] != "https://paddle.example.com" {
+		t.Fatalf("clearing MinerU changed Paddle profile: %v", payload)
+	}
+	_, payload = post(t, bundle, http.MethodPut, "/v1/ocr/settings", `{"provider":"mineru"}`)
+	if payload["configured"] != false || payload["model"] != "pipeline" {
+		t.Fatalf("MinerU clear was not retained: %v", payload)
+	}
+	for _, body := range []string{`{"provider":"unknown"}`, `{"model":"invalid"}`, `{"baseURL":"not-a-url"}`} {
+		if res, _ := post(t, bundle, http.MethodPut, "/v1/ocr/settings", body); res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid settings accepted: %s", body)
+		}
+	}
+}
+
+func TestMinerUEnvironmentAndLimits(t *testing.T) {
+	_, handle, cfg := newTestServer(t, nil)
+	s := New(cfg, handle)
+	defer s.comparisonJobs.Close()
+	t.Setenv("RETAIN_PADDLE_API_TOKEN", "paddle-env")
+	t.Setenv("MINERU_API_TOKEN", "mineru-env")
+	if err := s.saveOCRConfig(ocrConfig{Provider: "mineru", BaseURL: "https://mineru.net", Model: "vlm"}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := s.ocrClient()
+	if err != nil || client.Provider != "mineru" || client.Token != "mineru-env" {
+		t.Fatalf("wrong MinerU environment: %v %+v", err, client)
+	}
+	if s.publicationByteLimit() != 200<<20 {
+		t.Fatal("MinerU upload still uses Paddle's 50 MB limit")
+	}
+	err = s.prepareImportTranslations(context.Background(), []byte("%PDF"), make([]publicationPageHint, 201), &recognizedPaperMetadata{})
+	if err == nil || !strings.Contains(err.Error(), "MinerU") || !strings.Contains(err.Error(), "200 页") {
+		t.Fatalf("missing MinerU page limit: %v", err)
 	}
 }

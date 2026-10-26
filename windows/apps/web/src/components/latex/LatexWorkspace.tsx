@@ -3,6 +3,7 @@ import type { LatexAutoFixResult, LatexDiagnostic, LatexEngine, LatexProject, La
 import { api, streamLatexAutoFix } from '../../api/client';
 import { useLatexBuild } from '../../hooks/useLatexBuild';
 import { useLatexProject } from '../../hooks/useLatexProject';
+import { useLatexRealtime } from '../../hooks/useLatexRealtime';
 import { LatexBuildPanel } from './LatexBuildPanel';
 import { LatexAIAssistant } from './LatexAIAssistant';
 import { LatexAssetPreview } from './LatexAssetPreview';
@@ -10,6 +11,7 @@ import { LatexEditor } from './LatexEditor';
 import { LatexFileTree } from './LatexFileTree';
 import { LatexPdfPreview } from './LatexPdfPreview';
 import { LatexToolbar } from './LatexToolbar';
+import { LatexRealtimePreview } from './LatexRealtimePreview';
 import { STORAGE_KEYS } from '../../lib/storage';
 
 /**
@@ -32,6 +34,9 @@ export function LatexWorkspace({
 }) {
   const state = useLatexProject(project.id);
   const compiler = useLatexBuild(project.id);
+  const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+  const realtime = useLatexRealtime(project.id, (state.project ?? project).mainFile,
+    (state.project ?? project).engine, realtimeEnabled, state.files);
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string | null>(null);
   const [reveal, setReveal] = useState<{ path: string; line: number; nonce: number } | null>(null);
@@ -290,12 +295,12 @@ export function LatexWorkspace({
   );
   useEffect(() => {
     const current = state.project ?? project;
-    if (!current.autoCompile) return;
+    if (!current.autoCompile || realtimeEnabled) return;
     if (!savedSignature || savedSignature === lastCompiledSignature.current) return;
     if (compiler.running || dirtyCount > 0) return;
     lastCompiledSignature.current = savedSignature;
     void compiler.start();
-  }, [compiler, dirtyCount, project, savedSignature, state.project]);
+  }, [compiler, dirtyCount, project, savedSignature, state.project, realtimeEnabled]);
 
   // 成功编译后把指纹记下来，避免刚编译完又被自动编译触发一次。
   useEffect(() => {
@@ -426,6 +431,11 @@ export function LatexWorkspace({
         }}
         extra={
           <>
+            <button type="button" aria-pressed={realtimeEnabled}
+              onClick={() => setRealtimeEnabled(value => !value)}
+              title="使用 rtex 和 LuaLaTeX 实时更新编辑中的段落；关闭后查看普通 PDF">
+              {realtimeEnabled ? '关闭实时预览' : '实时预览'}
+            </button>
             {compiler.running ? (
               <button type="button" onClick={() => void compiler.cancel()} title="停止当前编译">
                 停止编译
@@ -553,6 +563,16 @@ export function LatexWorkspace({
           }}
         />
         <aside className="latex-pane-preview">
+          {realtimeEnabled ? <LatexRealtimePreview realtime={realtime} supported={current.engine === 'lualatex'}
+            onSwitchEngine={() => void patch({ engine: 'lualatex' })}
+            onDiagnostic={diagnostic => {
+              const raw = diagnostic.file?.replaceAll('\\', '/').replace(/^\.\//, '');
+              const file = state.nodes.map(node => node.path).sort((a,b) => b.length - a.length)
+                .find(path => raw === path || raw?.endsWith(`/${path}`));
+              if (file && !file.startsWith('/') && !file.includes(':') && !file.split('/').includes('..')) {
+                void state.openFile(file).then(() => setReveal({ path: file, line: diagnostic.line || 1, nonce: Date.now() }));
+              }
+            }} /> : <>
           <LatexBuildPanel
             toolchains={compiler.toolchains}
             build={activeBuild}
@@ -573,6 +593,7 @@ export function LatexWorkspace({
               void api.latexDownloadPdf(activeBuild.id, `${current.title || 'document'}.pdf`);
             }}
           />
+          </>}
         </aside>
         {assistantOpen ? (
           <>

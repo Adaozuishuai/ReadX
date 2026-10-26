@@ -16,7 +16,7 @@ from retainpdf_pipeline.ocr.retry import request_with_retry
 from retainpdf_pipeline.ocr.retry import sanitize_url_for_log
 
 
-MINERU_BASE_URL = "https://mineru.net"
+MINERU_BASE_URL = (os.environ.get("RETAIN_MINERU_API_URL") or "https://mineru.net").rstrip("/")
 MINERU_TOKEN_ENV = "MINERU_API_TOKEN"
 MINERU_ENV_FILE = "mineru.env"
 MINERU_RETRY_ATTEMPTS_ENV = "RETAIN_MINERU_RETRY_ATTEMPTS"

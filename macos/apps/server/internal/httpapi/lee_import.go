@@ -54,7 +54,10 @@ func (s *Server) runLeePDFImport(ctx context.Context, jobKey, name string, pdf [
 		return "", err
 	}
 	if strings.TrimSpace(ocrConfig.Token) == "" {
-		return "", errors.New("请先在 AI 助手设置中配置 PaddleOCR 令牌")
+		return "", fmt.Errorf("请先在 AI 助手设置中配置 %s 令牌", ocrConfig.label())
+	}
+	if ocrConfig.Provider == "mineru" && len(pdf) > ocr.MinerUMaxPDFBytes {
+		return "", errors.New("PDF 超过 MinerU 上传上限 200 MB")
 	}
 
 	jobRoot := filepath.Join(legacy.NewPaths(s.cfg.DataRoot).DataDir(), "retain", "jobs", jobKey)
@@ -147,12 +150,7 @@ func (s *Server) runLeePDFImport(ctx context.Context, jobKey, name string, pdf [
 		"stage":          "provider",
 		"job":            map[string]any{"job_id": jobID, "job_root": jobRoot, "workflow": "ocr"},
 		"source":         map[string]any{"file_path": sourcePath},
-		"ocr": map[string]any{
-			"provider": "paddle", "credential_ref": "env:RETAIN_PADDLE_API_TOKEN",
-			"paddle_api_url": ocrConfig.BaseURL, "paddle_model": ocrConfig.Model,
-			"language": "ch", "disable_formula": false, "disable_table": false,
-			"is_ocr": true, "poll_interval": 5, "poll_timeout": 1800,
-		},
+		"ocr":            ocrConfig.leeStageOptions(),
 		"translation": map[string]any{
 			// Translate several independent batches at once. Four workers is a
 			// conservative default that improves latency without flooding provider
@@ -199,7 +197,10 @@ func (s *Server) runLeePDFImport(ctx context.Context, jobKey, name string, pdf [
 	// Go later reads it as UTF-8, corrupting provider progress and error details.
 	env = setEnv(env, "PYTHONUTF8", "1")
 	env = setEnv(env, "PYTHONIOENCODING", "utf-8")
-	env = setEnv(env, "RETAIN_PADDLE_API_TOKEN", ocrConfig.Token)
+	env = setEnv(env, ocrConfig.tokenEnvironment(), ocrConfig.Token)
+	if ocrConfig.Provider == "mineru" {
+		env = setEnv(env, "RETAIN_MINERU_API_URL", ocrConfig.BaseURL)
+	}
 	env = setEnv(env, "READX_RETAIN_TRANSLATION_API_KEY", translationAPIKey)
 	resourceRoot := filepath.Join(leeWorkspaceRoot(s.cfg.DataRoot), "resources")
 	if resources := strings.TrimSpace(os.Getenv("READX_RESOURCES_DIR")); resources != "" {

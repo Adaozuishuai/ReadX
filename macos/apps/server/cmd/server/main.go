@@ -132,8 +132,10 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 	}
 	cfg.Port = tcpAddr.Port
 
+	apiServer := httpapi.New(cfg, handle)
+	defer apiServer.CloseRealtime()
 	httpServer := &http.Server{
-		Handler:           httpapi.New(cfg, handle).Handler(),
+		Handler:           apiServer.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      0, // SSE 流式响应需要不写死超时（S3 用），靠 ctx 取消收尾
@@ -202,6 +204,7 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 	}
 
 	shutdownStart := time.Now()
+	apiServer.CloseRealtime()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {

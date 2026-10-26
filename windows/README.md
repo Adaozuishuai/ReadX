@@ -44,6 +44,12 @@ npm run shortcut -- --browser  # 改用 start-browser.ps1 的浏览器回退入�
 - **翻译引擎**：Windows PDF 导入运行 Lee 原生 Python 翻译链与修复流程，不再用 ReadX Go 代码仿写翻译。实现边界和数据回填说明见 `implement-stage/TRANSLATION_ENGINE_NOTE.md`。
 - **译文 PDF 导出**：阅读工具栏“导出译文 PDF”把原 PDF 与译文交给 Lee 的 RPR 排版引擎（随应用内置，MIT）重新排版，再叠回原 PDF，保留页尺寸、栏位、图表与公式位置。可选当前页或全部页面；页眉页脚、作者/单位、参考文献和公式/表格/图片保持原样。扫描件可配置 PaddleOCR 文档解析（令牌只存本机 `app/config.json`）先识别版式再走同一渲染链。引擎与字体资源见 `resources/README.md`。
 
+### OCR 服务选择
+
+在「AI 助手设置 → 文档识别」选择 **PaddleOCR** 或 **MinerU**，填写对应服务的访问令牌，再点击「保存 OCR 设置」。两家服务的地址、模型和令牌分别保存在本机配置中，切换时不会混用。
+
+MinerU 接入[官方远程解析 API](https://mineru.net/apiManage/docs)，支持 `vlm` 和 `pipeline` 模型，每份 PDF 最多 200 MB、200 页。导入、重新识别和阅读器的 OCR 版式回填均使用所选服务；后续翻译和 PDF 排版沿用 Lee 引擎。
+
 ## LaTeX Studio
 
 顶栏「LaTeX」是与书库并列的独立写作工作区，读写磁盘上真实的 `.tex` 文件，不影响书库记录。
@@ -136,6 +142,12 @@ node_modules/electron/dist/electron.exe scripts/reader-smoke.cjs "C:/papers/exam
 该脚本使用临时书库和模拟模型，不修改原 PDF，也不会调用付费模型。完整回归样本需包含多页正文及章节标题。
 
 ## 开发结构
+
+### LaTeX 实时预览
+
+LaTeX Studio 工具栏新增“实时预览”，基于 [realtime-tex（rtex）](https://github.com/HenryXiaoYang/realtime-tex) v0.0.5。项目需要使用 LuaLaTeX；其他引擎的项目可在面板内切换。首次预览会排版整篇文档，后续正文改动直接更新段落，分页、引用和复杂图形由后台整页排版更新。面板显示段落耗时、整页同步状态和可跳转的 LaTeX 诊断；复杂页面使用 PDF 回退并标明状态。
+
+本机需要 MiKTeX 或 TeX Live 中的 LuaLaTeX。面板可下载并安装官方 rtex 发行版，安装前校验固定 SHA-256，运行时位于 `<数据根>/app/runtime/rtex/0.0.5/`。自定义安装可设置 `READX_RTEX_BIN` 指向 `rtex` 可执行文件，并保留发行包的 `share/rtex/tex` 目录（也可设置 `RTEX_TEXDIR`）。打包时包含 Node 桥接程序和上游 MIT 许可证，rtex 引擎按需下载。普通编译及 PDF 导出仍通过现有编译功能使用。
 
 `apps/server` 管理文件、SQLite、导入和 AI；`apps/web` 提供书库与阅读界面；`apps/desktop` 管理 Electron 窗口和服务进程；`packages/shared` 维护 API 类型；`scripts` 管理构建和开发编排。前端构建会从 PDF.js 依赖复制 CMap 与字体资源，生成目录不进入 Git。
 

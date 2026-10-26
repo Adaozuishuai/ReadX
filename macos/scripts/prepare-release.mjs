@@ -17,6 +17,7 @@ fs.cpSync(venvSite, path.join(stage, 'python', 'lib', 'python3.12', 'site-packag
 for (const [from, to] of [
   ['vendor/retainpdf/backend', 'vendor/retainpdf/backend'],
   ['resources/rendering-engine', 'rendering-engine'], ['resources/fonts', 'fonts'],
+  ['resources/realtime-tex', 'realtime-tex'],
   ['.retain-runtime/typst', 'typst'], ['scripts/render-translated-pdf.cjs', 'scripts/render-translated-pdf.cjs'],
   ['vendor/retainpdf/LICENSE', 'licenses/retainpdf-LICENSE'],
 ]) {

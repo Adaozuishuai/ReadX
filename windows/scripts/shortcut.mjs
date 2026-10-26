@@ -5,7 +5,7 @@
  * 为什么要复制图标：快捷方式的 IconLocation 必须指向资源管理器能读取的位置。
  * 仓库目录可能被放在低完整性标记或漫游盘的深层目录里，Explorer 会拒绝加载那里的
  * .ico，快捷方式就退回成通用“文件 + 箭头”图标。这里统一把图标装到
- * %LOCALAPPDATA%\ReadX\ReadX.ico，再用 WScript.Shell 写快捷方式。
+ * %LOCALAPPDATA%\ReadX\ReadX-<hash>.ico，再用 WScript.Shell 写快捷方式。
  *
  * 用法：
  *   node scripts/shortcut.mjs               # 使用 Electron 桌面壳（默认）
@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,17 +27,19 @@ const shortcutName = nameIndex >= 0 && args[nameIndex + 1] ? args[nameIndex + 1]
 
 const iconName = 'ReadX.ico';
 const iconDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'ReadX');
-const iconPath = path.join(iconDir, iconName);
+let iconPath = '';
 
 function copyIcon() {
   const sources = [
     path.join(root, 'apps', 'desktop', 'icon.ico'),
     path.join(root, 'apps', 'desktop', iconName),
-    path.join(root, 'apps', 'web', 'public', 'icon-256.png'),
   ];
   const source = sources.find((candidate) => fs.existsSync(candidate));
   if (!source) throw new Error(`找不到图标源文件：${sources.join(' / ')}`);
   fs.mkdirSync(iconDir, { recursive: true });
+  const fingerprint = createHash('sha256').update(fs.readFileSync(source)).digest('hex').slice(0, 12);
+  // Explorer caches icons by path; a new asset needs a new path to take effect.
+  iconPath = path.join(iconDir, `ReadX-${fingerprint}.ico`);
   fs.copyFileSync(source, iconPath);
   return source;
 }

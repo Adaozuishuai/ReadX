@@ -199,7 +199,7 @@ func (s *Server) reidentifyPreflight() error {
 		return errors.New("需要先配置 AI 助手的 API Key（重新识别后要接着重新翻译）")
 	}
 	if _, err := s.ocrClient(); err != nil {
-		return fmt.Errorf("需要先配置 PaddleOCR 令牌：%w", err)
+		return fmt.Errorf("需要先配置 OCR 服务令牌：%w", err)
 	}
 	return nil
 }

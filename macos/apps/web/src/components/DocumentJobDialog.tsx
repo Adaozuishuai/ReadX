@@ -129,6 +129,7 @@ export function DocumentJobDialog({
     setCover('');
     if (document.format === 'epub') return;
     if (!coverFile && !assetKey) return;
+    if (!coverFile && importing && !fileKey) return;
     void (async () => {
       const data = coverFile ? await coverFile.arrayBuffer() : await api.file(assetKey);
       if (cancelled) return;
@@ -153,7 +154,7 @@ export function DocumentJobDialog({
     return () => {
       cancelled = true;
     };
-  }, [coverFile, assetKey, document.format]);
+  }, [coverFile, assetKey, document.format, importing, fileKey]);
 
   const copyKey = async () => {
     if (!effectiveKey) return;

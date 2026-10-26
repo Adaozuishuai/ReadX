@@ -39,6 +39,8 @@ type Server struct {
 	zLibrary            *booksources.ZLibrary
 	downloadPublication func(context.Context, string, int64, func(int64, int64)) ([]byte, string, error)
 	settingsMu          sync.Mutex
+	realtimeMu          sync.Mutex
+	realtimeSessions    map[string]*latexRealtimeSession
 	workBuddyLoginMu    sync.Mutex
 	workBuddyLogin      workBuddyLoginStatus
 	// Paper memory and visual preparation are shared across five concurrent
@@ -99,6 +101,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /v1/book-downloads/{task}", withAuth(s.handleBookDownloadTask))
 	mux.Handle("GET /v1/book-downloads/{task}/file", withAuth(s.handleBookDownloadFile))
 	mux.Handle("GET /v1/documents", withAuth(s.handleDocuments))
+	mux.Handle("GET /v1/document-jobs", withAuth(s.handleDocumentJobs))
 	mux.Handle("POST /v1/import", withAuth(s.handleImport))
 	mux.Handle("POST /v1/import/files", withAuth(s.handlePublicationUpload))
 	mux.Handle("POST /v1/import/url", withAuth(s.handlePublicationURL))
@@ -146,6 +149,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/latex/projects/{id}/import-zip", withAuth(s.handleLatexImportZip))
 	mux.Handle("GET /v1/latex/projects/{id}/export-zip", withAuth(s.handleLatexExportZip))
 	mux.Handle("GET /v1/latex/toolchains", withAuth(s.handleLatexToolchains))
+	mux.Handle("GET /v1/latex/realtime/runtime", withAuth(s.handleLatexRealtimeRuntime))
+	mux.Handle("POST /v1/latex/realtime/runtime", withAuth(s.handleLatexRealtimeRuntime))
+	mux.Handle("POST /v1/latex/projects/{id}/realtime", withAuth(s.handleLatexRealtime))
+	mux.Handle("POST /v1/latex/projects/{id}/realtime/edit", withAuth(s.handleLatexRealtimeEdit))
 	mux.Handle("GET /v1/latex/projects/{id}/builds", withAuth(s.handleLatexBuilds))
 	mux.Handle("POST /v1/latex/projects/{id}/builds", withAuth(s.handleLatexBuilds))
 	mux.Handle("GET /v1/latex/builds/{id}", withAuth(s.handleLatexBuild))

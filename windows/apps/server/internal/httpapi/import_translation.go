@@ -32,7 +32,7 @@ func (s *Server) requireImportProviders() error {
 		return fmt.Errorf("导入需要先配置 AI 助教的 API Key（识别题录并翻译 OCR 段落）")
 	}
 	if _, err := s.ocrClient(); err != nil {
-		return fmt.Errorf("导入需要配置 PaddleOCR 令牌：%w", err)
+		return fmt.Errorf("导入需要配置 OCR 服务令牌：%w", err)
 	}
 	return nil
 }
@@ -43,8 +43,16 @@ func (s *Server) prepareImportTranslations(ctx context.Context, data []byte, pag
 	if len(pages) == 0 {
 		return fmt.Errorf("导入需要页面数据：请使用最新版客户端")
 	}
-	if len(pages) > ocr.MaxPDFPages {
-		return fmt.Errorf("PDF 超过 PaddleOCR 单次处理上限 %d 页，请拆分后导入", ocr.MaxPDFPages)
+	config, err := s.loadOCRConfig()
+	if err != nil {
+		return err
+	}
+	maxPages := ocr.MaxPDFPages
+	if config.Provider == "mineru" {
+		maxPages = ocr.MinerUMaxPDFPages
+	}
+	if len(pages) > maxPages {
+		return fmt.Errorf("PDF 超过 %s 单次处理上限 %d 页，请拆分后导入", config.label(), maxPages)
 	}
 	if err := s.requireImportProviders(); err != nil {
 		return err

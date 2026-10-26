@@ -72,8 +72,8 @@ func (s *Server) importPublication(ctx context.Context, name, source string, dat
 	result := importResult{Name: name}
 	format := "pdf"
 	var book publication.Book
-	if isPDFData(data) && len(data) > maxPublicationBytes {
-		return result, fmt.Errorf("单个 PDF 超过 OCR 处理上限 50 MB")
+	if limit := s.publicationByteLimit(); isPDFData(data) && int64(len(data)) > limit {
+		return result, fmt.Errorf("单个 PDF 超过 OCR 处理上限 %d MB", limit>>20)
 	}
 	if !isPDFData(data) {
 		format = "epub"
@@ -235,9 +235,10 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 				return
 			}
 			defer f.Close()
-			data, err := io.ReadAll(io.LimitReader(f, maxPublicationBytes+1))
-			if err == nil && len(data) > maxPublicationBytes {
-				err = fmt.Errorf("单个文件超过 50 MB")
+			limit := s.publicationByteLimit()
+			data, err := io.ReadAll(io.LimitReader(f, limit+1))
+			if err == nil && int64(len(data)) > limit {
+				err = fmt.Errorf("单个文件超过 %d MB", limit>>20)
 			}
 			if err == nil {
 				if isPDFData(data) {
@@ -702,12 +703,12 @@ func (s *Server) handleDocumentArxivPDF(w http.ResponseWriter, r *http.Request) 
 	if download == nil {
 		download = fetchPublicProgress
 	}
-	data, _, err := download(r.Context(), link, maxPublicationBytes, func(received, total int64) {
+	data, _, err := download(r.Context(), link, s.publicationByteLimit(), func(received, total int64) {
 		emit(map[string]any{"progress": map[string]any{"stage": "download", "message": "正在下载 arXiv PDF", "received": received, "total": total}})
 	})
 	if err != nil && r.Context().Err() == nil {
 		fallback := strings.Replace(link, "https://arxiv.org", "https://export.arxiv.org", 1)
-		data, _, err = download(r.Context(), fallback, maxPublicationBytes, nil)
+		data, _, err = download(r.Context(), fallback, s.publicationByteLimit(), nil)
 	}
 	if err != nil {
 		emit(map[string]any{"error": "arXiv 下载失败: " + err.Error()})
@@ -914,12 +915,12 @@ func (s *Server) handlePublicationURL(w http.ResponseWriter, r *http.Request) {
 	if download == nil {
 		download = fetchPublicProgress
 	}
-	data, final, err := download(r.Context(), link, maxPublicationBytes, progress)
+	data, final, err := download(r.Context(), link, s.publicationByteLimit(), progress)
 	if err != nil && r.Context().Err() == nil {
 		u, _ := url.Parse(link)
 		if u != nil && u.Hostname() == "arxiv.org" {
 			u.Host = "export.arxiv.org"
-			data, final, err = download(r.Context(), u.String(), maxPublicationBytes, progress)
+			data, final, err = download(r.Context(), u.String(), s.publicationByteLimit(), progress)
 		}
 	}
 	if err != nil {

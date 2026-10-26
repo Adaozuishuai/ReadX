@@ -23,6 +23,9 @@ const READY_TIMEOUT_MS = 30_000;
 const SHUTDOWN_GRACE_MS = 4_000;
 const DEFAULT_WINDOW_BOUNDS = { width: 1440, height: 900 };
 const MIN_WINDOW_BOUNDS = { width: 1100, height: 660 };
+const APP_ICON = path.join(__dirname, '..', process.platform === 'darwin' ? 'icon.png' : 'icon.ico');
+
+if (process.platform === 'win32') app.setAppUserModelId('com.readx.desktop');
 
 interface ServerHandle {
   info: ReadyInfo;
@@ -75,6 +78,7 @@ async function bootstrap(): Promise<void> {
             minWidth: MIN_WINDOW_BOUNDS.width,
             minHeight: MIN_WINDOW_BOUNDS.height,
             title: 'ReadX · 阅读',
+            icon: APP_ICON,
             backgroundColor: '#f6f2ea',
             webPreferences: {
               preload: path.join(__dirname, 'preload.js'),
@@ -237,6 +241,8 @@ async function startServer(previous?: ReadyInfo): Promise<ServerHandle> {
  */
 function renderEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
+  env.CBCT_NODE_BIN = process.execPath;
+  env.CBCT_ELECTRON_AS_NODE = '1';
   if (process.resourcesPath) {
     env.READX_RESOURCES_DIR = process.resourcesPath;
     const portablePython = path.join(process.resourcesPath, 'python', ...(process.platform === 'win32' ? ['python.exe'] : ['bin', 'python3']));
@@ -273,8 +279,6 @@ function renderEnvironment(): NodeJS.ProcessEnv {
     ? packagedScript
     : path.join(workspaceRoot, 'scripts', 'render-translated-pdf.cjs');
   if (fs.existsSync(script)) env.CBCT_RENDER_SCRIPT = script;
-  env.CBCT_NODE_BIN = process.execPath;
-  env.CBCT_ELECTRON_AS_NODE = '1';
   return env;
 }
 
@@ -407,9 +411,8 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#f6f2ea',
     title: 'ReadX',
-    // 应用图标（书页 + 锥束射线母题）：dist/main.js 的 __dirname 是 apps/desktop/dist，
-    // ico 放在 apps/desktop/ 下，源码运行与打包后都按这个相对位置解析。
-    icon: path.join(__dirname, '..', process.platform === 'darwin' ? 'icon.png' : 'icon.ico'),
+    // Read the packaged multi-resolution icon for the current display's DPI.
+    icon: APP_ICON,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

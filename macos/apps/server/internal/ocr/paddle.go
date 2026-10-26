@@ -142,6 +142,7 @@ type Page struct {
 
 // Client 是 PaddleOCR 客户端。
 type Client struct {
+	Provider     string
 	BaseURL      string
 	Token        string
 	Model        string
@@ -160,6 +161,7 @@ func New(baseURL, token, model string) *Client {
 		model = DefaultModel
 	}
 	return &Client{
+		Provider:     "paddle",
 		BaseURL:      strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		Token:        strings.TrimSpace(token),
 		Model:        strings.TrimSpace(model),
@@ -174,13 +176,16 @@ func (c *Client) Extract(ctx context.Context, pdf []byte, filename string, sizes
 	if err != nil {
 		return nil, err
 	}
-	return MapLayoutsContext(ctx, layouts, sizes)
+	return c.MapLayouts(ctx, layouts, sizes)
 }
 
 // Layouts 只负责提交、轮询、下载，返回原始的 layoutParsingResults：
 // 页面坐标的换算依赖调用方给的 PDF 页尺寸，所以把「取结果」和「换算」分开，
 // 便于缓存原始结果、按需换算。
 func (c *Client) Layouts(ctx context.Context, pdf []byte, filename string) ([]json.RawMessage, error) {
+	if c.Provider == "mineru" {
+		return c.mineruLayouts(ctx, pdf, filename)
+	}
 	if len(pdf) == 0 {
 		return nil, errors.New("PDF 为空")
 	}
