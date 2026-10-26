@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/1b377a2a-c36d-4e51-9923-feb28d1912d2
 
 ReadX 是一个面向科研阅读与论文写作的桌面工作区：导入论文、识别与翻译、逐页双语阅读、高亮批注、AI 精读与学术演示稿生成，都在同一个窗口里完成。LaTeX Studio 支持编辑真实项目文件、编译预览 PDF，并通过带确认卡片的 AI 对话修改源码。论文文件与阅读资料优先保存在本机。
 
-**v1.0.1**：修复重新翻译渲染状态、取消任务与历史记录，完善论文阅读、找书和本地阅读体验；作者与 Windows 安装程序发布者署名为 Lee。完整变更见 [v1.0.1 发布说明](windows/release-notes/v1.0.1.md)。
+**v1.0.2（Windows）**：新增学术工作台、正计时与倒计时、本机 Zotero 导入、文件夹及最多 14 篇并行导入，完善书架封面与批量投篮动画。完整变更见 [v1.0.2 发布说明](windows/release-notes/v1.0.2.md)。
 
 ### 一眼看懂 ReadX
 
@@ -210,7 +210,7 @@ OCR、翻译、渲染与论文记忆状态分开展示，处理过程更明白�
 
 从[最新 Release](https://github.com/Leechion/ReadX/releases/latest)下载 Windows 或 macOS 安装包。启动后，在 **AI 助手设置**中选择模型服务并配置连接；Codex Desktop 用户可先登录 Codex，再从 ReadX 中连接。
 
-v1.0.1 提供 [Windows x64 安装包 ReadX-Setup-1.0.1.exe](https://github.com/Leechion/ReadX/releases/download/v1.0.1/ReadX-Setup-1.0.1.exe)。Release 中的 `.blockmap` 和 `latest.yml` 用于应用内自动更新，手动安装只需下载 `.exe`。
+v1.0.2 提供 [Windows x64 安装包 ReadX-Setup-1.0.2.exe](https://github.com/Leechion/ReadX/releases/download/v1.0.2/ReadX-Setup-1.0.2.exe)。Release 中的 `.blockmap` 和 `latest.yml` 用于应用内自动更新，手动安装只需下载 `.exe`。
 
 #### macOS 首次启动
 
