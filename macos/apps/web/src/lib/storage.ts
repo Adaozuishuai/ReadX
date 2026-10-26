@@ -19,6 +19,8 @@ export const STORAGE_KEYS = {
   libraryDaily: 'cbct-v2-library-daily',
   dailyRecommendations: 'cbct-v2-daily-recommendations',
   dailyRecommendationRules: 'readx-daily-recommendation-rules',
+  researchWorkbench: 'readx-research-workbench-v1',
+  focusPendantPosition: 'readx-focus-pendant-left',
   compareSelection: 'readx.compare.selected',
   presentationTemplate: 'readx.presentation.active-template',
   readerPanels: 'cbct.reader.panels',

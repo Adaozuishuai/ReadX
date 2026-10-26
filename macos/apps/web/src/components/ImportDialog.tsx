@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
   type ImportCandidate,
@@ -9,9 +9,14 @@ import { useImportProgress } from './ImportProgressPanel';
 import { UploadShotStage, type ActiveImport } from './UploadShotStage';
 import { DocumentJobDialog } from './DocumentJobDialog';
 import { AppDialog } from './AppDialog';
+import { zotero, type ZoteroSelection } from '../api/zotero';
+import { ZoteroImportPanel } from './ZoteroImportPanel';
+import type { BatchShot } from './BatchShotVolley';
 
 const MAX_PDF_BYTES = 512 * 1048576;
 const MAX_EPUB_BYTES = 100 * 1048576;
+const MAX_CONCURRENT_IMPORTS = 14;
+const MAX_UPLOAD_BATCH_BYTES = 512 * 1048576;
 
 export function ImportDialog({
   files,
@@ -30,8 +35,13 @@ export function ImportDialog({
   const [busy, setBusy] = useState(false);
   const [value, setValue] = useState('');
   const [results, setResults] = useState<ImportedDocument[]>([]);
+  const [batchItems, setBatchItems] = useState<Array<{ file: File; status: 'queued' | 'working' | 'done' | 'failed'; message: string }>>([]);
+  const [batchShot, setBatchShot] = useState<BatchShot | null>(null);
+  const batchShotId = useRef(0);
+  const endBatchShot = useCallback((id: number) => setBatchShot(current => current?.id === id ? null : current), []);
   const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
   const [error, setError] = useState('');
+  const [zoteroQueuedKeys, setZoteroQueuedKeys] = useState<Set<string>>(() => new Set());
   // 弹弓式导入：选中的文件先落进队列，用户逐个投进篮筐才开始导入。
   const [queue, setQueue] = useState<File[]>([]);
   const [active, setActive] = useState<ActiveImport | null>(null);
@@ -53,6 +63,43 @@ export function ImportDialog({
     if (controller.current !== request) return;
     controller.current = null;
     setBusy(false);
+  };
+
+  const addZotero = async (selection: ZoteroSelection[]) => {
+    const request = startRequest();
+    if (!request) return;
+    setJobFile(null);
+    setActive(null);
+    setError('');
+    activity.begin('download', `正在读取 ${selection.length} 个 Zotero PDF`);
+    let completed = 0;
+    const failures: string[] = [];
+    try {
+      for (const { item, attachment } of selection) {
+        request.signal.throwIfAborted();
+        if (zoteroQueuedKeys.has(attachment.key)) continue;
+        activity.update({ stage: 'download', message: `正在读取 ${attachment.name}`, completed, total: selection.length });
+        try {
+          const file = await zotero.file(attachment, request.signal);
+          request.signal.throwIfAborted();
+          const source = `zotero://select/library/items/${item.key}`;
+          sources.current.set(file, source);
+          metadataHints.current.set(file, { title: item.title, authors: item.authors, doi: item.doi, venue: item.venue, year: item.year, url: source });
+          setQueue(items => [...items, file]);
+          setZoteroQueuedKeys(current => new Set(current).add(attachment.key));
+          completed++;
+        } catch (cause) {
+          request.signal.throwIfAborted();
+          failures.push(`${attachment.name}：${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      }
+      if (failures.length) setError(failures.join('\n'));
+      activity.update({ stage: 'complete', message: `已将 ${completed} 个 Zotero PDF 加入导入队列${failures.length ? `，${failures.length} 个读取失败` : ''}`, completed, total: selection.length });
+    } catch (cause) {
+      const cancelled = request.signal.aborted;
+      setError(cancelled ? '已取消；已加入队列的 PDF 会保留' : String(cause));
+      activity.update({ stage: cancelled ? 'cancelled' : 'failed', message: cancelled ? '已停止读取 Zotero PDF' : '读取 Zotero PDF 失败', completed, total: selection.length });
+    } finally { finishRequest(request); }
   };
 
   /** 投进一个：只导入这一篇，其余留在队列里。 */
@@ -100,7 +147,94 @@ export function ImportDialog({
       onImported();
     }
   };
-  // 从书库拖进来的文件先进队列，由用户自己投进篮筐才开始导入。
+  const startBatch = async () => {
+    const pending = queue.slice();
+    if (!pending.length) return;
+    const request = startRequest();
+    if (!request) return;
+    setActive(null);
+    setJobFile(null);
+    const shotId = ++batchShotId.current;
+    const shotFiles = pending.filter(file => file.size <= (/\.pdf$/i.test(file.name) || file.type === 'application/pdf' ? MAX_PDF_BYTES : MAX_EPUB_BYTES));
+    setBatchShot(shotFiles.length ? { id: shotId, files: shotFiles } : null);
+    setQueue([]);
+    setBatchItems(pending.map((file) => ({ file, status: 'queued' as const, message: '等待处理' })));
+    setError('');
+    activity.begin('preparing', `准备并行导入 ${pending.length} 篇文献`);
+    try {
+      const importedResults: ImportedDocument[] = [];
+      const batches: Array<Array<{ file: File; index: number }>> = [];
+      let batchBytes = 0;
+      for (const [index, file] of pending.entries()) {
+        const isPDF = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+        if (file.size > (isPDF ? MAX_PDF_BYTES : MAX_EPUB_BYTES)) {
+          const imported = { name: file.name, existing: false, error: `${file.name} 超出单文件大小限制` };
+          importedResults[index] = imported;
+          setResults((current) => [...current, imported]);
+          setBatchItems((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, status: 'failed', message: imported.error } : item));
+          continue;
+        }
+        let batch = batches[batches.length - 1];
+        if (!batch || batch.length >= MAX_CONCURRENT_IMPORTS || batchBytes + file.size > MAX_UPLOAD_BATCH_BYTES) {
+          batch = [];
+          batches.push(batch);
+          batchBytes = 0;
+        }
+        batch.push({ file, index });
+        batchBytes += file.size;
+      }
+      for (const batch of batches) {
+        request.signal.throwIfAborted();
+        const indices = new Set(batch.map((item) => item.index));
+        setBatchItems((items) => items.map((item, index) => indices.has(index) ? { ...item, status: 'working', message: '准备上传' } : item));
+        const hints = batch.map(({ file }): ImportMetadataHint => {
+          const known = metadataHints.current.get(file);
+          return {
+            title: known?.title ?? '', author: known?.authors[0] ?? '', authors: known?.authors,
+            doi: known?.doi ?? '', arxiv: known?.arxiv ?? '', venue: known?.venue, year: known?.year,
+            firstPage: '', source: sources.current.get(file),
+          };
+        });
+        let batchResults: ImportedDocument[];
+        try {
+          const result = await api.upload(batch.map((item) => item.file), request.signal, hints, (event) => {
+            const progress = event.progress;
+            const item = progress?.file ? batch[progress.file - 1] : undefined;
+            activity.receive(item && progress ? { ...event, progress: { ...progress, file: item.index + 1, files: pending.length } } : event);
+            if (!item || !progress) return;
+            setBatchItems((items) => items.map((row, index) => index === item.index ? {
+              ...row,
+              status: progress.stage === 'done' ? 'done' : progress.stage === 'failed' || progress.stage === 'cancelled' ? 'failed' : 'working',
+              message: progress.message || progress.stage,
+            } : row));
+          });
+          batchResults = batch.map(({ file }, index) => result.results[index] ?? { name: file.name, existing: false, error: '服务未返回导入结果，请刷新书库确认' });
+        } catch (cause) {
+          request.signal.throwIfAborted();
+          batchResults = batch.map(({ file }) => ({ name: file.name, existing: false, error: String(cause) }));
+        }
+        batch.forEach(({ index }, batchIndex) => { importedResults[index] = batchResults[batchIndex]!; });
+        setResults((current) => [...current, ...batchResults]);
+        setBatchItems((items) => items.map((item, index) => {
+          const imported = importedResults[index];
+          return indices.has(index) && imported ? { ...item, status: imported.error ? 'failed' : 'done', message: imported.error || (imported.existing ? '书库已有，已复用' : '导入完成') } : item;
+        }));
+      }
+      request.signal.throwIfAborted();
+      const failed = importedResults.filter((item) => item.error).length;
+      activity.update({ stage: 'complete', message: `批量导入完成：${pending.length - failed} 篇成功，${failed} 篇失败`, completed: pending.length - failed, total: pending.length });
+    } catch (cause) {
+      const cancelled = request.signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError');
+      const message = cancelled ? '已取消' : String(cause);
+      endBatchShot(shotId);
+      setBatchItems((items) => items.map((item) => item.status === 'done' || item.status === 'failed' ? item : { ...item, status: 'failed', message }));
+      setError(message);
+      activity.update({ stage: cancelled ? 'cancelled' : 'failed', message, completed: 0, total: pending.length });
+    } finally {
+      finishRequest(request);
+      onImported();
+    }
+  };
   useEffect(() => {
     if (files.length && !started.current) {
       started.current = true;
@@ -185,6 +319,7 @@ export function ImportDialog({
         </button>
       </header>
       <ol className="import-steps" aria-label="导入流程"><li><span>01</span>选择文件</li><li><span>02</span>加入待导入队列</li><li><span>03</span>识别题录并翻译</li></ol>
+      <ZoteroImportPanel busy={busy} queuedKeys={zoteroQueuedKeys} onAdd={addZotero} />
       <UploadShotStage
         queue={queue}
         active={active}
@@ -192,11 +327,32 @@ export function ImportDialog({
         results={results}
         busy={busy}
         disabled={busy}
+        batchShot={batchShot}
+        batchBusy={busy && batchItems.some(item => item.status === 'queued' || item.status === 'working')}
+        onBatchShotEnd={endBatchShot}
         onQueue={(selected) => setQueue((items) => [...items, ...selected])}
         onMake={(file) => void upload(file)}
       />
+      {queue.length > 0 && (
+        <button className="primary-button import-batch-button" disabled={busy} onClick={() => void startBatch()}>
+          {`并行导入全部（最多同时处理 ${MAX_CONCURRENT_IMPORTS} 篇，${queue.length} 篇）`}
+        </button>
+      )}
+      {batchItems.length > 0 && (
+        <section className="import-batch-progress" aria-live="polite">
+          <h3>批量处理进度</h3>
+          <ul>
+            {batchItems.map((item, index) => (
+              <li key={`${item.file.name}-${index}`} data-state={item.status}>
+                <span title={item.file.webkitRelativePath || item.file.name}>{item.file.name}</span>
+                <span>{item.message}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <p className="text-xs text-ink-faint">
-        PDF 最大 512 MB（LeePDF 服务会继续校验 OCR 限制）；EPUB 最大 100 MB。相同文件自动去重，投进篮筐开始处理。
+        PDF 最大 512 MB（LeePDF 服务会继续校验 OCR 限制）；EPUB 最大 100 MB。文件夹会递归收集 PDF / EPUB；选择后点击“并行导入全部”开始处理。
       </p>
       <label className="import-link-field">
         链接、arXiv 编号、DOI 或标题
@@ -218,9 +374,8 @@ export function ImportDialog({
           按标题 / DOI 查找
         </button>
       </div>
-      <details className="import-data-note"><summary>题录识别、翻译与数据说明</summary><p>PDF 导入后由 ReadX 执行 OCR、段落整理、翻译和 PDF 排版。OCR 与翻译模型配置在 AI 助手设置中管理。</p></details>
       {error && (
-        <p role="alert" className="text-bad">
+        <p role="alert" className="text-bad whitespace-pre-line">
           {error}
         </p>
       )}

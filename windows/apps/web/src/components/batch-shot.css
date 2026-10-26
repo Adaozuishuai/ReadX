@@ -1,0 +1,11 @@
+.shot-zone.disabled.batch-volley { opacity:1; }
+.shot-batch-flights { position:absolute; inset:0; pointer-events:none; }
+.shot-batch-ball { margin:0; cursor:default; pointer-events:none; will-change:transform; }
+.shot-batch-ball.is-sinking { z-index:1; }
+.shot-batch-caption { position:absolute; top:69px; left:18px; right:18px; z-index:6; display:flex; flex-direction:column; align-items:center; gap:7px; pointer-events:none; }
+.shot-batch-caption strong { color:var(--color-accent); font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; }
+.shot-batch-caption > span { max-width:75%; overflow:hidden; color:var(--color-ink-soft); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.batch-volley .shot-net.splash { transform-origin:105px 78px; animation:shot-batch-net .3s ease-out; }
+.batch-volley .shot-ripple { width:116px; height:44px; margin:-22px 0 0 -58px; }
+@keyframes shot-batch-net { 0% { transform:scaleY(1); } 42% { transform:scaleY(1.12); } 75% { transform:scaleY(.96); } 100% { transform:scaleY(1); } }
+@media (prefers-reduced-motion:reduce) { .batch-volley .shot-net.splash { animation:none; }.shot-batch-flights { display:none; } }

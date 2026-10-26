@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ImportProgress, ImportedDocument } from '../api/client';
+import { BatchShotVolley, ShotPaper, type BatchShot } from './BatchShotVolley';
 
 /**
  * 弹弓式上传（愤怒的小鸟手感）。
@@ -66,6 +67,9 @@ export interface ShotStageProps {
   results: ImportedDocument[];
   busy: boolean;
   disabled?: boolean;
+  batchShot?: BatchShot | null;
+  batchBusy?: boolean;
+  onBatchShotEnd: (id: number) => void;
   onQueue: (files: File[]) => void;
   onMake: (file: File) => void;
 }
@@ -176,10 +180,22 @@ export function UploadShotStage({
   results,
   busy,
   disabled,
+  batchShot,
+  batchBusy,
+  onBatchShotEnd,
   onQueue,
   onMake,
 }: ShotStageProps) {
   const [hot, setHot] = useState(false);
+  const [selectionNotice, setSelectionNotice] = useState('');
+  const queueFiles = (selected: File[], folder = false) => {
+    const documents = selected.filter((file) => /\.(pdf|epub)$/i.test(file.name) || file.type === 'application/pdf' || file.type === 'application/epub+zip');
+    if (documents.length) onQueue(documents);
+    const skipped = selected.length - documents.length;
+    setSelectionNotice(folder
+      ? `已从文件夹及子文件夹中找到 ${documents.length} 篇文献${skipped ? `，忽略 ${skipped} 个其他文件` : ''}`
+      : skipped ? `已忽略 ${skipped} 个非 PDF / EPUB 文件` : '');
+  };
   const [aim, setAim] = useState<Aim | null>(null);
   /** 正在飞行的球：起点、初速、起始时间；null 表示没在飞。 */
   const [flight, setFlight] = useState<{ file: File; from: Aim; v: { vx: number; vy: number }; start: number } | null>(null);
@@ -194,6 +210,11 @@ export function UploadShotStage({
     typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches,
   );
   const net = useNet();
+  const onBatchLand = useCallback(() => setMadeNonce(value => value + 1), []);
+
+  useEffect(() => {
+    if (batchShot) zoneRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
+  }, [batchShot?.id]);
 
   const toNorm = useCallback((clientX: number, clientY: number) => {
     const rect = zoneRef.current?.getBoundingClientRect();
@@ -325,7 +346,7 @@ export function UploadShotStage({
     <div className="shot-stage">
       <div
         ref={zoneRef}
-        className={`shot-zone${hot ? ' hot' : ''}${disabled ? ' disabled' : ''}${pulling ? ' aiming' : ''}`}
+        className={`shot-zone${hot ? ' hot' : ''}${disabled ? ' disabled' : ''}${pulling ? ' aiming' : ''}${batchShot ? ' batch-volley' : ''}`}
         onDragEnter={(event) => {
           event.preventDefault();
           if (disabled) return;
@@ -343,13 +364,14 @@ export function UploadShotStage({
           event.stopPropagation();
           dragDepth.current = 0;
           setHot(false);
-          if (!disabled) onQueue(Array.from(event.dataTransfer.files));
+          if (!disabled) queueFiles(Array.from(event.dataTransfer.files));
         }}
       >
         <span className="shot-count">
-          {active && !active.result ? `处理中 ${doneTotal + 1}` : `已导入 ${doneTotal}`}
+          {batchBusy ? `批量处理中 · 已导入 ${doneTotal}` : active && !active.result ? `处理中 ${doneTotal + 1}` : `已导入 ${doneTotal}`}
         </span>
 
+        <div className="shot-pickers">
         <label className="shot-picker" role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled} onKeyDown={(event) => {
           if (!disabled && (event.key === 'Enter' || event.key === ' ')) {
             event.preventDefault();
@@ -363,11 +385,30 @@ export function UploadShotStage({
             multiple
             disabled={disabled}
             onChange={(event) => {
-              onQueue(Array.from(event.target.files ?? []));
+              queueFiles(Array.from(event.target.files ?? []));
               event.target.value = '';
             }}
           />
         </label>
+        <label className="shot-picker" role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled} onKeyDown={(event) => {
+          if (!disabled && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            event.currentTarget.querySelector('input')?.click();
+          }
+        }}>
+          选择文件夹
+          <input
+            type="file"
+            multiple
+            disabled={disabled}
+            ref={(input) => { input?.setAttribute('webkitdirectory', ''); }}
+            onChange={(event) => {
+              queueFiles(Array.from(event.target.files ?? []), true);
+              event.target.value = '';
+            }}
+          />
+        </label>
+        </div>
 
         {/* 虚线预测轨迹 + 落点圈：终点决定能不能进 */}
         <svg className="shot-aim" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
@@ -392,11 +433,12 @@ export function UploadShotStage({
           ) : null}
         </svg>
 
+        {batchShot && <BatchShotVolley key={batchShot.id} shot={batchShot} from={ANCHOR} rim={RIM} gravity={GRAVITY} onLand={onBatchLand} onComplete={onBatchShotEnd} />}
         <svg className="shot-hoop" viewBox={`0 0 ${HOOP_W} ${HOOP_H}`} aria-hidden="true">
           <rect className="shot-board" x={RIM_X - 46} y={RIM_Y - 64} width={92} height={52} rx={5} />
           <rect className="shot-bracket" x={RIM_X - 13} y={RIM_Y - 12} width={26} height={12} />
           <ellipse className="shot-rim" cx={RIM_X} cy={RIM_Y} rx={52} ry={7} fill="none" />
-          <g className={`shot-net${made ? ' splash' : ''}`}>
+          <g key={madeNonce} className={`shot-net${made ? ' splash' : ''}`}>
             {net.map((item) => {
               const [d, o] = item.split('|');
               return <path key={item} d={d} opacity={o} />;
@@ -404,20 +446,15 @@ export function UploadShotStage({
           </g>
         </svg>
 
-        {made ? <span className="shot-ripple" style={{ left: `${RIM.x * 100}%`, top: `${RIM.y * 100}%` }} /> : null}
+        {made ? <span key={madeNonce} className="shot-ripple" style={{ left: `${RIM.x * 100}%`, top: `${RIM.y * 100}%` }} /> : null}
         {missAt ? (
           <span className="shot-miss" style={{ left: `${missAt.x * 100}%`, top: `${RIM.y * 100}%` }}>
             没进
           </span>
         ) : null}
 
-        {/* 发射点：没有球时是个提示圈 */}
-        {!ammo ? (
-          <span className="shot-anchor" style={{ left: `${ANCHOR.x * 100}%`, top: `${ANCHOR.y * 100}%` }} />
-        ) : null}
-
         {/* 球（当前子弹），可按住拖动 */}
-        {ammo ? (
+        {ammo && !batchShot ? (
           <span
             className={`shot-ball${flight ? ' flying' : ''}${pulling ? ' pulling' : ''}${willMake && pulling ? ' make' : ''}`}
             style={{ left: `${ballAt.x * 100}%`, top: `${ballAt.y * 100}%` }}
@@ -428,13 +465,7 @@ export function UploadShotStage({
             }}
             title={`${ammo.name} — 向后拉，松手投出`}
           >
-            <span className="shot-sheet">
-              <span className="shot-fold" />
-              <span className="shot-ln" style={{ top: 26, width: 24 }} />
-              <span className="shot-ln" style={{ top: 33, width: 32 }} />
-              <span className="shot-ln" style={{ top: 40, width: 28 }} />
-            </span>
-            <span className="shot-tag">{/\.pdf$/i.test(ammo.name) ? 'PDF' : 'EPUB'}</span>
+            <ShotPaper file={ammo} />
           </span>
         ) : null}
 
@@ -445,10 +476,10 @@ export function UploadShotStage({
           </span>
         ) : null}
 
-        {!ammo ? (
+        {batchShot ? null : batchBusy ? <div className="shot-invite"><strong>正在并行处理文献</strong></div> : !ammo ? (
           <div className="shot-invite">
-            <strong>把论文拖进来</strong>
-            <span>选择 PDF / EPUB，拖动纸片向篮筐投出</span>
+            <strong>添加论文或文件夹</strong>
+            <span>文件夹会包含子文件夹中的 PDF / EPUB</span>
           </div>
         ) : (
           <div className="shot-hint">
@@ -458,6 +489,7 @@ export function UploadShotStage({
         )}
       </div>
 
+      {selectionNotice && <p className="text-xs text-ink-faint" role="status">{selectionNotice}</p>}
       {/* 队列：点选子弹 */}
       {queue.length ? (
         <ul className="shot-queue" aria-label="待投队列">
@@ -479,7 +511,7 @@ export function UploadShotStage({
                     </text>
                   </svg>
                 </span>
-                <span className="shot-chip-name" title={file.name}>{file.name}</span>
+                <span className="shot-chip-name" title={file.webkitRelativePath || file.name}>{file.name}</span>
                 <span className="shot-chip-size">{humanSize(file.size)}</span>
               </button>
             </li>

@@ -106,7 +106,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/import/files", withAuth(s.handlePublicationUpload))
 	mux.Handle("POST /v1/import/url", withAuth(s.handlePublicationURL))
 	mux.Handle("GET /v1/import/search", withAuth(s.handleImportSearch))
+	mux.Handle("GET /v1/import/zotero/collections", withAuth(s.handleZoteroCollections))
+	mux.Handle("GET /v1/import/zotero/items", withAuth(s.handleZoteroItems))
+	mux.Handle("GET /v1/import/zotero/attachments/{key}/file", withAuth(s.handleZoteroFile))
 	mux.Handle("GET /v1/discovery/daily", withAuth(s.handleDailyRecommendations))
+	mux.Handle("GET /v1/discovery/feed", withAuth(s.handleResearchFeed))
+	mux.Handle("POST /v1/discovery/translate-title", withAuth(s.handleResearchTitleTranslation))
 	mux.Handle("POST /v1/documents/{key}/arxiv-pdf", withAuth(s.handleDocumentArxivPDF))
 	mux.Handle("GET /v1/documents/{key}/file", withAuth(s.handlePublicationFile))
 	// 旧客户端（以及 pdf.js 的调试脚本）仍按 /pdf 取原文件；路径别名保留，行为与 /file 一致。

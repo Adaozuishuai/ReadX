@@ -1,5 +1,7 @@
 @import 'tailwindcss';
 
+.library-mode-nav { display:grid; gap:4px; padding:0 0 11px; border-bottom:1px solid var(--color-line); }.library-view-heading { padding:12px 10px 4px; color:var(--color-ink-faint); font-size:9px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; }
+
 /* Editable Figma workbook / Codex conversation: 16:134–16:139. */
 .reader-panels { position:relative; }
 .assistant-sidebar { container-type:inline-size; container-name:assistant; }
@@ -1825,7 +1827,6 @@ button:disabled { opacity:.5;cursor:default; }
 .shot-miss { position:absolute; z-index:7; padding:2px 8px; margin:-11px 0 0 -20px; border-radius:999px; background:color-mix(in srgb, var(--color-bad) 12%, var(--color-surface)); color:var(--color-bad); font-size:11px; pointer-events:none; animation:shot-miss .9s ease-out forwards; }
 @keyframes shot-miss { 0% { opacity:0; transform:translateY(2px); } 20% { opacity:1; } 100% { opacity:0; transform:translateY(-10px); } }
 /* 发射点 */
-.shot-anchor { position:absolute; z-index:2; width:44px; height:44px; margin:-22px 0 0 -22px; border-radius:50%; border:2px dashed var(--color-line-strong); pointer-events:none; }
 /* 子弹：可按住向后拉 */
 .shot-ball { position:absolute; z-index:8; width:54px; height:66px; margin:-33px 0 0 -27px; cursor:grab; touch-action:none; transition:filter .15s ease; }
 .shot-ball:active, .shot-ball.pulling { cursor:grabbing; }
@@ -1845,6 +1846,8 @@ button:disabled { opacity:.5;cursor:default; }
    否则原生文件控件会露出来。 */
 .shot-zone .shot-picker { position:absolute; left:12px; top:12px; z-index:6; display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border:1px solid transparent; border-radius:999px; background:var(--color-accent); color:#fff; font-size:11.5px; font-weight:500; cursor:pointer; transition:.15s; }
 .shot-zone .shot-picker:hover { background:color-mix(in srgb, var(--color-accent) 86%, #000); }
+.shot-pickers { position:absolute; left:12px; top:12px; z-index:6; display:flex; gap:8px; }
+.shot-zone .shot-pickers .shot-picker { position:static; }
 .shot-zone .shot-picker:has(input:disabled) { opacity:.5; cursor:not-allowed; }
 .app-dialog .shot-zone .shot-picker input[type=file] { display:none !important; }
 .shot-hint { position:absolute; left:0; right:0; top:14px; text-align:center; color:var(--color-ink-faint); font-size:11px; pointer-events:none; }
@@ -2068,9 +2071,6 @@ button:disabled { opacity:.5;cursor:default; }
 .import-steps li > span { color:var(--color-accent); font-size:12px; }
 .import-link-field { padding-top:20px; border-top:1px solid var(--color-line); color:var(--color-ink); font-weight:550; }
 .import-dialog .import-link-field input { margin-top:10px; padding:12px 14px; border-radius:10px; font-size:12px; font-weight:400; background:var(--color-canvas); }
-.import-data-note { font-size:11px; color:var(--color-ink-faint); line-height:1.8; }
-.import-data-note summary { cursor:pointer; }
-.import-data-note p { margin-top:8px; }
 .shot-zone { border:1px solid var(--color-line); background:var(--color-canvas); border-radius:16px; }
 .shot-invite { top:80px; gap:10px; }
 .shot-invite strong { font-size:22px; letter-spacing:-.4px; }
@@ -2914,3 +2914,13 @@ button:disabled { opacity:.5;cursor:default; }
 
 /* 诊断的「谁报的」标签：有些警告来自宏包而不是正文 */
 .latex-diagnostic-source { flex:0 0 auto; padding:0 5px; border:1px solid var(--color-line); border-radius:5px; color:var(--color-ink-faint); font-size:9.5px; white-space:nowrap; }
+
+.import-batch-button { width:100%; margin-top:12px; }
+.import-batch-progress { margin-top:14px; padding:12px 14px; border:1px solid var(--color-line); border-radius:12px; background:var(--color-canvas); }
+.import-batch-progress h3 { margin:0 0 8px; font-size:13px; }
+.import-batch-progress ul { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+.import-batch-progress li { display:flex; justify-content:space-between; gap:12px; font-size:12px; }
+.import-batch-progress li span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.import-batch-progress li span:last-child { flex:none; color:var(--color-ink-soft); }
+.import-batch-progress li[data-state="failed"] span:last-child { color:var(--color-bad); }
+.import-batch-progress li[data-state="done"] span:last-child { color:var(--color-good); }

@@ -10,6 +10,7 @@ import { useDebouncedValue } from '../hooks/useWorkspace';
 import type { useLibraryMeta } from '../hooks/useLibraryMeta';
 import { CATEGORY_COLORS, categoryDot, categoryLabel } from '../categories';
 import { LibraryCard } from './LibraryCard';
+import { ShelfCover } from './ShelfCover';
 import { LibraryProcessingControl } from './LibraryProcessingControl';
 import { LibraryTrashButton } from './LibraryTrashButton';
 import { EmptyTrashDialog } from './EmptyTrashDialog';
@@ -166,6 +167,7 @@ interface Props {
   onOpenProcessing: (doc: DocumentSummary) => void;
   onRetranslate: (doc: DocumentSummary) => void;
   onOpenImport: () => void;
+  onOpenAcademic: () => void;
   onOpenSettings: () => void;
   meta: ReturnType<typeof useLibraryMeta>;
   view: ViewId;
@@ -192,6 +194,7 @@ export function LibraryScreen({
   onOpenProcessing,
   onRetranslate,
   onOpenImport,
+  onOpenAcademic,
   onOpenSettings,
   meta,
   view,
@@ -479,9 +482,19 @@ export function LibraryScreen({
     <div className={`app-shell${dailyOpen ? ' daily-open' : ''}`}>
       <aside className={`library-sidebar${collapsed ? ' collapsed' : ''}`} style={{ width: sidebarWidth, '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}>
         <div className="sidebar-brand">
-          <strong>个人书库</strong>
-          <span>RESEARCH LIBRARY</span>
+          <strong>工作区</strong>
+          <span>READX WORKSPACE</span>
         </div>
+
+        <div className="library-mode-nav" aria-label="工作区切换">
+          <button type="button" className="nav-item active" aria-current="page" title="个人书库">
+            <WorkspaceIcon name="library" /><span className="nav-label">个人书库</span>
+          </button>
+          <button type="button" className="nav-item" onClick={onOpenAcademic} title="学术工作台">
+            <WorkspaceIcon name="calendar" /><span className="nav-label">学术工作台</span>
+          </button>
+        </div>
+        <div className="library-view-heading">书库视图</div>
 
         <nav className="flex flex-col gap-1" aria-label="书库视图">
           {VIEWS.map((item) => (
@@ -1010,23 +1023,16 @@ function ShelfOverview({
     color: shelf.color,
     docs: documents.filter((doc) => (meta[doc.key]?.categories ?? []).includes(shelf.name)),
   }));
-  const unassigned = documents.filter((doc) => !(meta[doc.key]?.categories ?? []).some((name) => categories.some((shelf) => shelf.name === name)));
-  if (unassigned.length || !groups.length) groups.push({ name: '未归入书架', color: 'slate', docs: unassigned });
-  const visibleGroups = groups.filter((group) => group.docs.length > 0 || group.name !== '未归入书架');
 
   if (!documents.length) return <div className="empty-state"><h2>书架里还没有论文</h2><p>在全部文档中给论文选择所属书架，按研究领域整理阅读。</p></div>;
 
   return (
     <div className="space-y-5">
       {!categories.length ? <p className="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-ink-soft">先在左侧点击「+ 新建书架」，再用论文卡片上的「归入书架」整理同领域论文。</p> : null}
-      {visibleGroups.map((shelf) => (
-        <section key={shelf.name} className="rounded-xl border border-line bg-surface p-3">
-          <header className="mb-3 flex items-center gap-2">
-            <span className="ann-color-dot" style={{ background: categoryDot(shelf.color) }} />
-            <h2 className="text-sm font-semibold text-ink">{shelf.name}</h2>
-            <span className="rounded-pill bg-surface-sunk px-2 py-0.5 text-[10px] text-ink-soft">{shelf.docs.length} 篇</span>
-            {shelf.name === '未归入书架' ? <span className="text-[10px] text-ink-faint">可从卡片快速归类</span> : null}
-          </header>
+      {groups.map((shelf, index) => (
+        <section key={shelf.name} className="shelf-collection">
+          <ShelfCover name={shelf.name} color={shelf.color} count={shelf.docs.length} index={index} />
+          <div className="shelf-collection-body">
           {shelf.docs.length ? <div className="book-grid">
             {shelf.docs.map((doc) => <LibraryCard
               key={`${shelf.name}-${doc.id}`}
@@ -1042,6 +1048,7 @@ function ShelfOverview({
               onSetShelves={(names) => onSetShelves(doc.key, names)}
             />)}
           </div> : <p className="text-xs text-ink-faint">这个书架还没有论文，可以在全部文档卡片上选择该书架。</p>}
+          </div>
         </section>
       ))}
     </div>

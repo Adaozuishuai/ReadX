@@ -770,6 +770,7 @@ export interface DailyRecommendationRules {
   venues: string[];
   years: number;
 }
+export interface ResearchFeedItem { id: string; title: string; url: string; published: string; summary: string; source: string }
 export interface ImportProgress {
   stage: string;
   message: string;
@@ -1149,6 +1150,10 @@ export const api = {
     });
     return request<{ papers: DailyRecommendation[]; fetchedAt: string }>(`/v1/discovery/daily?${query}`, { signal });
   },
+  researchFeed: (source: 'arxiv' | 'journals' | 'weekly', signal?: AbortSignal) =>
+    request<{ items: ResearchFeedItem[]; fetchedAt: string }>(`/v1/discovery/feed?source=${source}`, { signal }),
+  translateResearchTitle: (title: string, signal?: AbortSignal) =>
+    request<{ translation: string }>('/v1/discovery/translate-title', { method: 'POST', body: { title }, signal }),
   downloadPublication: async (value: string, title: string | undefined, signal?: AbortSignal, onProgress?: (received: number, total: number) => void) => {
     const response = await authenticatedFetch('/v1/import/url', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

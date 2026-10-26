@@ -22,7 +22,10 @@ const SlackWorkspace = lazy(() => import('./components/slack/SlackWorkspace').th
 import { ModePendant, type WorkspaceMode } from './components/slack/ModePendant';
 import './components/slack/slack.css';
 import { STORAGE_KEYS } from './lib/storage';
-type Screen = 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex';
+import { ResearchWorkbench } from './components/ResearchWorkbench';
+import { FocusPendant } from './components/research/FocusPendant';
+import { useResearchWorkbench } from './hooks/useResearchWorkbench';
+type Screen = 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex' | 'research';
 
 const MODE_KEY = STORAGE_KEYS.workspaceMode;
 
@@ -56,6 +59,7 @@ function readWorkspaceMode(): WorkspaceMode {
  * 知识图谱/复现是独立入口，从书库侧栏进入。
  */
 export default function App() {
+  const researchWorkbench = useResearchWorkbench();
   const popupTarget = useMemo(readReaderPopupTarget, []);
   const {
     phase,
@@ -312,6 +316,7 @@ export default function App() {
           onRetranslate={setRetranslateDocument}
           onOpenProcessing={setProcessingDocument}
           onOpenImport={() => setImportFiles([])}
+          onOpenAcademic={() => setScreen('research')}
           onOpenSettings={() => setSettingsOpen(true)}
           meta={libraryMeta}
           view={libraryView}
@@ -380,6 +385,8 @@ export default function App() {
           onBack={() => setScreen('library')}
           onOpenDocument={openDocument}
         />
+      ) : screen === 'research' ? (
+        <ResearchWorkbench controller={researchWorkbench} documents={navigationDocuments.filter((doc) => !libraryMeta.items[doc.key]?.deleted)} onOpenDocument={openDocument} onReload={reload} onOpenLibrary={() => setScreen('library')} />
       ) : (
         <ReproductionSection
           document={selected}
@@ -450,6 +457,13 @@ export default function App() {
         </footer>
       ) : null}
       </Activity>
+      {researchWorkbench.data.focusSession && (screen !== 'research' || mode !== 'research') && (
+        <FocusPendant controller={researchWorkbench} onOpenWorkbench={() => {
+          researchWorkbench.setData(current => ({ ...current, activeTab: 'daily' }));
+          returnToResearch();
+          setScreen('research');
+        }} />
+      )}
       <ModePendant mode={mode} onMode={switchMode} />
       {curtain ? (
         <div className={`mode-curtain mode-curtain--${curtain.phase}`} aria-hidden="true">
@@ -487,8 +501,8 @@ function HeaderBar({
   onThemeChange,
 }: {
   phase: ReturnType<typeof useWorkspace>['phase'];
-  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex';
-  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex') => void;
+  screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex' | 'research';
+  onScreen: (screen: 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex' | 'research') => void;
   onPresentation: () => void;
   onReload: () => void;
   onImport: () => void;
@@ -505,10 +519,10 @@ function HeaderBar({
       <button
         type="button"
         onClick={() => onScreen('library')}
-        aria-current={['library', 'reader', 'graph', 'calendar', 'compare', 'reproduction'].includes(screen) ? 'page' : undefined}
-        className={['library', 'reader', 'graph', 'calendar', 'compare', 'reproduction'].includes(screen) ? 'active' : ''}
+        aria-current={['library', 'reader', 'graph', 'calendar', 'compare', 'reproduction', 'research'].includes(screen) ? 'page' : undefined}
+        className={['library', 'reader', 'graph', 'calendar', 'compare', 'reproduction', 'research'].includes(screen) ? 'active' : ''}
       >
-        <WorkspaceIcon name="library" size={16} /><span>书库</span>
+        <WorkspaceIcon name="library" size={16} /><span>工作台</span>
       </button>
       <button type="button" onClick={onPresentation} aria-current={screen === 'presentation' ? 'page' : undefined} className={screen === 'presentation' ? 'active' : ''} title="从书库选择论文生成演示稿">
         <WorkspaceIcon name="file" size={16} /><span>PPT</span>

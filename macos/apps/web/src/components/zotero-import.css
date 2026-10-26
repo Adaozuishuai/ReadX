@@ -1,0 +1,31 @@
+.zotero-import { margin:18px 0; overflow:hidden; border:1px solid var(--color-line); border-radius:12px; background:var(--color-surface); }
+.zotero-import-toggle { display:flex; align-items:center; gap:10px; width:100%; padding:13px 15px; border:0; background:var(--color-canvas); color:var(--color-ink); text-align:left; font-size:13px; font-weight:550; cursor:pointer; }
+.zotero-import-toggle:disabled { opacity:.55; cursor:default; }
+.zotero-import-mark { display:grid; place-items:center; width:26px; height:26px; border:1px solid #b94b4b30; border-radius:6px; background:#b94b4b0d; color:#b94b4b; font-family:Georgia,serif; font-size:21px; }
+.zotero-import-chevron { margin-left:auto; color:var(--color-ink-soft); font-size:18px; }
+.zotero-import-body { padding:15px; }
+.zotero-import-connection,.zotero-import-list-heading,.zotero-import-pagination,.zotero-import-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:11px; color:var(--color-ink-soft); }
+.zotero-import-connection button,.zotero-import-pagination button { padding:4px 8px; border:1px solid var(--color-line); border-radius:6px; background:var(--color-surface); color:var(--color-ink-soft); font-size:11px; cursor:pointer; }
+.zotero-import button:disabled { opacity:.5; cursor:default; }
+.zotero-import-help { margin:12px 0 0; color:var(--color-ink-soft); font-size:12px; line-height:1.8; }
+.zotero-import-filters { display:grid; grid-template-columns:minmax(0,1fr) minmax(120px,.65fr); gap:9px; margin:14px 0; }
+.zotero-import-filters input,.zotero-import-filters select { width:100%; min-width:0; padding:8px 10px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-canvas); color:var(--color-ink); font-size:12px; }
+.zotero-import-list-heading { margin-bottom:8px; }
+.zotero-import-list-heading label,.zotero-import-attachment { display:flex; align-items:center; gap:8px; cursor:pointer; }
+.zotero-import input[type=checkbox] { flex-shrink:0; width:14px; height:14px; accent-color:var(--color-accent); }
+.zotero-import-list { max-height:340px; overflow-y:auto; overscroll-behavior:contain; border-top:1px solid var(--color-line); border-bottom:1px solid var(--color-line); }
+.zotero-import-item { padding:12px 3px; }
+.zotero-import-item + .zotero-import-item { border-top:1px solid var(--color-line); }
+.zotero-import-item h3 { margin:0; color:var(--color-ink); font-size:12px; font-weight:550; line-height:1.6; overflow-wrap:anywhere; }
+.zotero-import-item > p { margin:3px 0 8px; color:var(--color-ink-faint); font-size:10px; line-height:1.6; overflow-wrap:anywhere; }
+.zotero-import-attachment { padding:4px 0; color:var(--color-ink-soft); font-size:11px; }
+.zotero-import-attachment > span { min-width:0; overflow-wrap:anywhere; }
+.zotero-import-attachment small { flex-shrink:0; margin-left:auto; color:var(--color-accent); font-size:10px; }
+.zotero-import-no-pdf { color:var(--color-ink-faint); font-size:10px; }
+.zotero-import-empty { padding:22px 0; color:var(--color-ink-faint); text-align:center; font-size:12px; }
+.zotero-import-pagination { justify-content:flex-end; padding:9px 0; font-variant-numeric:tabular-nums; }
+.zotero-import-actions { margin-top:13px; }
+.zotero-import-actions .primary-button { padding:8px 12px; font-size:12px; }
+.zotero-import-error { margin:12px 0 0; color:var(--color-bad); font-size:12px; line-height:1.7; }
+.zotero-import button:focus-visible,.zotero-import input:focus-visible,.zotero-import select:focus-visible { outline:2px solid var(--color-accent); outline-offset:2px; }
+@media (max-width:520px) { .zotero-import-filters { grid-template-columns:1fr; }.zotero-import-body { padding:12px; } }

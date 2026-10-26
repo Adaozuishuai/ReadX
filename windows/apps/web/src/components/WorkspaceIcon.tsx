@@ -35,6 +35,14 @@ const paths = {
   folderPlus: <><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v11H3V6Z" /><path d="M12 10v6M9 13h6" /></>,
   upload: <><path d="M12 16V4m-5 5 5-5 5 5" /><path d="M4 15v5h16v-5" /></>,
   archive: <><path d="M3 5h18v4H3zM5 9v11h14V9" /><path d="M9 13h6m-3-3v7m-3-3 3 3 3-3" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  play: <path d="m9 5 11 7-11 7V5Z" />,
+  pause: <><path d="M8 5v14M16 5v14" /></>,
+  search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></>,
+  edit: <><path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14v6Z" /></>,
+  graduation: <><path d="m2 9 10-5 10 5-10 5L2 9ZM6 11v6c4 3 8 3 12 0v-6M22 9v7" /></>,
+  rss: <><path d="M5 4a15 15 0 0 1 15 15M5 10a9 9 0 0 1 9 9" /><circle cx="5" cy="19" r="1" /></>,
+  external: <><path d="M14 3h7v7M21 3 11 13M10 5H4v15h15v-6" /></>,
 } satisfies Record<string, ReactNode>;
 
 export type WorkspaceIconName = keyof typeof paths;

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"cbctv2/server/internal/booksources"
@@ -209,16 +210,24 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	results := []importResult{}
+	results := make([]importResult, len(files))
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	r = r.WithContext(ctx)
 	report, finish, stop := importEvents(w, r, cancel)
 	defer stop()
-	for index, file := range files {
+	semaphore := make(chan struct{}, 14)
+	var workers sync.WaitGroup
+	for index := range files {
 		if r.Context().Err() != nil {
-			return
+			break
 		}
+		semaphore <- struct{}{}
+		workers.Add(1)
+		go func(index int) {
+			file := files[index]
+			defer workers.Done()
+			defer func() { <-semaphore }()
 		update := func(stage, message string, completed, total int) {
 			report(importProgress{Stage: stage, Message: message, Name: file.Filename, File: index + 1, Files: len(files), Completed: completed, Total: total})
 		}
@@ -227,7 +236,7 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 			result := importResult{Name: file.Filename}
 			defer func() {
 				result.Name = file.Filename
-				results = append(results, result)
+				results[index] = result
 			}()
 			f, err := file.Open()
 			if err != nil {
@@ -346,13 +355,18 @@ func (s *Server) handlePublicationUpload(w http.ResponseWriter, r *http.Request)
 			if err != nil {
 				result.Error = err.Error()
 			}
-		}()
-		last := results[len(results)-1]
+			}()
+		last := results[index]
 		if last.Error != "" {
 			update("failed", last.Error, 0, 0)
 		} else {
 			update("done", "该文件已完成导入", 1, 1)
 		}
+		}(index)
+	}
+	workers.Wait()
+	if r.Context().Err() != nil {
+		return
 	}
 	finish(results)
 }
