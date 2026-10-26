@@ -954,12 +954,14 @@ export function UpdateControl() {
       : `当前版本 · v${status.currentVersion}`)
       : status.state === 'available' ? `下载更新 · v${status.version}`
         : status.state === 'downloading' ? `正在下载 · ${Math.round(status.percent ?? 0)}%`
-          : status.state === 'downloaded' ? `重启并安装${status.version ? ` · v${status.version}` : ''}`
+          : status.state === 'downloaded' ? `${status.installMode === 'manual-dmg' ? '打开安装包' : '重启并安装'}${status.version ? ` · v${status.version}` : ''}`
             : status.state === 'error' ? '更新失败 · 点击重试'
               : status.state === 'unavailable' ? (status.version ? `最新发布 · v${status.version}` : '暂无此平台更新 · 点击重查')
                 : status.state === 'unsupported' ? '桌面版更新'
                   : '检查更新';
-  const detail = status.state === 'unavailable'
+  const detail = status.installMode === 'manual-dmg' && status.message
+    ? status.message
+    : status.state === 'unavailable'
     ? `${status.currentVersion ? `当前版本 v${status.currentVersion}。` : ''}${status.message ?? ''}`
     : status.state === 'current' && status.version !== status.currentVersion
       ? `更新源最新版本 v${status.version}；当前版本 v${status.currentVersion}。`
@@ -995,9 +997,10 @@ export function UpdateControl() {
           <h3>本次更新</h3>
           <ReleaseNotesContent value={status.releaseNotes || '此版本暂未附更新说明。'} />
         </section>
+        {status.installMode === 'manual-dmg' ? <p role="note">下载并校验安装包后，退出 ReadX，将 DMG 中的新版 ReadX 拖入 Applications 覆盖，再重新打开。</p> : null}
         <footer>
           <button type="button" className="update-later-button" onClick={postpone}>暂不更新</button>
-          <button type="button" className="update-primary-button" onClick={() => void run()}>立即更新</button>
+          <button type="button" className="update-primary-button" onClick={() => void run()}>{status.installMode === 'manual-dmg' ? '下载安装包' : '立即更新'}</button>
         </footer>
       </AppDialog>
     </>

@@ -160,6 +160,7 @@ export interface DesktopUpdateStatus {
   percent?: number;
   message?: string;
   operation?: 'check' | 'download' | 'install';
+  installMode?: 'manual-dmg';
 }
 
 export interface DesktopUpdateBridge {

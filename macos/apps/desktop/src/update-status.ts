@@ -12,6 +12,9 @@ export function updateFailureStatus(
 ): DesktopUpdateStatus {
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
   const detail = error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error);
+  if (code === 'ERR_UPDATER_CHECKSUM_MISMATCH') return {
+    state: 'error', currentVersion, operation: 'download', message: '安装包校验失败，已阻止安装，请重新下载后重试。',
+  };
   if (operation === 'check' && code === 'ENOENT' && /app-update\.yml/i.test(detail)) {
     return {
       state: 'unavailable', currentVersion,

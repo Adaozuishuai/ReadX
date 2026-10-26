@@ -81,6 +81,30 @@ window.runUpdateSmoke = async () => {
   assert(installing.calls.check === 0 && installing.calls.download === 0, 'Install retry must not download again');
   passed.push('installation failures retry the already-downloaded update');
 
+  const manual = { ...available, installMode: 'manual-dmg', message: '退出 ReadX，将新版拖入 Applications 覆盖，再重新打开。' };
+  const mac = await mount(manual, {
+    download: async () => { mac.calls.download++; return { ...manual, state: 'downloaded' }; },
+    install: async () => {
+      mac.calls.install++;
+      return mac.calls.install === 1
+        ? { ...manual, state: 'error', operation: 'install', message: '无法打开安装包，请重试。' }
+        : { ...manual, state: 'downloaded' };
+    },
+  });
+  await until(() => document.querySelector('dialog').open);
+  assert(document.querySelector('.update-primary-button').textContent === '下载安装包', 'Mac confirmation must describe installer download');
+  assert(document.querySelector('dialog').textContent.includes('Applications'), 'Mac installation steps missing');
+  document.querySelector('.update-primary-button').click();
+  await until(() => label().includes('打开安装包'));
+  assert(!label().includes('重启'), 'Unsigned Mac updates must not promise restart installation');
+  assert(document.body.textContent.includes('退出 ReadX'), 'Downloaded Mac update must retain installation steps');
+  button().click();
+  await until(() => label().includes('更新失败'));
+  button().click();
+  await until(() => label().includes('打开安装包'));
+  assert(mac.calls.download === 1 && mac.calls.install === 2 && mac.calls.check === 0, 'Mac open retry must reuse the verified installer');
+  passed.push('Mac installer mode explains manual replacement, never offers restart installation and retries opening');
+
   const snapshot = deferred();
   const race = await mount({ state: 'idle' }, { getStatus: () => snapshot.promise });
   race.emit({ ...available, state: 'downloading', percent: 64 });

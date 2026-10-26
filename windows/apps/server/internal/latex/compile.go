@@ -246,7 +246,7 @@ func (s *Service) executeBuild(ctx context.Context, build *Build, project *Proje
 	if strategy == "latexmk" {
 		tool, _ := findTool(report, "latexmk")
 		args := latexmkArguments(engineName, project.MainFile, buildDir)
-		exitCode, runErr = s.runProcess(ctx, tool.Path, args, srcDir, stdoutPath)
+		exitCode, runErr = s.runProcess(ctx, tool.Path, args, srcDir, stdoutPath, report)
 	} else {
 		exitCode, runErr = s.builtinMultiPass(ctx, report, engineName, project.MainFile, jobName, srcDir, buildDir, stdoutPath)
 	}
@@ -362,7 +362,7 @@ func (s *Service) builtinMultiPass(ctx context.Context, report ToolchainReport, 
 		code, runErr := s.runProcess(ctx, tool.Path, []string{
 			"-interaction=nonstopmode", "-file-line-error", "-synctex=1",
 			"-output-directory=" + buildDir, mainFile,
-		}, srcDir, stdoutPath)
+		}, srcDir, stdoutPath, report)
 		exitCode = code
 		if runErr != nil {
 			lastErr = runErr
@@ -383,7 +383,7 @@ func (s *Service) builtinMultiPass(ctx context.Context, report ToolchainReport, 
 			// biber/bibtex 从源码目录跑，参数指向 build 目录里的控制文件（不带扩展名）：
 			// 这样 .bib 与 \input 的相对路径与正常编译完全一致。
 			relative := filepath.Join("..", "build", filepath.Base(buildDir), jobName)
-			if _, runErr := s.runProcess(ctx, biberTool.Path, []string{relative}, srcDir, stdoutPath); runErr != nil {
+			if _, runErr := s.runProcess(ctx, biberTool.Path, []string{relative}, srcDir, stdoutPath, report); runErr != nil {
 				lastErr = runErr
 			}
 			continue
@@ -391,7 +391,7 @@ func (s *Service) builtinMultiPass(ctx context.Context, report ToolchainReport, 
 		if needsBibtex {
 			bibliographyRun = true
 			relative := filepath.Join("..", "build", filepath.Base(buildDir), jobName)
-			if _, runErr := s.runProcess(ctx, bibtexTool.Path, []string{relative}, srcDir, stdoutPath); runErr != nil {
+			if _, runErr := s.runProcess(ctx, bibtexTool.Path, []string{relative}, srcDir, stdoutPath, report); runErr != nil {
 				lastErr = runErr
 			}
 			continue
@@ -522,9 +522,10 @@ func decodeDiagnostics(raw string) []Diagnostic {
 }
 
 // runProcess 起一个外部进程，输出追加到日志文件；超时/取消时连同子进程一起结束。
-func (s *Service) runProcess(ctx context.Context, path string, args []string, workDir, outputPath string) (int, error) {
+func (s *Service) runProcess(ctx context.Context, path string, args []string, workDir, outputPath string, report ToolchainReport) (int, error) {
 	command := exec.CommandContext(ctx, path, args...)
 	command.Dir = workDir
+	command.Env = texProcessEnvironment(report)
 	// MiKTeX 每次都会提示「未检查更新」之类的噪声，一起收进日志里备查。
 	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err == nil {

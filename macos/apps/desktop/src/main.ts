@@ -10,6 +10,8 @@ import type { BootstrapInfo, DesktopUpdateStatus, ReadyInfo } from '@cbct/shared
 import { UpdateController } from './update-controller';
 import { checkForUpdateStatus, LATEST_RELEASE_URL } from './update-check';
 import { downloadVerifiedUpdate } from './update-download';
+import { MacInstallerUpdater } from './mac-installer-update';
+import { createUpdateFetcher } from './update-fetch';
 
 /**
  * Electron 壳只做三件事：拉起 Go server、等就绪、把本地 token 交给渲染进程。
@@ -142,15 +144,25 @@ async function bootstrap(): Promise<void> {
 }
 
 function setupUpdater(): void {
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowPrerelease = false;
-  autoUpdater.allowDowngrade = false;
+  const macUpdater = process.platform === 'darwin' ? new MacInstallerUpdater({
+    currentVersion: app.getVersion(),
+    arch: process.arch,
+    cacheDir: path.join(app.getPath('userData'), 'updates'),
+    fetch: createUpdateFetcher(net),
+    openInstaller: file => shell.openPath(file),
+    progress: percent => updates.onProgress(percent),
+  }) : undefined;
+  if (!macUpdater) {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.allowPrerelease = false;
+    autoUpdater.allowDowngrade = false;
+  }
 
   const updates = new UpdateController({
     currentVersion: app.getVersion(),
     supported: app.isPackaged && ['win32', 'darwin'].includes(process.platform),
-    check: () => checkForUpdateStatus(app.getVersion(), () => autoUpdater.checkForUpdates(), async () => {
+    check: () => macUpdater ? macUpdater.check() : checkForUpdateStatus(app.getVersion(), () => autoUpdater.checkForUpdates(), async () => {
       const response = await net.fetch(LATEST_RELEASE_URL, {
         headers: { Accept: 'application/vnd.github+json' },
         signal: AbortSignal.timeout(15_000),
@@ -158,12 +170,14 @@ function setupUpdater(): void {
       if (!response.ok) throw new Error(`Release metadata HTTP ${response.status}`);
       return response.json();
     }),
-    download: () => downloadVerifiedUpdate(autoUpdater),
-    install: () => autoUpdater.quitAndInstall(true, true),
+    download: () => macUpdater ? macUpdater.download() : downloadVerifiedUpdate(autoUpdater),
+    install: () => macUpdater ? macUpdater.install() : autoUpdater.quitAndInstall(true, true),
     publish: publishUpdateStatus,
   });
-  autoUpdater.on('download-progress', progress => updates.onProgress(progress.percent));
-  autoUpdater.on('error', error => updates.onError(error));
+  if (!macUpdater) {
+    autoUpdater.on('download-progress', progress => updates.onProgress(progress.percent));
+    autoUpdater.on('error', error => updates.onError(error));
+  }
 
   ipcMain.handle('readx-updates:status', () => updates.getStatus());
   ipcMain.handle('readx-updates:check', () => updates.check());
@@ -243,6 +257,8 @@ function renderEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   env.CBCT_NODE_BIN = process.execPath;
   env.CBCT_ELECTRON_AS_NODE = '1';
+  // Bundled Python must not create bytecode inside the sealed application.
+  if (app.isPackaged) env.PYTHONDONTWRITEBYTECODE = '1';
   if (process.resourcesPath) {
     env.READX_RESOURCES_DIR = process.resourcesPath;
     const portablePython = path.join(process.resourcesPath, 'python', ...(process.platform === 'win32' ? ['python.exe'] : ['bin', 'python3']));

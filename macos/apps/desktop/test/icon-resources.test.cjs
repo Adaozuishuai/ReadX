@@ -6,7 +6,20 @@ const path = require('node:path');
 const desktop = path.resolve(__dirname, '..');
 const config = require('../package.json').build;
 
-test('Windows taskbar icon includes native frames for standard and high DPI displays', () => {
+test('application icon resources are valid for the current platform', () => {
+  if (process.platform === 'darwin') {
+    const icon = config.mac.icon;
+    assert.equal(icon, 'icon.icns');
+    assert(config.files.includes(icon), 'application bundle must include its ICNS icon');
+    const icns = fs.readFileSync(path.join(desktop, icon));
+    assert.equal(icns.subarray(0, 4).toString('ascii'), 'icns');
+    assert.equal(icns.readUInt32BE(4), icns.length, 'ICNS resource length must match its header');
+    const png = fs.readFileSync(path.join(desktop, 'icon.png'));
+    assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    assert(config.files.includes('icon.png'), 'BrowserWindow fallback icon must be packaged');
+    return;
+  }
+
   const ico = fs.readFileSync(path.join(desktop, config.win.icon));
   assert.equal(ico.readUInt16LE(0), 0);
   assert.equal(ico.readUInt16LE(2), 1);
@@ -35,6 +48,12 @@ test('Windows taskbar icon includes native frames for standard and high DPI disp
 });
 
 test('packaging includes the window icon and browser fallback uses the same artwork', () => {
+  if (process.platform === 'darwin') {
+    assert(config.files.includes(config.mac.icon));
+    assert(config.files.includes('icon.png'));
+    return;
+  }
+
   assert(config.files.includes(config.win.icon), 'BrowserWindow must be able to read its ICO inside app.asar');
   const ico = fs.readFileSync(path.join(desktop, config.win.icon));
   const favicon = fs.readFileSync(path.resolve(desktop, '../web/public/favicon.ico'));

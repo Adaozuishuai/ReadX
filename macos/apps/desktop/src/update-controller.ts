@@ -6,7 +6,7 @@ interface UpdateActions {
   supported: boolean;
   check(): Promise<DesktopUpdateStatus>;
   download(): Promise<unknown>;
-  install(): void;
+  install(): void | Promise<void>;
   publish(status: DesktopUpdateStatus): void;
   checkTimeoutMs?: number;
 }
@@ -19,6 +19,7 @@ export class UpdateController {
   private available?: DesktopUpdateStatus;
   private downloaded = false;
   private installing = false;
+  private installation?: Promise<DesktopUpdateStatus>;
 
   constructor(private readonly actions: UpdateActions) {
     this.status = actions.supported ? { state: 'idle', currentVersion: actions.currentVersion } : {
@@ -84,15 +85,25 @@ export class UpdateController {
     this.publish({ ...this.status, percent: Math.max(this.status.percent ?? 0, Math.min(100, Math.max(0, percent))) });
   }
 
-  install(): DesktopUpdateStatus {
-    if (!this.actions.supported || !this.downloaded || this.installing) return this.getStatus();
+  install(): Promise<DesktopUpdateStatus> {
+    if (this.installation) return this.installation;
+    if (!this.actions.supported || !this.downloaded || this.installing) return Promise.resolve(this.getStatus());
     this.installing = true;
-    try {
-      this.actions.install();
-    } catch (error) {
-      this.onError(error);
-    }
-    return this.getStatus();
+    this.installation = (async () => {
+      try {
+        await this.actions.install();
+        // Opening a DMG leaves the app running so users can save their work.
+        // They may reopen the installer; native installations remain one-shot.
+        if (this.status.installMode === 'manual-dmg') {
+          this.installing = false;
+          this.publish({ ...this.available!, state: 'downloaded' });
+        }
+      } catch (error) {
+        this.onError(error);
+      }
+      return this.getStatus();
+    })().finally(() => { this.installation = undefined; });
+    return this.installation;
   }
 
   onError(error: unknown): void {
@@ -100,6 +111,11 @@ export class UpdateController {
     // may emit an asynchronous error, after quitAndInstall has already returned.
     if (!this.installing) return;
     this.installing = false;
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ERR_MAC_INSTALLER_INTEGRITY') {
+      this.downloaded = false;
+      this.publish({ ...this.status, state: 'error', operation: 'download', message: '安装包已丢失或校验失败，请点击重新下载。' });
+      return;
+    }
     this.publish({ ...this.status, ...updateFailureStatus(error, this.actions.currentVersion, 'install') });
   }
 }

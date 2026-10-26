@@ -3,12 +3,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appPath = path.resolve(process.argv.slice(2).find(arg => !arg.startsWith('--')) || path.join(root, 'release', process.arch === 'arm64' ? 'mac-arm64' : 'mac', 'ReadX.app'));
+const signature = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', appPath], { encoding: 'utf8' });
+if (signature.error || signature.status !== 0) {
+  throw new Error(`Packaged app signature/resource verification failed: ${signature.error?.message || signature.stderr}`);
+}
 const updateConfig = path.join(appPath, 'Contents', 'Resources', 'app-update.yml');
 if (!fs.existsSync(updateConfig)) {
   throw new Error('Packaged app is missing app-update.yml. Build DMG/ZIP targets (not --dir) before validating updates.');
@@ -20,12 +24,16 @@ await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
 const port = listener.address().port;
 await new Promise(resolve => listener.close(resolve));
 const userDataDir = path.join(workspace, 'electron');
-const launched = spawnSync('/usr/bin/open', [
-  '-n', appPath,
-  '--env', `CBCT_DATA_ROOT=${workspace}`,
-  '--args', `--remote-debugging-port=${port}`, `--user-data-dir=${userDataDir}`,
-], { encoding: 'utf8' });
-if (launched.error || launched.status !== 0) throw new Error(launched.stderr || launched.error?.message || 'Failed to launch packaged app.');
+// Spawn the exact executable under test. Launch Services may route a duplicate
+// bundle ID to a different running installation and hides startup diagnostics.
+const launchEnv = { ...process.env, CBCT_DATA_ROOT: workspace };
+delete launchEnv.ELECTRON_RUN_AS_NODE;
+const launched = spawn(path.join(appPath, 'Contents', 'MacOS', 'ReadX'), [
+  `--remote-debugging-port=${port}`, `--user-data-dir=${userDataDir}`,
+], { env: launchEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+let startupError = '';
+launched.on('error', error => { startupError = error.message; });
+launched.stderr.on('data', chunk => { startupError = (startupError + chunk).slice(-4000); });
 let ws;
 let id = 0;
 const pending = new Map();
@@ -39,7 +47,7 @@ function cdp(method, params, timeoutMs = 15000) {
 }
 try {
   let target;
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 120; i++) {
     try {
       const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) })).json();
       target = pages.find(page => page.type === 'page' && page.url.startsWith('http://127.0.0.1:'));
@@ -47,7 +55,7 @@ try {
     } catch { /* Chromium is still starting. */ }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  if (!target) throw new Error('Isolated packaged reader did not open.');
+  if (!target) throw new Error(`Isolated packaged reader did not open. ${startupError}`);
   ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
   ws.onmessage = event => {
@@ -99,6 +107,11 @@ try {
   }
   if (!recovered) throw new Error('Packaged backend did not recover after SIGKILL.');
   status.backendRecovery = true;
+  const afterLaunchSignature = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', appPath], { encoding: 'utf8' });
+  if (afterLaunchSignature.error || afterLaunchSignature.status !== 0) {
+    throw new Error(`Launching the packaged app changed signed resources: ${afterLaunchSignature.error?.message || afterLaunchSignature.stderr}`);
+  }
+  status.signatureVerified = true;
   const screenshot = await cdp('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(path.join(workspace, 'app.png'), Buffer.from(screenshot.result.data, 'base64'));
   fs.writeFileSync(path.join(workspace, 'status.json'), JSON.stringify(status, null, 2));
@@ -111,7 +124,8 @@ try {
   }
   for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('Packaged test closed')); }
   pending.clear();
-  const matches = spawnSync('/usr/bin/pgrep', ['-f', `--user-data-dir=${userDataDir}`], { encoding: 'utf8' });
+  if (launched.exitCode === null && launched.signalCode === null) launched.kill('SIGTERM');
+  const matches = spawnSync('/usr/bin/pgrep', ['-f', '--', `--user-data-dir=${userDataDir}`], { encoding: 'utf8' });
   for (const pid of (matches.stdout || '').trim().split(/\s+/).filter(Boolean)) {
     if (/^\d+$/.test(pid)) process.kill(Number(pid), 'SIGTERM');
   }

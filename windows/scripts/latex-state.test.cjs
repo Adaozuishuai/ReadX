@@ -296,10 +296,13 @@ test('an in-flight build reply cannot restart polling after leaving the project'
 test('the application keeps LaTeX mounted until its leave guard succeeds', async () => {
   const hook = mount('apps/web/src/App.tsx', 'default', {}, {
     './components/LibraryScreen': { LibraryScreen: 'library' },
+    './components/ResearchWorkbench': { ResearchWorkbench: 'research-workbench' },
+    './components/research/FocusPendant': { FocusPendant: 'focus-pendant' },
     './components/WorkspaceIcon': { WorkspaceIcon: 'icon' },
     './components/slack/ModePendant': { ModePendant: 'pendant' },
     './components/slack/slack.css': {},
     './hooks/useWorkspace': { useWorkspace: () => ({ phase: { kind: 'ready', documents: { documents: [] } }, allDocuments: [], filters: {} }) },
+    './hooks/useResearchWorkbench': { useResearchWorkbench: () => ({ data: {}, setData() {} }) },
     './hooks/useDocument': { useDocument: () => ({ phase: { kind: 'idle' } }) },
     './hooks/useAnnotations': { useAnnotations: () => ({}) },
     './hooks/useLibraryMeta': { useLibraryMeta: () => ({ items: {} }) },
@@ -332,10 +335,13 @@ test('reader popups pass the requested page as an explicit citation target', () 
   const paper = { id: 'paper', key: 'paper', title: 'Paper' };
   const hook = mount('apps/web/src/App.tsx', 'default', {}, {
     './components/LibraryScreen': { LibraryScreen: 'library' },
+    './components/ResearchWorkbench': { ResearchWorkbench: 'research-workbench' },
+    './components/research/FocusPendant': { FocusPendant: 'focus-pendant' },
     './components/WorkspaceIcon': { WorkspaceIcon: 'icon' },
     './components/slack/ModePendant': { ModePendant: 'pendant' },
     './components/slack/slack.css': {},
     './hooks/useWorkspace': { useWorkspace: () => ({ phase: { kind: 'ready', documents: { documents: [paper] } }, allDocuments: [paper], filters: {} }) },
+    './hooks/useResearchWorkbench': { useResearchWorkbench: () => ({ data: {}, setData() {} }) },
     './hooks/useDocument': { useDocument: () => ({ phase: { kind: 'ready', detail: { pages: [] } } }) },
     './hooks/useAnnotations': { useAnnotations: () => ({}) },
     './hooks/useLibraryMeta': { useLibraryMeta: () => ({ items: {} }) },

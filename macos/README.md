@@ -28,7 +28,7 @@ PDF 导入统一运行：Go 接收文件 → Lee Python provider-case → Paddle
 
 PDF 入库时统一联网检索 OpenAlex / Crossref，再由所选 AI 助手核对并补齐缺失的期刊/会议与年份。重复导入缺少出版信息的旧论文会复用正文补齐题录。阅读器支持原 PDF 内置引用跳转、无链接方括号编号定位及返回正文；引用导出与引用关系窗口使用更大的字号并显示完整标题。
 
-AI 渠道包括 OpenAI 兼容 API、Anthropic、Codex Desktop / CLI、Claude CLI、Kimi CLI。macOS 查找 `/Applications/Codex.app` 和 `~/Applications/Codex.app` 中的 Codex，也可用 `CBCT_CODEX_PATH` 指定。不读取登录令牌文件。
+AI 渠道包括 OpenAI 兼容 API、Anthropic、Codex Desktop / CLI、Claude CLI、Kimi CLI。macOS 会查找 `/Applications` 和 `~/Applications` 中的 Codex.app 与 ChatGPT.app 内置 CLI，以及常见的 Homebrew 和用户 CLI 安装目录；也可用 `CBCT_CODEX_PATH` 指定。不读取登录令牌文件。
 
 具体交互见 [Windows 功能指南](../windows/README.md)。平台安装以本文为准。
 
@@ -112,7 +112,9 @@ node scripts/packaged-smoke.mjs --check-updates
 
 产物位于 `release/`：当前架构的 ReadX.app、DMG 和更新用 ZIP。包内包含 Go、React、Python 及依赖、Typst、Lee 引擎、Node 渲染依赖和字体。普通用户不需要开发工具，OCR 与云端模型仍需联网。
 
-本机未签名构建不代表通过 Gatekeeper 或公证。仓库的 `build-macos.yml` 在 macOS runner 上构建 DMG、ZIP、blockmap 和 `latest-mac.yml`，并在推送 `macos-vX.Y.Z` 标签后上传到同版本的 GitHub Release；Windows 安装包由 `vX.Y.Z` 标签对应的 Release workflow 构建。自动更新是否可用还取决于 macOS 对未签名应用的安全策略；首次启动或更新若被系统拦截，请从 Release 下载 DMG 手动安装。
+macOS 构建显式使用 ad-hoc 临时签名，并强制完成签名，避免修改 Electron 应用资源后遗留无效的原签名。安装包测试会执行 `codesign --verify --deep --strict` 校验资源完整性。这不代表拥有 Apple Developer ID 签名或已通过公证、Gatekeeper。仓库的 `build-macos.yml` 在 macOS runner 上构建 DMG、ZIP、blockmap 和 `latest-mac.yml`，并在推送 `macos-vX.Y.Z` 标签后上传到同版本的 GitHub Release；Windows 安装包由 `vX.Y.Z` 标签对应的 Release workflow 构建。
+
+macOS 应用内更新使用 **DMG 覆盖安装**，不再调用要求正式签名的 Squirrel「重启并安装」。检查更新会读取最近 100 个公开 Release，选择当前架构（arm64 / x64，或 universal）的最新正式 DMG，跳过 Windows 独占版本、草稿和预发布，且不允许降级。下载时校验 GitHub 资产元数据中的文件大小与 SHA-256；API 限流时改用公开的最新正式发行重定向和 latest-mac.yml 中的 SHA-512。打开安装包前再次核验；缺少校验信息或校验失败会阻止安装。下载完成点击「打开安装包」，先保存工作并退出 ReadX，再将 DMG 中的新版 ReadX 拖入 Applications 覆盖，重新打开应用。首次启动的 Gatekeeper 检查仍按系统策略处理。
 
 ### 首次启动被 macOS 拦截
 
@@ -127,7 +129,7 @@ xattr -cr /Applications/ReadX.app
 
 打包测试使用独立书库与 Electron 配置目录，不操作日常书库。CI 使用完整 ZIP 打包，拒绝缺少 `app-update.yml` 的应用目录。
 
-本机构建不会创建线上更新。更新源缺少 macOS 更新清单时会尝试读取最新公开发布版本，并提示该平台暂不可更新；不能据此判断当前版本已是最新。更新测试还覆盖并发、重试、窗口重开、超时、安装前置条件，以及 Mac 下载完成后等待原生更新器校验的顺序。
+本机构建不会创建线上更新。没有对应架构的正式 DMG 时会明确提示暂无安装包，不会把 Windows 的版本当作 macOS 可安装更新。更新测试覆盖版本与架构选择、防降级、下载完整性、损坏缓存、打开失败重试、并发及界面提示。旧版客户端所需的 ZIP 和 `latest-mac.yml` 仍保留在发行产物中。
 
 ### LaTeX 实时预览
 

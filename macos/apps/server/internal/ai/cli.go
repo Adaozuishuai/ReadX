@@ -23,11 +23,8 @@ func resolveCLI(name string) (executable, source string, err error) {
 		}
 		if runtime.GOOS == "darwin" {
 			home, _ := os.UserHomeDir()
-			for _, appRoot := range []string{"/Applications", filepath.Join(home, "Applications")} {
-				candidate := filepath.Join(appRoot, "Codex.app", "Contents", "Resources", "codex")
-				if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
-					return candidate, "desktop", nil
-				}
+			if candidate, ok := findCodexCandidate(macCodexCandidates(home, "/Applications", filepath.Join(home, "Applications"))); ok {
+				return candidate.path, candidate.source, nil
 			}
 		}
 		if runtime.GOOS == "windows" {
@@ -55,11 +52,46 @@ func resolveCLI(name string) (executable, source string, err error) {
 	executable, err = exec.LookPath(name)
 	if err != nil {
 		if name == "codex" {
-			return "", "", fmt.Errorf("未找到 Codex Desktop 或 CLI，请先安装并登录 Codex")
+			return "", "", fmt.Errorf("未找到 Codex CLI，请检查 Codex Desktop、ChatGPT 内置 CLI 或本机 CLI 的安装")
 		}
 		return "", "", fmt.Errorf("未找到 %s CLI，请先安装并在终端登录", name)
 	}
 	return executable, "cli", nil
+}
+
+type codexCandidate struct {
+	path   string
+	source string
+}
+
+func findCodexCandidate(candidates []codexCandidate) (codexCandidate, bool) {
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate.path); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate, true
+		}
+	}
+	return codexCandidate{}, false
+}
+
+func macCodexCandidates(home string, appRoots ...string) []codexCandidate {
+	var candidates []codexCandidate
+	for _, root := range appRoots {
+		candidates = append(candidates,
+			codexCandidate{filepath.Join(root, "Codex.app", "Contents", "Resources", "codex"), "desktop"},
+			codexCandidate{filepath.Join(root, "ChatGPT.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"), "desktop"},
+		)
+	}
+	// Finder does not inherit shell startup files. Resolve common CLI locations
+	// without changing the application's PATH or inspecting authentication files.
+	for _, path := range []string{
+		filepath.Join(home, ".local", "bin", "codex"),
+		filepath.Join(home, ".npm-global", "bin", "codex"),
+		filepath.Join(home, "Library", "pnpm", "codex"),
+		"/opt/homebrew/bin/codex", "/usr/local/bin/codex",
+	} {
+		candidates = append(candidates, codexCandidate{path, "cli"})
+	}
+	return candidates
 }
 
 func CLIAvailable(name string) bool {
@@ -92,9 +124,9 @@ func CodexStatus(ctx context.Context) CodexConnection {
 	if status.Authenticated {
 		status.Message = "已检测到 Codex 登录，可直接使用，无需填写 API Key"
 	} else if ctx.Err() != nil {
-		status.Message = "Codex 登录检测超时，请打开 Codex Desktop 确认登录后重试"
+		status.Message = "Codex 登录检测超时，请打开 Codex Desktop 或 ChatGPT 确认登录后重试"
 	} else {
-		status.Message = "已找到 Codex，但未确认登录；请在 Codex Desktop 登录后重新打开设置"
+		status.Message = "已找到 Codex，但未确认登录；请在 Codex Desktop 或 ChatGPT 登录后重新打开设置"
 	}
 	return status
 }

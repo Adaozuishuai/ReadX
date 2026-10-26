@@ -183,14 +183,14 @@ test('download errors retain the selected version and can retry without a new ch
 
 test('download and installation are blocked until their prerequisites are met', async () => {
   const pending = deferred(); const { updates, calls } = controller({ check: () => pending.promise });
-  updates.install();
+  await updates.install();
   assert.equal((await updates.download()).state, 'error');
   const check = updates.check();
   assert.equal((await updates.download()).state, 'checking');
   pending.resolve({ state: 'unavailable', currentVersion: '0.1.8', version: '0.1.9' });
   await check;
   assert.equal((await updates.download()).state, 'error');
-  updates.install();
+  await updates.install();
   assert.equal(calls.download, 0); assert.equal(calls.install, 0);
 });
 
@@ -199,7 +199,7 @@ test('downloaded updates survive checks and only install once', async () => {
   await updates.check(); await updates.download();
   assert.equal((await updates.check()).state, 'downloaded');
   assert.equal((await updates.download()).state, 'downloaded');
-  updates.install(); updates.install();
+  await Promise.all([updates.install(), updates.install()]);
   assert.equal(calls.install, 1); assert.equal(calls.download, 1); assert.equal(calls.check, 1);
 });
 
@@ -209,12 +209,12 @@ test('both synchronous and asynchronous installation errors allow a controlled r
     if (++attempts === 1) throw new Error('Cannot install update');
   } });
   await updates.check(); await updates.download();
-  assert.equal(updates.install().operation, 'install');
-  updates.install(); assert.equal(attempts, 2);
+  assert.equal((await updates.install()).operation, 'install');
+  await updates.install(); assert.equal(attempts, 2);
   updates.onError(new Error('Asynchronous installation failure'));
   assert.equal(updates.getStatus().state, 'error');
   assert.equal(updates.getStatus().operation, 'install');
-  updates.install(); assert.equal(attempts, 3);
+  await updates.install(); assert.equal(attempts, 3);
 });
 
 test('check timeout is retryable and late results cannot overwrite a newer check', async t => {
@@ -236,7 +236,7 @@ test('unsupported builds do not invoke any updater actions', async () => {
   const { updates, calls } = controller({ supported: false });
   assert.equal((await updates.check()).state, 'unsupported');
   assert.equal((await updates.download()).state, 'unsupported');
-  assert.equal(updates.install().state, 'unsupported');
+  assert.equal((await updates.install()).state, 'unsupported');
   assert.deepEqual(calls, { check: 0, download: 0, install: 0 });
 });
 
@@ -286,5 +286,244 @@ test('transfer and native verification failures reject and clean up listeners', 
     await assert.rejects(pending);
     assert.equal(source.listenerCount('update-downloaded'), 0);
     assert.equal(source.listenerCount('error'), 0);
+  }
+});
+
+const { MacInstallerUpdater, selectMacInstaller, MAC_RELEASES_URL } = require('../dist/mac-installer-update.js');
+const { createHash } = require('node:crypto');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const installerBytes = Buffer.from('isolated installer download fixture');
+function macRelease(version = '0.1.9', arch = 'arm64', overrides = {}) {
+  const name = `ReadX-${version}-${arch}.dmg`;
+  return {
+    tag_name: `v${version}`, draft: false, prerelease: false, body: 'Mac changes',
+    assets: [{ name, size: installerBytes.length, digest: `sha256:${createHash('sha256').update(installerBytes).digest('hex')}`,
+      browser_download_url: `https://github.com/Leechion/ReadX/releases/download/v${version}/${name}` }],
+    ...overrides,
+  };
+}
+
+test('Mac lookup skips newer Windows-only releases and matches the hardware architecture', () => {
+  const releases = [macRelease('1.0.1', 'arm64', { assets: [{ name: 'latest.yml' }] }), macRelease('0.1.9'), macRelease('0.1.8')];
+  const selected = selectMacInstaller('0.1.8', 'arm64', releases);
+  assert.equal(selected.status.state, 'available');
+  assert.equal(selected.status.version, '0.1.9');
+  assert.equal(selected.status.installMode, 'manual-dmg');
+  assert.match(selected.installer.url, /ReadX-0\.1\.9-arm64\.dmg$/);
+  assert.equal(selectMacInstaller('0.1.8', 'x64', releases).status.state, 'unavailable');
+  assert.equal(selectMacInstaller('0.1.8', 'x64', [macRelease('0.1.9', 'universal')]).status.state, 'available');
+  assert.equal(selectMacInstaller('0.1.8', 'unsupported', releases).status.state, 'unavailable');
+  assert.match(MAC_RELEASES_URL, /Leechion\/ReadX\/releases\?per_page=100$/);
+});
+
+test('Mac selection compares stable versions numerically and never downgrades', () => {
+  const releases = [macRelease('1.0.9'), macRelease('1.0.10'), macRelease('2.0.0', 'arm64', { draft: true }), macRelease('3.0.0', 'arm64', { prerelease: true })];
+  assert.equal(selectMacInstaller('1.0.9', 'arm64', releases).status.version, '1.0.10');
+  assert.equal(selectMacInstaller('1.0.10', 'arm64', releases).status.state, 'current');
+  const newer = selectMacInstaller('2.0.0', 'arm64', releases);
+  assert.equal(newer.status.state, 'current');
+  assert.match(newer.status.message, /不会降级/);
+  assert.equal(newer.installer, undefined);
+  for (const metadata of [null, {}, 'invalid']) assert.throws(() => selectMacInstaller('0.1.8', 'arm64', metadata));
+  assert.equal(selectMacInstaller('0.1.8', 'arm64', [macRelease('1.0.0-beta.1')]).status.state, 'unavailable');
+});
+
+test('Mac selection rejects missing digests, wrong repositories and invalid sizes', () => {
+  for (const patch of [
+    { digest: null }, { digest: 'sha256:bad' }, { size: 0 }, { size: 3 * 1024 ** 3 },
+    { browser_download_url: 'https://example.com/ReadX.dmg' },
+    { browser_download_url: 'https://github.com/another/repo/releases/download/v0.1.9/ReadX-0.1.9-arm64.dmg' },
+  ]) {
+    const release = macRelease(); Object.assign(release.assets[0], patch);
+    const selection = selectMacInstaller('0.1.8', 'arm64', [release]);
+    assert.equal(selection.status.state, 'unavailable');
+    assert.equal(selection.installer, undefined);
+  }
+});
+
+async function installerFixture(t, overrides = {}) {
+  const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), 'readx-installer-test-'));
+  t.after(() => fs.rm(cacheDir, { recursive: true, force: true }));
+  const calls = []; const opened = []; const progress = [];
+  const updater = new MacInstallerUpdater({
+    currentVersion: '0.1.8', arch: 'arm64', cacheDir,
+    fetch: async (url, signal) => {
+      assert.ok(signal instanceof AbortSignal);
+      calls.push(url);
+      return url === MAC_RELEASES_URL ? Response.json([macRelease()]) : new Response(installerBytes);
+    },
+    openInstaller: async file => { opened.push(file); return ''; },
+    progress: percent => progress.push(percent),
+    ...overrides,
+  });
+  return { updater, cacheDir, calls, opened, progress };
+}
+
+test('Mac installer is streamed, verified and rechecked before opening; it can reopen without quitting', async t => {
+  const { updater, cacheDir, calls, opened, progress } = await installerFixture(t);
+  await assert.rejects(updater.download(), /No compatible installer/);
+  await assert.rejects(updater.install(), /No verified installer/);
+  assert.equal((await updater.check()).state, 'available');
+  await updater.download();
+  assert.equal(progress.at(-1), 100);
+  assert.ok(progress.slice(0, -1).every(value => value < 100));
+  await updater.install(); await updater.install();
+  assert.equal(opened.length, 2);
+  assert.ok(opened[0].startsWith(cacheDir + path.sep));
+  assert.deepEqual(await fs.readFile(opened[0]), installerBytes);
+  assert.equal(calls.length, 2);
+  assert.equal((await fs.readdir(path.dirname(opened[0]))).length, 1);
+});
+
+test('Mac truncated, oversized, corrupted and failed downloads are removed and never offered for installation', async t => {
+  for (const payload of [installerBytes.subarray(1), Buffer.concat([installerBytes, Buffer.from('x')]), Buffer.alloc(installerBytes.length), null]) {
+    const fixture = await installerFixture(t, {
+      fetch: async url => url === MAC_RELEASES_URL ? Response.json([macRelease()]) : payload === null ? new Response('failed', { status: 500 }) : new Response(payload),
+    });
+    await fixture.updater.check();
+    await assert.rejects(fixture.updater.download());
+    assert.deepEqual(await fs.readdir(fixture.cacheDir), []);
+    await assert.rejects(fixture.updater.install());
+    assert.equal(fixture.opened.length, 0);
+    assert.ok(!fixture.progress.includes(100));
+  }
+});
+
+test('Mac cached installer tampering or deletion prevents opening', async t => {
+  for (const mode of ['changed', 'deleted']) {
+    const { updater, cacheDir, opened } = await installerFixture(t);
+    await updater.check(); await updater.download();
+    const directory = path.join(cacheDir, (await fs.readdir(cacheDir))[0]);
+    const file = path.join(directory, (await fs.readdir(directory))[0]);
+    if (mode === 'changed') await fs.writeFile(file, Buffer.alloc(installerBytes.length)); else await fs.unlink(file);
+    await assert.rejects(updater.install(), { code: 'ERR_MAC_INSTALLER_INTEGRITY' });
+    assert.equal(opened.length, 0);
+  }
+});
+
+test('async installer launch errors are visible and duplicate launches share one operation', async () => {
+  const launch = deferred(); let launches = 0;
+  const manual = { ...available, installMode: 'manual-dmg' };
+  const { updates } = controller({ check: async () => manual, install: () => { launches++; return launch.promise; } });
+  await updates.check(); await updates.download();
+  const first = updates.install(), second = updates.install();
+  assert.equal(first, second); assert.equal(launches, 1);
+  launch.reject(new Error('Cannot open DMG'));
+  assert.equal((await first).operation, 'install');
+  const retry = updates.install(); await retry;
+  assert.equal(launches, 2);
+});
+
+test('Mac open failures allow retry and successful launches do not quit or block reopening', async t => {
+  let attempts = 0;
+  const fixture = await installerFixture(t, { openInstaller: async () => ++attempts === 1 ? 'OS open failed' : '' });
+  const { updates } = controller({ check: () => fixture.updater.check(), download: () => fixture.updater.download(), install: () => fixture.updater.install() });
+  await updates.check(); await updates.download();
+  assert.equal((await updates.install()).operation, 'install');
+  assert.equal((await updates.install()).state, 'downloaded');
+  // Successful retry must clear the previous error and remain reopenable.
+  assert.equal((await updates.install()).state, 'downloaded');
+  assert.equal(attempts, 3);
+});
+
+test('Mac missing cached installers return to download, rather than retrying a broken install forever', async () => {
+  let installs = 0;
+  const { updates, calls } = controller({ check: async () => ({ ...available, installMode: 'manual-dmg' }), install: async () => {
+    installs++;
+    throw Object.assign(new Error('Missing installer'), { code: 'ERR_MAC_INSTALLER_INTEGRITY' });
+  } });
+  await updates.check(); await updates.download();
+  assert.equal((await updates.install()).operation, 'download');
+  await updates.install(); assert.equal(installs, 1);
+  assert.equal((await updates.download()).state, 'downloaded');
+  assert.equal(calls.download, 2);
+});
+
+function publicReleaseResponse(version = '0.1.9') {
+  return new Response(null, { status: 302, headers: { location: `/Leechion/ReadX/releases/tag/v${version}` } });
+}
+function publicMacMetadata(version = '0.1.9', overrides = {}) {
+  const info = { version, files: [{ url: `ReadX-${version}-arm64.dmg`, size: installerBytes.length,
+    sha512: createHash('sha512').update(installerBytes).digest('base64'), ...overrides }] };
+  // JSON is also valid YAML and exercises the same installed updater parser.
+  return new Response(JSON.stringify(info));
+}
+
+test('Mac API rate limits use the public stable release and SHA-512 manifest without an API token', async t => {
+  const { MAC_PUBLIC_LATEST_URL } = require('../dist/mac-installer-update.js');
+  for (const status of [403, 429]) {
+    const calls = [];
+    const fixture = await installerFixture(t, { fetch: async url => {
+      calls.push(url);
+      if (url === MAC_RELEASES_URL) return new Response('rate limit', { status });
+      if (url === MAC_PUBLIC_LATEST_URL) return publicReleaseResponse();
+      if (url.endsWith('/latest-mac.yml')) return publicMacMetadata();
+      return new Response(installerBytes);
+    } });
+    const result = await fixture.updater.check();
+    assert.equal(result.state, 'available'); assert.equal(result.version, '0.1.9');
+    await fixture.updater.download(); await fixture.updater.install();
+    assert.equal(fixture.opened.length, 1);
+    assert.equal(calls.filter(url => url.startsWith('https://api.github.com/')).length, 1);
+  }
+});
+
+test('public Mac fallback rejects untrusted redirects, mismatched versions and invalid checksums', async t => {
+  const { MAC_PUBLIC_LATEST_URL } = require('../dist/mac-installer-update.js');
+  for (const mode of ['redirect', 'version', 'checksum', 'size', 'url']) {
+    const fixture = await installerFixture(t, { fetch: async url => {
+      if (url === MAC_RELEASES_URL) return new Response('rate limit', { status: 403 });
+      if (url === MAC_PUBLIC_LATEST_URL) {
+        if (mode === 'redirect') {
+          const response = publicReleaseResponse(); response.headers.set('location', 'https://example.com/v0.1.9'); return response;
+        }
+        return publicReleaseResponse();
+      }
+      return publicMacMetadata(mode === 'version' ? '1.0.0' : '0.1.9', mode === 'checksum' ? { sha512: 'bad' } : mode === 'size' ? { size: 0 } : mode === 'url' ? { url: 'https://example.com/ReadX-0.1.9-arm64.dmg' } : {});
+    } });
+    if (mode === 'redirect' || mode === 'version') await assert.rejects(fixture.updater.check());
+    else assert.equal((await fixture.updater.check()).state, 'unavailable');
+    await assert.rejects(fixture.updater.download());
+  }
+});
+
+test('public latest releases without Mac metadata stay unavailable rather than enabling a Windows update', async t => {
+  const { MAC_PUBLIC_LATEST_URL } = require('../dist/mac-installer-update.js');
+  const fixture = await installerFixture(t, { fetch: async url => {
+    if (url === MAC_RELEASES_URL) return new Response('', { status: 403 });
+    if (url === MAC_PUBLIC_LATEST_URL) return publicReleaseResponse('1.0.1');
+    return new Response('not found', { status: 404 });
+  } });
+  const status = await fixture.updater.check();
+  assert.equal(status.state, 'unavailable'); assert.equal(status.version, '1.0.1');
+  await assert.rejects(fixture.updater.download());
+});
+
+const { createUpdateFetcher } = require('../dist/update-fetch.js');
+test('Electron manual redirects expose Location and tolerate abort errors after resolution', async () => {
+  const request = new EventEmitter(); let aborted = 0;
+  request.setHeader = () => {};
+  request.abort = () => { aborted++; request.emit('error', new Error('Redirect was cancelled')); };
+  request.end = () => request.emit('redirect', 302, 'GET', 'https://github.com/Leechion/ReadX/releases/tag/v1.0.1');
+  const fetch = createUpdateFetcher({ request: () => request, fetch: () => { throw new Error('Must not use net.fetch for manual redirects'); } });
+  const response = await fetch('https://github.com/Leechion/ReadX/releases/latest', new AbortController().signal, 'manual');
+  assert.equal(response.url, '');
+  assert.equal(response.status, 302);
+  assert.match(response.headers.get('location'), /tag\/v1.0.1$/);
+  assert.equal(aborted, 1);
+});
+
+test('Electron redirect probes abort on timeout and ordinary payloads keep Chromium fetch', async () => {
+  for (const alreadyAborted of [false, true]) {
+    const request = new EventEmitter(); request.setHeader = () => {}; request.end = () => {};
+    let aborted = 0; request.abort = () => { aborted++; };
+    const control = new AbortController(); if (alreadyAborted) control.abort(new Error('timeout'));
+    const fetch = createUpdateFetcher({ request: () => request, fetch: async url => new Response(url) });
+    const pending = fetch('https://github.com/Leechion/ReadX/releases/latest', control.signal, 'manual');
+    if (!alreadyAborted) control.abort(new Error('timeout'));
+    await assert.rejects(pending, /timeout/); assert.equal(aborted, 1);
+    assert.equal(await (await fetch('https://example.com/fixture', new AbortController().signal)).text(), 'https://example.com/fixture');
   }
 });

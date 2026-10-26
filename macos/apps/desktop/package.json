@@ -1,6 +1,6 @@
 {
   "name": "@cbct/desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": { "name": "Lee" },
   "private": true,
   "description": "v2 Electron 壳：负责 Go server 生命周期与本地 token 注入，不含业务逻辑",
@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "electron .",
     "package:mac": "electron-builder --mac dmg zip --publish never",
-    "test": "npm run build && node --test test/update-status.test.cjs"
+    "test": "npm run build && node --test test/update-status.test.cjs test/icon-resources.test.cjs"
   },
   "devDependencies": {
     "@cbct/shared": "0.0.0",
@@ -22,6 +22,7 @@
     "appId": "com.readx.desktop",
     "productName": "ReadX",
     "asar": true,
+    "forceCodeSigning": true,
     "directories": {
       "output": "../../release"
     },
@@ -62,6 +63,7 @@
       }
     ],
     "mac": {
+      "identity": "-",
       "category": "public.app-category.education",
       "icon": "icon.icns",
       "target": [
