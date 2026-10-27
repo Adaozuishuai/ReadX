@@ -149,6 +149,8 @@ declare global {
   interface Window {
     __CBCT_V2__?: BootstrapInfo;
     __READX_DESKTOP_UPDATES__?: DesktopUpdateBridge;
+    __READX_SYNC__?: DesktopSyncBridge;
+    __READX_LAUNCHER__?: DesktopLauncherBridge;
   }
 }
 
@@ -169,6 +171,39 @@ export interface DesktopUpdateBridge {
   download(): Promise<DesktopUpdateStatus>;
   install(): Promise<DesktopUpdateStatus>;
   onStatus(callback: (status: DesktopUpdateStatus) => void): () => void;
+}
+
+export interface DesktopSyncBridge {
+  chooseFolder(): Promise<string | null>;
+  getNutstorePassword(): Promise<string>;
+  setNutstorePassword(password: string): Promise<void>;
+}
+
+export type LauncherWorkspace = 'library' | 'research' | 'presentation' | 'latex' | 'slack';
+export interface LauncherTarget { workspace: LauncherWorkspace; id?: string }
+export type LauncherOpenRequest = LauncherTarget & { nonce: number };
+export interface LauncherProject { id: string; title: string; subtitle?: string }
+export interface LauncherGroup {
+  workspace: LauncherWorkspace;
+  projects: LauncherProject[];
+  error?: string;
+}
+export interface LauncherCatalog { current: LauncherWorkspace; groups: LauncherGroup[] }
+export type LauncherEvent =
+  | { type: 'show'; catalog: LauncherCatalog; x: number; y: number }
+  | { type: 'catalog'; catalog: LauncherCatalog }
+  | { type: 'pointer'; x: number; y: number }
+  | { type: 'release'; x: number; y: number }
+  | { type: 'hide' }
+  | { type: 'wheel'; delta: number };
+export interface DesktopLauncherBridge {
+  ready(): void;
+  publish(catalog: LauncherCatalog): void;
+  activate(target: LauncherTarget): void;
+  dismiss(): void;
+  onEvent(callback: (event: LauncherEvent) => void): () => void;
+  onRequestCatalog(callback: () => void): () => void;
+  onNavigate(callback: (target: LauncherTarget) => void): () => void;
 }
 
 export * from './pdfLayout.js';

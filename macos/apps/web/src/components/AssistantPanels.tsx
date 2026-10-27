@@ -147,6 +147,7 @@ const KIND_LABEL: Record<string, string> = {
   highlight: '高亮',
   underline: '下划线',
   question: '问题',
+  margin: '页边笔记',
 };
 
 const COLOR_LABEL: Record<string, string> = {
@@ -172,6 +173,7 @@ const NOTE_FILTERS = [
   { id: 'highlight', label: '高亮' },
   { id: 'underline', label: '下划线' },
   { id: 'question', label: '问题' },
+  { id: 'margin', label: '页边笔记' },
 ] as const;
 
 type NoteFilterId = (typeof NOTE_FILTERS)[number]['id'];
@@ -372,7 +374,7 @@ function NotesPane({
               还没有批注
             </p>
             <p className="mt-1 text-[12px] leading-relaxed text-ink-faint">
-              在中栏选中原文，即可加高亮、下划线或提问批注。
+              选中原文可以加批注，或选择「写笔记」把想法留在页边。
             </p>
           </div>
         ) : null}
@@ -442,7 +444,7 @@ function NotesPane({
                 <span
                   className={`ann-${item.kind}-${item.color} inline rounded-[3px] px-0.5`}
                 >
-                  {item.quote.length > 120
+                  {item.kind === 'margin' && !item.quote ? '查看页边位置' : item.quote.length > 120
                     ? `${item.quote.slice(0, 120)}…`
                     : item.quote}
                 </span>

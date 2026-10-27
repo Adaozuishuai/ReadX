@@ -685,6 +685,7 @@ export interface KnowledgeGraphResponse {
   totalDocuments: number;
 }
 
+export interface AnnotationRect { x: number; y: number; width: number; height: number }
 export interface AnnotationLocator {
   kind: 'pdf' | 'epub';
   href?: string;
@@ -692,7 +693,8 @@ export interface AnnotationLocator {
   blockEnd?: number;
   startOffset?: number;
   endOffset?: number;
-  rects?: { x: number; y: number; width: number; height: number }[];
+  rects?: AnnotationRect[];
+  noteRect?: AnnotationRect;
 }
 export interface EPUBSection {
   index: number;
@@ -1087,6 +1089,14 @@ export interface CitationNetworkResponse {
 }
 
 export const api = {
+  syncSettings: (signal?: AbortSignal) =>
+    request<{ enabled: boolean; provider: 'folder' | 'jianguoyun'; folderPath: string; webdavUsername: string; lastSync: string }>('/v1/sync/settings', { signal }),
+  saveSyncSettings: (settings: { provider: 'folder' | 'jianguoyun'; folderPath?: string; webdavUsername?: string }) =>
+    request<{ enabled: boolean; provider: 'folder' | 'jianguoyun'; folderPath: string; webdavUsername: string; lastSync: string }>('/v1/sync/settings', {
+      method: 'PUT', body: settings,
+    }),
+  syncNow: (credentials: { password?: string } = {}) =>
+    request<{ synced: boolean; documents: number; annotations: number; readingPositions: number; lastSync: string }>('/v1/sync', { method: 'POST', body: credentials }),
   /** Legado 书源页面经本地 Go 服务抓取并校验公网 HTTPS 地址。 */
   fetchWebSourcePage: async (url: string, signal?: AbortSignal) => {
     const response = await authenticatedFetch(
@@ -1271,7 +1281,7 @@ export const api = {
     }),
   patchAnnotation: (
     id: string,
-    body: { note?: string; color?: string; kind?: string; tags?: string[] },
+    body: { note?: string; color?: string; kind?: string; tags?: string[]; noteRect?: AnnotationRect },
   ) =>
     request<{ id: string; updated: boolean }>(
       `/v1/annotation/${encodeURIComponent(id)}`,

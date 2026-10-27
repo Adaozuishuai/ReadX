@@ -9,15 +9,18 @@ import { SlackLibrary, type SlackFilter } from './SlackLibrary';
 import { SlackReader } from './SlackReader';
 import { recordReading, weekStats, type SlackStatsWeek } from './stats';
 import type { SlackItem } from './types';
+import type { LauncherOpenRequest } from '@cbct/shared';
 
 export function SlackWorkspace({
   onExit,
   theme,
   onThemeChange,
+  launchRequest,
 }: {
   onExit: () => void;
   theme: ThemeChoice;
   onThemeChange: (theme: ThemeChoice) => void;
+  launchRequest?: LauncherOpenRequest | null;
 }) {
   const {
     items,
@@ -44,6 +47,16 @@ export function SlackWorkspace({
   const [dragging, setDragging] = useState(false);
   const uploadInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+  const handledLaunch = useRef<number | null>(null);
+  useEffect(() => {
+    if (!launchRequest || !ready || handledLaunch.current === launchRequest.nonce) return;
+    handledLaunch.current = launchRequest.nonce;
+    if (launchRequest.id === 'section:game' || launchRequest.id === 'section:find') {
+      setOpenId(null); setSection(launchRequest.id === 'section:game' ? 'game' : 'find');
+    } else if (launchRequest.id && items.some(item => item.id === launchRequest.id)) {
+      setSection('shelf'); setOpenId(launchRequest.id); void open(launchRequest.id);
+    } else { setOpenId(null); setSection('shelf'); }
+  }, [launchRequest, ready, items, open]);
 
   const current = useMemo(() => items.find((item) => item.id === openId) ?? null, [items, openId]);
 

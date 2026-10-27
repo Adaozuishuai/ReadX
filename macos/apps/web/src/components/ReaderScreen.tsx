@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentSummary, PDFLayout } from '@cbct/shared';
 import { pageParagraphs, segmentParagraph, statusLabel } from '@cbct/shared';
-import { api, type Annotation, type DocumentJob, type EPUBSection, type TranslationPreview } from '../api/client';
+import { api, type Annotation, type DocumentJob, type EPUBSection, type NewAnnotation, type TranslationPreview } from '../api/client';
 import { useFullscreen } from '../hooks/useFullscreen';
 import type { DocumentPhase } from '../hooks/useDocument';
 import { AssistantSidebar, type AssistantTab } from './AssistantPanels';
@@ -16,6 +16,8 @@ import { CitationExportDialog } from './CitationExportDialog';
 import { CitationNetworkDialog } from './CitationNetworkDialog';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { STORAGE_KEYS } from '../lib/storage';
+import { AppDialog } from './AppDialog';
+import { initialMarginRect } from './MarginNote';
 
 type ReadingMode = 'source' | 'parallel' | 'translation';
 
@@ -54,6 +56,9 @@ export function ReaderScreen({
 }: Props) {
   const epub = selected?.format === 'epub';
   const documentKey = selected?.key ?? null;
+  const [marginDraft, setMarginDraft] = useState<{ page: number; id?: string; text: string; color: string; quote?: string; selection?: NewAnnotation; pageAspect?: number } | null>(null);
+  const [marginBusy, setMarginBusy] = useState(false);
+  const [marginError, setMarginError] = useState('');
   const pdf = usePDF(!epub ? documentKey : null);
   const translatedPDF = usePDF(!epub ? documentKey : null, true);
   const [liveRenderedPage, setLiveRenderedPage] = useState<ArrayBuffer | null>(null);
@@ -90,6 +95,7 @@ export function ReaderScreen({
     // 每次打开论文都从原文开始：不因「已有整本译文」自动切到仅译文
     //（想看译文用顶栏模式胶囊切换，本次会话内保持选择）。
     setMode('source');
+    setMarginDraft(null);
   }, [documentKey]);
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEYS.readerPanels, JSON.stringify({ toc: leftWidth, assistant: rightWidth })); } catch { /* Storage may be disabled. */ }
@@ -434,6 +440,19 @@ export function ReaderScreen({
     };
   }, [documentKey, navigatePage]);
   useEffect(() => {
+    if (!documentKey) return;
+    const onSyncComplete = () => {
+      void api.location(documentKey).then((result) => {
+        if (!result.location) return;
+        navigatePage(result.location.kind === 'pdf'
+          ? (result.location.page ?? 1)
+          : (result.location.index ?? 1));
+      }).catch(() => undefined);
+    };
+    window.addEventListener('readx-sync-complete', onSyncComplete);
+    return () => window.removeEventListener('readx-sync-complete', onSyncComplete);
+  }, [documentKey, navigatePage]);
+  useEffect(() => {
     if (!documentKey || !locationReady || count === 0) return;
     const chapter = sections.find((item) => item.index === current);
     const timer = setTimeout(() => {
@@ -679,6 +698,30 @@ export function ReaderScreen({
     : '暂无译文';
   const processingDetail = documentJob?.error || runningStage?.message || (translatedPDF.document ? '排版译文已准备好' : liveTranslationProgress);
   const readingPercent = count ? Math.round(current / count * 100) : 0;
+  const saveMarginNote = async () => {
+    if (!marginDraft || marginBusy || !marginDraft.text.trim()) return;
+    setMarginBusy(true);
+    setMarginError('');
+    try {
+      if (marginDraft.id) await annotations.update(marginDraft.id, { note: marginDraft.text, color: marginDraft.color });
+      else if (marginDraft.selection?.locator?.kind === 'pdf') {
+        const selection = marginDraft.selection;
+        const last = selection.locator!.rects!.at(-1)!;
+        const noteRect = initialMarginRect(marginDraft.text, last.x + last.width + 0.015, last.y, marginDraft.pageAspect);
+        await annotations.create({ ...selection, kind: 'margin', note: marginDraft.text, color: marginDraft.color, locator: { ...selection.locator!, noteRect } });
+      }
+      setMarginDraft(null);
+    } catch (cause) { setMarginError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setMarginBusy(false); }
+  };
+  const deleteMarginNote = async () => {
+    if (!marginDraft?.id || marginBusy) return;
+    setMarginBusy(true);
+    setMarginError('');
+    try { await annotations.remove(marginDraft.id); setMarginDraft(null); }
+    catch (cause) { setMarginError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setMarginBusy(false); }
+  };
   const source = (
     <div
       className="publication-pane"
@@ -709,12 +752,14 @@ export function ReaderScreen({
           navigationRequest={navigationRequest}
           annotations={annotations.items}
           focusedId={focusedAnnotationId}
-          onSelect={select}
+          onSelect={(value) => select({ ...value, marginAllowed: true })}
           onText={() => undefined}
           layout={pdfLayout}
           paragraphMode
           onParagraph={openParagraphTranslation}
           onAnnotationClick={openHighlightedTextActions}
+          onMarginNoteEdit={(item) => { if (item.page) { setMarginError(''); setMarginDraft({ page: item.page, id: item.id, text: item.note, color: item.color, quote: item.quote }); } }}
+          onMarginNoteGeometry={async (item, noteRect) => { try { setError(''); await annotations.update(item.id, { noteRect }); } catch (cause) { setError(`保存笔记位置失败：${cause instanceof Error ? cause.message : String(cause)}`); throw cause; } }}
           find={findScope === 'source' ? findState : null}
           onFind={findScope === 'source' ? setFindReport : undefined}
         />
@@ -1086,6 +1131,20 @@ export function ReaderScreen({
           {error}
         </p>
       )}
+      {marginDraft && <AppDialog open onClose={() => setMarginDraft(null)} busy={marginBusy} className="margin-note-dialog" aria-labelledby="margin-note-title">
+        <header className="margin-note-dialog-head">
+          <div><span className="margin-note-page">页边笔记 <i /> 第 {marginDraft.page} 页</span><h2 id="margin-note-title">{marginDraft.id ? '编辑笔记' : '写在页边'}</h2><p>把读到这里的想法，留在原文旁边。</p></div>
+          <button type="button" className="margin-note-close" aria-label="关闭" disabled={marginBusy} onClick={() => setMarginDraft(null)}>×</button>
+        </header>
+        {(marginDraft.quote || marginDraft.selection?.quote) && <div className="margin-note-quote"><span>原文选段</span><p>{marginDraft.quote || marginDraft.selection?.quote}</p></div>}
+        <div className="margin-note-writing" data-color={marginDraft.color}>
+          <label htmlFor="margin-note-input">你的笔记</label>
+          <textarea id="margin-note-input" autoFocus aria-label="页边笔记内容" maxLength={8000} rows={5} value={marginDraft.text} onChange={(event) => setMarginDraft({ ...marginDraft, text: event.target.value })} placeholder="在这里写下你的想法…" />
+        </div>
+        <div className="margin-note-options"><fieldset><legend>墨迹颜色</legend><div className="margin-note-colors">{([{ id: 'sky', label: '蓝色' }, { id: 'amber', label: '棕色' }, { id: 'rose', label: '红色' }, { id: 'green', label: '绿色' }, { id: 'violet', label: '紫色' }] as const).map((item) => <button type="button" key={item.id} className={`margin-note-color margin-note-color--${item.id}`} aria-label={item.label} title={item.label} aria-pressed={marginDraft.color === item.id} disabled={marginBusy} onClick={() => setMarginDraft({ ...marginDraft, color: item.id })}><span /></button>)}</div></fieldset><p>保存后可拖动笔记，调整位置和大小。</p></div>
+        {marginError && <p role="alert" className="margin-note-error">{marginError}</p>}
+        <footer className="margin-note-dialog-actions">{marginDraft.id ? <button type="button" className="margin-note-delete" disabled={marginBusy} onClick={() => void deleteMarginNote()}>删除笔记</button> : <span /> }<button type="button" className="margin-note-cancel" disabled={marginBusy} onClick={() => setMarginDraft(null)}>取消</button><button type="button" className="margin-note-save" disabled={marginBusy || !marginDraft.text.trim()} onClick={() => void saveMarginNote()}>{marginBusy ? '保存中…' : '保存笔记'}</button></footer>
+      </AppDialog>}
       {pending && (
         <div
           ref={selectionToolbar}
@@ -1147,6 +1206,7 @@ export function ReaderScreen({
                 }
               </button>
             ))}
+            {pending.marginAllowed && pending.annotation.page && pending.annotation.locator?.kind === 'pdf' && pending.annotation.locator.rects?.length ? <button type="button" disabled={saving} onClick={() => { setMarginError(''); setMarginDraft({ page: pending.annotation.page!, text: note, color, pageAspect: pending.pageAspect, selection: { ...pending.annotation, tags: tags.split(/[,，]/).map((value) => value.trim()).filter(Boolean) } }); setPending(null); window.getSelection()?.removeAllRanges(); }}>✎ 写笔记</button> : null}
             <button
               onClick={() => {
                 if (focusMode) setFocusEdge('right'); else setRightOpen(true);

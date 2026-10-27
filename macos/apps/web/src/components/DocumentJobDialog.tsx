@@ -87,6 +87,7 @@ export function DocumentJobDialog({
 }) {
   // 重新处理后改追新的任务键（retranslate-*）：任务键会变，但资源永远属于文档。
   const [restartJobKey, setRestartJobKey] = useState<string | null>(null);
+  const [resolvedLibraryKey, setResolvedLibraryKey] = useState('');
   const activeJobKey = restartJobKey ?? jobKey ?? null;
   const effectiveKey = pending && !jobKey ? '' : activeJobKey || document.key;
   // 追 retranslate 任务时不能用任务键找文件：原版 PDF 与封面都在文档名下。
@@ -100,6 +101,18 @@ export function DocumentJobDialog({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // 历史导入任务可能仍显示「正在导入」，但同编号论文实际上已在书库里。
+  // 查证后才能提供重新翻译，不能把尚未入库的任务键直接当作文档键。
+  useEffect(() => {
+    setResolvedLibraryKey('');
+    const candidate = fileKey || document.key;
+    if (!importing || !candidate || !job || !['interrupted', 'failed', 'cancelled'].includes(job.status)) return;
+    let cancelled = false;
+    void api.document(candidate).then((detail) => {
+      if (!cancelled && detail.document.format === 'pdf' && detail.document.hasPdf) setResolvedLibraryKey(detail.document.key);
+    }).catch(() => { /* 尚未入库时保留原状态，不显示不可用的操作。 */ });
+    return () => { cancelled = true; };
+  }, [importing, fileKey, document.key, job?.status]);
 
   useEffect(() => {
     if (!effectiveKey) {
@@ -271,8 +284,8 @@ export function DocumentJobDialog({
   const translateInterrupted = translateStage
     ? ['interrupted', 'failed', 'cancelled'].includes(translateStage.status)
     : false;
-  const libraryKey = fileKey || (!importing ? document.key : '');
-  const reprocessable = Boolean(job) && Boolean(libraryKey) && !importing && !pending
+  const libraryKey = fileKey || resolvedLibraryKey || (!importing ? document.key : '');
+  const reprocessable = Boolean(job) && Boolean(libraryKey) && (!importing || Boolean(fileKey || resolvedLibraryKey)) && !pending
     && !tracking && document.format !== 'epub'
     && (['interrupted', 'failed', 'cancelled'].includes(status) || translateInterrupted);
 

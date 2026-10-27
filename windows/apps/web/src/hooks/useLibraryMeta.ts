@@ -29,6 +29,9 @@ export function useLibraryMeta() {
 
   useEffect(() => {
     void reload();
+    const onSyncComplete = () => { void reload(); };
+    window.addEventListener('readx-sync-complete', onSyncComplete);
+    return () => window.removeEventListener('readx-sync-complete', onSyncComplete);
   }, [reload]);
 
   const patch = useCallback(

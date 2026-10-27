@@ -91,21 +91,15 @@ app.on('browser-window-created', (_event, window) => {
       assert(recovered, 'Go server must recover after an unexpected exit');
       assert.equal((await api(window, '/v1/documents/mac-smoke/location')).location.page, 2);
       assert.equal(errorDialogs.length, 0, 'Automatic recovery must not close the reader');
-      if (process.platform === 'darwin') {
-        stage = 'Dock window restoration';
-        console.log('Checking Dock window restoration');
-        const closed = new Promise(resolve => window.once('closed', resolve));
-        window.close();
-        await closed;
-        app.emit('activate');
-        window = BrowserWindow.getAllWindows()[0];
-        assert(window, 'Dock activation must recreate the window');
-        window.show();
-        console.log('Dock recreated window:', window.webContents.getURL());
-        await waitFor(window, '!!window.__CBCT_V2__ && !!document.querySelector(".library-sidebar, .pdf-reader")');
-        assert.equal((await api(window, '/v1/documents')).total, 1);
-      }
-      console.log('Dock window restoration completed');
+      stage = 'close-to-minimize and window restoration';
+      window.close();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      assert(!window.isDestroyed(), 'Closing must preserve the main window');
+      assert(window.isMinimized(), 'Closing must minimize the main window');
+      app.emit('activate');
+      await waitFor(window, '!!window.__CBCT_V2__ && !!document.querySelector(".library-sidebar, .pdf-reader")');
+      assert(!window.isMinimized(), 'Activation must restore the main window');
+      assert.equal((await api(window, '/v1/documents')).total, 1);
       console.log('Desktop smoke OK: real main/preload, auth, SQLite import, PDF reader, render resources, update bridge, reading location, backend crash recovery and Dock activation.');
       console.log(`Evidence: ${path.join(workspace, 'reader.png')}`);
       clearTimeout(timeout);

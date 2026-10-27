@@ -15,6 +15,7 @@ import { LibraryProcessingControl } from './LibraryProcessingControl';
 import { LibraryTrashButton } from './LibraryTrashButton';
 import { EmptyTrashDialog } from './EmptyTrashDialog';
 import { CitationExportDialog } from './CitationExportDialog';
+import { SyncSettingsDialog } from './SyncSettingsDialog';
 import { DailyRecommendations } from './DailyRecommendations';
 import { ResizeHandle } from './ResizeHandle';
 import { WorkspaceIcon, type WorkspaceIconName } from './WorkspaceIcon';
@@ -227,6 +228,7 @@ export function LibraryScreen({
   const [arxivProgress, setArxivProgress] = useState('');
   const [arxivSummary, setArxivSummary] = useState('');
   const [citationOpen, setCitationOpen] = useState(false);
+  const [syncSettingsOpen, setSyncSettingsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -491,7 +493,7 @@ export function LibraryScreen({
             <WorkspaceIcon name="library" /><span className="nav-label">个人书库</span>
           </button>
           <button type="button" className="nav-item" onClick={onOpenAcademic} title="学术工作台">
-            <WorkspaceIcon name="calendar" /><span className="nav-label">学术工作台</span>
+            <WorkspaceIcon name="graduation" /><span className="nav-label">学术工作台</span>
           </button>
         </div>
         <div className="library-view-heading">书库视图</div>
@@ -592,6 +594,11 @@ export function LibraryScreen({
               {view === 'all' ? '全部文档' : view === 'favorite' ? '收藏' : view === 'trash' ? '回收站' : view === 'shelves' ? '我的书架' : view === 'graph' ? '知识图谱' : '阅读日历'}
             </h1>
             </div>
+            {view !== 'trash' && view !== 'graph' && view !== 'calendar' ? (
+              <button type="button" className="library-toolbar-command sync-command" onClick={() => setSyncSettingsOpen(true)} title="设置书库、阅读进度和笔记的跨设备同步">
+                ⇄ 同步
+              </button>
+            ) : null}
           </div>
           <div className="library-view-actions">
             <div className="library-toolbar-inline">{toolbarCommands()}</div>
@@ -885,6 +892,7 @@ export function LibraryScreen({
           onClose={() => setCitationOpen(false)}
         />
       ) : null}
+      {syncSettingsOpen ? <SyncSettingsDialog onClose={() => setSyncSettingsOpen(false)} onSyncComplete={onReload} /> : null}
     </div>
   );
 }

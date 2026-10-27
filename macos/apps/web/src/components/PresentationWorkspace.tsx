@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import JSZip from 'jszip';
-import type { DocumentSummary } from '@cbct/shared';
+import type { DocumentSummary, LauncherOpenRequest } from '@cbct/shared';
 import { api, streamPresentationPlan, streamPresentationTheme, type PresentationPlanInput, type ReadingEntry, type ReadingVisualAnalysis } from '../api/client';
 import { usePDF } from './PDFView';
 import { usePaperVisuals } from '../hooks/usePaperVisuals';
@@ -169,14 +169,20 @@ function firstJSONObject(source: string): string | null {
   return null;
 }
 
-export function PresentationWorkspace({ documents, onBack }: { documents: DocumentSummary[]; onBack: () => void }) {
+export function PresentationWorkspace({ documents, onBack, launchRequest }: { documents: DocumentSummary[]; onBack: () => void; launchRequest?: LauncherOpenRequest | null }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<DocumentSummary | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const handledLaunch = useRef<number | null>(null);
+  useEffect(() => {
+    if (exporting || !launchRequest?.id || handledLaunch.current === launchRequest.nonce) return;
+    const target = documents.find(doc => doc.id === launchRequest.id);
+    if (target) { handledLaunch.current = launchRequest.nonce; setSelected(target); }
+  }, [launchRequest, documents, exporting]);
   const [entries, setEntries] = useState<Partial<Record<ReadingKind, ReadingEntry>>>({});
   const [analyses, setAnalyses] = useState<ReadingVisualAnalysis[]>([]);
   const [loading, setLoading] = useState(false);
   const [readingError, setReadingError] = useState('');
-  const [exporting, setExporting] = useState(false);
   const [generationPhase, setGenerationPhase] = useState<'idle' | 'reading' | 'planning' | 'building' | 'complete' | 'error'>('idle');
   const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 });
   const [livePlan, setLivePlan] = useState<PresentationPlan | null>(null);

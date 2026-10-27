@@ -6,12 +6,12 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const check = process.argv.includes('--check');
-const ignored = new Set(['node_modules', '__pycache__']);
+const ignored = new Set(['node_modules', '__pycache__', '.codex-preview']);
 const trees = ['apps/server', 'apps/web', 'apps/desktop/src', 'apps/desktop/test', 'packages/shared', 'resources', 'vendor'];
 const files = ['apps/desktop/tsconfig.json', 'config.example.json', 'package-lock.json',
   ...['build-server.mjs', 'dev.mjs', 'ensure-built.mjs', 'gen-fixtures.mjs', 'go.mjs',
     'prepare-pdf.mjs', 'render-translated-pdf.cjs', 'server-runtime.mjs', 'import-smoke.cjs', 'update-smoke.jsx', 'latex-state.test.cjs',
-    'desktop-smoke.cjs', 'run-desktop-smoke.mjs', 'import-smoke.jsx', 'platform-runtime.mjs', 'runtime-check.mjs', 'book-sources.test.cjs'].map(name => `scripts/${name}`)];
+    'desktop-smoke.cjs', 'launcher-smoke.cjs', 'run-desktop-smoke.mjs', 'import-smoke.jsx', 'platform-runtime.mjs', 'runtime-check.mjs', 'book-sources.test.cjs', 'margin-note.test.cjs', 'processing-jobs.test.cjs'].map(name => `scripts/${name}`)];
 const differences = [];
 let checked = 0;
 

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, screen, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, safeStorage, screen, shell, systemPreferences, Tray, type OpenDialogOptions } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -12,6 +12,7 @@ import { checkForUpdateStatus, LATEST_RELEASE_URL } from './update-check';
 import { downloadVerifiedUpdate } from './update-download';
 import { MacInstallerUpdater } from './mac-installer-update';
 import { createUpdateFetcher } from './update-fetch';
+import { DesktopLauncher } from './launcher';
 
 /**
  * Electron 壳只做三件事：拉起 Go server、等就绪、把本地 token 交给渲染进程。
@@ -35,6 +36,8 @@ interface ServerHandle {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let launcher: DesktopLauncher | null = null;
 let windowStateSaveTimer: NodeJS.Timeout | null = null;
 let server: ServerHandle | null = null;
 let allowedOrigin = '';
@@ -54,10 +57,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    restoreMainWindow();
   });
   void bootstrap();
 }
@@ -123,14 +123,20 @@ async function bootstrap(): Promise<void> {
   }
 
   createWindow();
+  setupLauncher();
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
   app.on('activate', () => {
-    if (mainWindow === null && server) createWindow();
+    restoreMainWindow();
   });
   app.on('before-quit', (event) => {
+    stopping = true;
+    launcher?.dispose();
+    launcher = null;
+    tray?.destroy();
+    tray = null;
     if (!server || stopRequested) return;
     // 先拦住退出：子进程没关干净就 quit，会留下占着 SQLite 与端口的孤儿进程。
     event.preventDefault();
@@ -141,6 +147,37 @@ async function bootstrap(): Promise<void> {
       app.quit();
     });
   });
+}
+
+function restoreMainWindow(): void {
+  if (!mainWindow && server) createWindow();
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function setupLauncher(): void {
+  if (!server) return;
+  launcher = new DesktopLauncher({
+    url: startUrl(server), preload: path.join(__dirname, 'preload.js'),
+    apiBase: allowedOrigin, token: server.info.token,
+    main: () => mainWindow, restore: restoreMainWindow, log: logLifecycle,
+  });
+  tray = new Tray(nativeImage.createFromPath(APP_ICON).resize({ width: 18, height: 18 }));
+  tray.setToolTip('ReadX · 按住 Alt 呼出轮盘');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开 ReadX', click: restoreMainWindow },
+    { label: '打开快速轮盘', click: () => launcher?.show() },
+    ...(process.platform === 'darwin' ? [{ label: '启用 Alt 轮盘（辅助功能权限）', click: () => {
+      systemPreferences.isTrustedAccessibilityClient(true);
+      launcher?.enableHook();
+    } }] : []),
+    { type: 'separator' },
+    { label: '退出 ReadX', click: () => app.quit() },
+  ]));
+  tray.on('double-click', restoreMainWindow);
+  if (process.platform !== 'darwin') tray.on('click', restoreMainWindow);
 }
 
 function setupUpdater(): void {
@@ -183,6 +220,32 @@ function setupUpdater(): void {
   ipcMain.handle('readx-updates:check', () => updates.check());
   ipcMain.handle('readx-updates:download', () => updates.download());
   ipcMain.handle('readx-updates:install', () => updates.install());
+  ipcMain.handle('readx-sync:choose-folder', async () => {
+    const options: OpenDialogOptions = {
+      title: '选择 ReadX 同步文件夹',
+      properties: ['openDirectory', 'createDirectory'],
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  ipcMain.handle('readx-sync:get-nutstore-password', () => {
+    const file = path.join(app.getPath('userData'), 'sync-nutstore-secret.bin');
+    if (!safeStorage.isEncryptionAvailable() || !fs.existsSync(file)) return '';
+    try { return safeStorage.decryptString(fs.readFileSync(file)); } catch { return ''; }
+  });
+  ipcMain.handle('readx-sync:set-nutstore-password', (_event, password: unknown) => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储暂不可用');
+    const file = path.join(app.getPath('userData'), 'sync-nutstore-secret.bin');
+    if (typeof password !== 'string' || !password) {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+      return;
+    }
+    const temporary = `${file}.tmp`;
+    fs.writeFileSync(temporary, safeStorage.encryptString(password), { mode: 0o600 });
+    fs.renameSync(temporary, file);
+  });
 }
 
 function publishUpdateStatus(status: DesktopUpdateStatus): void {
@@ -191,6 +254,23 @@ function publishUpdateStatus(status: DesktopUpdateStatus): void {
 }
 
 async function startServer(previous?: ReadyInfo): Promise<ServerHandle> {
+  // A browser-mode library may already be serving this data root. Reuse its
+  // authenticated local Vite proxy instead of running two job workers on one DB.
+  if (!app.isPackaged && process.env.CBCT_V2_BROWSER_PROXY) {
+    const proxy = new URL(process.env.CBCT_V2_BROWSER_PROXY);
+    if (proxy.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(proxy.hostname)
+      || proxy.username || proxy.password || proxy.pathname !== '/' || proxy.search || proxy.hash) {
+      throw new Error('浏览器兼容服务必须使用本机 HTTP 根地址');
+    }
+    const response = await net.fetch(new URL('/v1/meta', proxy).toString(), { signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) throw new Error(`现有书库服务返回 HTTP ${response.status}`);
+    const meta = await response.json() as ReadyInfo & { app: string };
+    if (meta.app !== 'cbct-reading-v2' || typeof meta.dataRoot !== 'string'
+      || path.resolve(meta.dataRoot).toLowerCase() !== path.resolve(process.env.CBCT_DATA_ROOT || '').toLowerCase()) {
+      throw new Error('现有服务的数据目录与桌面启动目录不一致');
+    }
+    return { info: { host: proxy.hostname, port: Number(proxy.port || 80), token: '', dataRoot: meta.dataRoot, dbPath: meta.dbPath, pid: meta.pid }, child: null };
+  }
   // attached 模式：dev.mjs 已经起了 server（Vite proxy 要读它的 dev-info.json），壳只连接。
   if (process.env.CBCT_V2_ATTACH === '1') {
     const info = readDevInfo();
@@ -436,6 +516,7 @@ function createWindow(): void {
       sandbox: true,
       spellcheck: false,
       // token 只经主进程进渲染进程，不进 URL、不落磁盘。
+      backgroundThrottling: false,
       additionalArguments: [`--cbct-api-base=${injected.apiBase}`, `--cbct-token=${injected.token}`],
     },
   });
@@ -447,10 +528,15 @@ function createWindow(): void {
   mainWindow.on('move', persist);
   mainWindow.on('maximize', persist);
   mainWindow.on('unmaximize', persist);
-  mainWindow.on('close', () => {
+  if (process.platform !== 'darwin') mainWindow.setMenu(null);
+  mainWindow.on('close', (event) => {
     if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
     windowStateSaveTimer = null;
     saveWindowState(mainWindow);
+    if (!stopping && !stopRequested) {
+      event.preventDefault();
+      mainWindow?.minimize();
+    }
   });
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -537,7 +623,7 @@ function isAllowedReaderPopup(target: string): boolean {
 }
 
 function startUrl(handle: ServerHandle): string {
-  return process.env.ELECTRON_START_URL || `http://${handle.info.host}:${handle.info.port}/`;
+  return process.env.ELECTRON_START_URL || (!app.isPackaged && process.env.CBCT_V2_BROWSER_PROXY) || `http://${handle.info.host}:${handle.info.port}/`;
 }
 
 function sameOrigin(target: string): boolean {

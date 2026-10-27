@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Annotation, NewAnnotation } from '../api/client';
+import type { Annotation, AnnotationRect, NewAnnotation } from '../api/client';
 import { api } from '../api/client';
 
 /** 一篇论文的批注：列表 + 增删改。批注是用户自己的笔记，任何一步失败都要如实显示。 */
@@ -35,7 +35,10 @@ export function useAnnotations(key: string | null) {
     setItems([]);
     setError(null);
     void reload();
+    const onSyncComplete = () => { void reload(); };
+    window.addEventListener('readx-sync-complete', onSyncComplete);
     return () => {
+      window.removeEventListener('readx-sync-complete', onSyncComplete);
       requestVersion.current++;
     };
   }, [reload]);
@@ -55,12 +58,13 @@ export function useAnnotations(key: string | null) {
   const update = useCallback(
     async (
       id: string,
-      patch: { note?: string; color?: string; kind?: string; tags?: string[] },
+      patch: { note?: string; color?: string; kind?: string; tags?: string[]; noteRect?: AnnotationRect },
     ) => {
       await api.patchAnnotation(id, patch);
+      const { noteRect, ...fields } = patch;
       setItems((current) =>
         current.map((item) =>
-          item.id === id ? ({ ...item, ...patch } as Annotation) : item,
+          item.id === id ? ({ ...item, ...fields, ...(noteRect && item.locator ? { locator: { ...item.locator, noteRect } } : {}) } as Annotation) : item,
         ),
       );
       setError(null);

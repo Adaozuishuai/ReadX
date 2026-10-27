@@ -15,6 +15,8 @@ import 'pdfjs-dist/web/pdf_viewer.css';
 import { api, type Annotation, type NewAnnotation } from '../api/client';
 import { findMatchRanges, normalizeFindTextWithOffsets } from '../lib/findMatches';
 import { pdfPageLinks, pdfReferenceTargets, resolvePDFDestination, textCitationLinks, type PDFLinkTarget, type PDFLocation, type PDFSourceLink } from '../lib/pdfReferences';
+import { MarginNote } from './MarginNote';
+import type { AnnotationRect } from '../api/client';
 
 GlobalWorkerOptions.workerSrc = workerURL;
 export type PDFOutline = PaperHeading;
@@ -22,6 +24,8 @@ export interface PendingSelection {
   annotation: NewAnnotation;
   top: number;
   left: number;
+  marginAllowed?: boolean;
+  pageAspect?: number;
 }
 
 /** 阅读器查找：命中所在的页与页内命中数（按页码升序）。 */
@@ -402,6 +406,8 @@ export function PDFDocumentView({
   onFind,
   zoom,
   onZoomChange,
+  onMarginNoteEdit,
+  onMarginNoteGeometry,
 }: {
   document: PDFDocumentProxy;
   documentKey?: string;
@@ -421,6 +427,8 @@ export function PDFDocumentView({
   onFind?: (report: PDFFindReport) => void;
   zoom: number;
   onZoomChange: (zoom: number) => void;
+  onMarginNoteEdit?: (annotation: Annotation) => void;
+  onMarginNoteGeometry?: (annotation: Annotation, rect: AnnotationRect) => Promise<void>;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const slots = useRef(new Map<number, HTMLDivElement>());
@@ -672,6 +680,8 @@ export function PDFDocumentView({
                   paragraphMode={paragraphMode}
                   onParagraph={onParagraph}
                   onAnnotationClick={onAnnotationClick}
+                  onMarginNoteEdit={onMarginNoteEdit}
+                  onMarginNoteGeometry={onMarginNoteGeometry}
                   continuousPage
                   scrollRoot={scrollRoot}
                   zoomLevel={zoom}
@@ -714,6 +724,8 @@ export function PDFPage({
   zoomLevel,
   find = null,
   onSourceLink,
+  onMarginNoteEdit,
+  onMarginNoteGeometry,
 }: {
   document: PDFDocumentProxy;
   documentKey?: string;
@@ -731,6 +743,8 @@ export function PDFPage({
   zoomLevel?: number;
   find?: { query: string; caseSensitive: boolean; activeOccurrence: number | null; nonce: number } | null;
   onSourceLink?: (target: PDFLinkTarget) => void;
+  onMarginNoteEdit?: (annotation: Annotation) => void;
+  onMarginNoteGeometry?: (annotation: Annotation, rect: AnnotationRect) => Promise<void>;
 }) {
   const [loadedParagraphLayout, setLoadedParagraphLayout] = useState<{ document: PDFDocumentProxy; page: number; layout: PDFLayout | null } | null>(null);
   const paragraphLayout = documentKey
@@ -947,6 +961,7 @@ export function PDFPage({
       },
       top: anchor.bottom,
       left: anchor.left,
+      pageAspect: bounds.width / bounds.height,
     });
   };
   return (
@@ -1058,7 +1073,7 @@ export function PDFPage({
           <div className="pdf-marks">
             {(() => {
               const pageAnnotations = annotations.filter((annotation) => annotation.page === page);
-              const highlights = pageAnnotations.filter((item) => item.kind === 'highlight');
+              const highlights = pageAnnotations.filter((item) => item.kind === 'highlight' || (item.kind === 'margin' && item.quote));
               return <>
                 {highlights.map((annotation) => {
                   const paths: string[] = [];
@@ -1071,7 +1086,7 @@ export function PDFPage({
                   <svg
                     key={`highlight-${annotation.id}`}
                     aria-hidden="true"
-                    data-annotation-id={annotation.id}
+                    data-annotation-id={annotation.kind === 'margin' ? undefined : annotation.id}
                     className={`pdf-mark pdf-mark-highlight ann-highlight-${annotation.color}${focusedId === annotation.id ? ' ann-focused' : ''}`}
                     viewBox="0 0 1 1"
                     preserveAspectRatio="none"
@@ -1081,7 +1096,7 @@ export function PDFPage({
                   );
                 })}
                 {pageAnnotations
-                  .filter((annotation) => annotation.kind !== 'highlight')
+                  .filter((annotation) => annotation.kind !== 'highlight' && annotation.kind !== 'margin')
                   .flatMap((a) => mergePDFMarkRects(a.locator?.rects ?? []).map((rect, index) => (
                   <span
                     key={`${a.id}-${index}`}
@@ -1099,6 +1114,7 @@ export function PDFPage({
               </>;
             })()}
           </div>
+          {onMarginNoteEdit && onMarginNoteGeometry && annotations.filter((item) => item.page === page && item.kind === 'margin' && item.locator?.kind === 'pdf' && item.locator.rects?.length).map((item) => <MarginNote key={item.id} item={item} focused={focusedId === item.id} fontSize={width * activeZoom * 0.022} pageAspect={paper.current?.clientHeight ? paper.current.clientWidth / paper.current.clientHeight : undefined} onEdit={onMarginNoteEdit} onGeometry={onMarginNoteGeometry} />)}
         </div>
       </div>
     </div>

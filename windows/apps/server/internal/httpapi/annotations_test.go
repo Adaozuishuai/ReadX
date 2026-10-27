@@ -72,6 +72,76 @@ func TestAnnotationCRUDRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMarginNoteRoundTrip(t *testing.T) {
+	bundle := newAnnotationServer(t)
+	res, created := post(t, bundle, http.MethodPost, "/v1/annotations/2209.14540", `{"page":1,"kind":"margin","quote":"","note":"记在页边","color":"sky","locator":{"kind":"pdf","rects":[{"x":0.72,"y":0.3,"width":0.24,"height":0.2}]}}`)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("创建页边笔记失败: %d %v", res.StatusCode, created)
+	}
+	id := created["id"].(string)
+	list := decode(t, get(t, bundle.frontend, "/v1/annotations/2209.14540", bundle.token))
+	item := list["annotations"].([]any)[0].(map[string]any)
+	rect := item["locator"].(map[string]any)["rects"].([]any)[0].(map[string]any)
+	if item["note"] != "记在页边" || item["kind"] != "margin" || rect["x"] != 0.72 || rect["y"] != 0.3 {
+		t.Fatalf("页边笔记未正确保存: %v", item)
+	}
+	if res, body := post(t, bundle, http.MethodPatch, "/v1/annotation/"+id, `{"note":"修改后的笔记","color":"green"}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("编辑失败: %d %v", res.StatusCode, body)
+	}
+	if res, _ := post(t, bundle, http.MethodPatch, "/v1/annotation/"+id, `{"note":" "}`); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("空笔记应被拒绝: %d", res.StatusCode)
+	}
+	for _, body := range []string{`{"page":1,"kind":"margin","note":"内容"}`, `{"page":1,"kind":"margin","note":"","locator":{"kind":"pdf","rects":[{"x":0.2,"y":0.2,"width":0.2,"height":0.2}]}}`, `{"page":1,"kind":"margin","note":"内容","locator":{"kind":"pdf","rects":[{"x":0.9,"y":0.3,"width":0.24,"height":0.2}]}}`} {
+		if res, _ := post(t, bundle, http.MethodPost, "/v1/annotations/2209.14540", body); res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("无效页边笔记应被拒绝: %d", res.StatusCode)
+		}
+	}
+	req, _ := http.NewRequest(http.MethodGet, bundle.frontend.URL+"/v1/annotations/2209.14540/export", nil)
+	req.Header.Set("Authorization", "Bearer "+bundle.token)
+	response, err := bundle.frontend.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	markdown, _ := io.ReadAll(response.Body)
+	if !strings.Contains(string(markdown), "页边笔记") || !strings.Contains(string(markdown), "修改后的笔记") {
+		t.Fatalf("导出缺少笔记: %s", markdown)
+	}
+	res, _ = post(t, bundle, http.MethodDelete, "/v1/annotation/"+id, "")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("删除失败: %d", res.StatusCode)
+	}
+}
+
+func TestMarginNoteSelectionAndGeometry(t *testing.T) {
+	bundle := newAnnotationServer(t)
+	res, created := post(t, bundle, http.MethodPost, "/v1/annotations/2209.14540", `{"page":1,"kind":"margin","quote":"selected text","note":"My note","locator":{"kind":"pdf","rects":[{"x":0.1,"y":0.2,"width":0.3,"height":0.02},{"x":0.1,"y":0.23,"width":0.2,"height":0.02}],"noteRect":{"x":0.5,"y":0.2,"width":0.24,"height":0.2}}}`)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d %v", res.StatusCode, created)
+	}
+	id := created["id"].(string)
+	if res, body := post(t, bundle, http.MethodPatch, "/v1/annotation/"+id, `{"noteRect":{"x":0.2,"y":0.4,"width":0.5,"height":0.3}}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("move and resize: %d %v", res.StatusCode, body)
+	}
+	if res, _ := post(t, bundle, http.MethodPatch, "/v1/annotation/"+id, `{"noteRect":{"x":0.8,"y":0.4,"width":0.5,"height":0.3}}`); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("out of bounds: %d", res.StatusCode)
+	}
+	list := decode(t, get(t, bundle.frontend, "/v1/annotations/2209.14540", bundle.token))
+	item := list["annotations"].([]any)[0].(map[string]any)
+	locator := item["locator"].(map[string]any)
+	position := locator["noteRect"].(map[string]any)
+	if item["quote"] != "selected text" || len(locator["rects"].([]any)) != 2 || position["x"] != 0.2 || position["width"] != 0.5 {
+		t.Fatalf("lost selection or position: %v", item)
+	}
+	res, legacy := post(t, bundle, http.MethodPost, "/v1/annotations/2209.14540", `{"page":1,"kind":"margin","note":"legacy","locator":{"kind":"pdf","rects":[{"x":0.1,"y":0.2,"width":0.2,"height":0.2}]}}`)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("legacy create: %d %v", res.StatusCode, legacy)
+	}
+	if res, body := post(t, bundle, http.MethodPatch, "/v1/annotation/"+legacy["id"].(string), `{"noteRect":{"x":0.3,"y":0.4,"width":0.2,"height":0.2}}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("legacy move: %d %v", res.StatusCode, body)
+	}
+}
+
 func TestAnnotationGuards(t *testing.T) {
 	bundle := newAnnotationServer(t)
 

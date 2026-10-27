@@ -1,5 +1,5 @@
-import { useState, type Dispatch, type SetStateAction } from 'react';
-import type { DocumentSummary } from '@cbct/shared';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import type { DocumentSummary, LauncherOpenRequest } from '@cbct/shared';
 import { dayDistance, localDay, logFocusLabel, newId, priorityLabels, selectTodos, totalFocusMinutes, weekActivity, type Todo, type TodoFilter, type WorkbenchData } from '../../lib/researchWorkbench';
 import { AppDialog } from '../AppDialog';
 import { WorkspaceIcon } from '../WorkspaceIcon';
@@ -11,9 +11,10 @@ function DueLabel({ due, day }: { due: string; day: string }) {
   return <span className={`rw-due${days < 0 ? ' overdue' : days === 0 ? ' today' : ''}`}><WorkspaceIcon name="calendar" size={12} />{days < 0 ? `逾期 ${-days} 天` : days === 0 ? '今天截止' : days === 1 ? '明天截止' : `${due.slice(5).replace('-', '/')} 截止`}</span>;
 }
 
-export function ResearchDaily({ data, setData, now, documents, onOpenDocument, onOpenLibrary }: {
+export function ResearchDaily({ data, setData, now, documents, onOpenDocument, onOpenLibrary, launchRequest }: {
   data: WorkbenchData; setData: Dispatch<SetStateAction<WorkbenchData>>; now: number;
   documents: DocumentSummary[]; onOpenDocument: (id: string) => void; onOpenLibrary: () => void;
+  launchRequest?: LauncherOpenRequest | null;
 }) {
   const day = localDay(new Date(now));
   const [filter, setFilter] = useState<TodoFilter>('active');
@@ -25,6 +26,13 @@ export function ResearchDaily({ data, setData, now, documents, onOpenDocument, o
   const [logDay, setLogDay] = useState(day);
   const [allLogs, setAllLogs] = useState(false);
   const [selectedTodo, setSelectedTodo] = useState(data.focusSession?.todoId ?? '');
+  const handledLaunch = useRef<number | null>(null);
+  useEffect(() => {
+    if (!launchRequest?.id?.startsWith('todo:') || handledLaunch.current === launchRequest.nonce) return;
+    handledLaunch.current = launchRequest.nonce;
+    const todo = data.todos.find(item => item.id === launchRequest.id!.slice(5));
+    if (todo) { setEditing({ ...todo }); setSelectedTodo(todo.id); }
+  }, [launchRequest, data.todos]);
   const active = selectTodos(data.todos, 'active', day);
   const visible = selectTodos(data.todos, filter, day);
   const todayTasks = selectTodos(data.todos, 'today', day);

@@ -31,6 +31,7 @@ var annotationKinds = map[string]string{
 	"highlight": "高亮",
 	"underline": "下划线",
 	"question":  "问题",
+	"margin":    "页边笔记",
 }
 
 var annotationColors = map[string]bool{
@@ -67,6 +68,11 @@ type annotationLocator struct {
 	StartOffset int              `json:"startOffset,omitempty"`
 	EndOffset   int              `json:"endOffset,omitempty"`
 	Rects       []annotationRect `json:"rects,omitempty"`
+	NoteRect    *annotationRect  `json:"noteRect,omitempty"`
+}
+
+func validAnnotationRect(rect annotationRect) bool {
+	return rect.X >= 0 && rect.Y >= 0 && rect.Width > 0 && rect.Height > 0 && rect.X+rect.Width <= 1.002 && rect.Y+rect.Height <= 1.002
 }
 
 func newAnnotationID() string {
@@ -118,7 +124,7 @@ func (s *Server) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	quote := strings.TrimSpace(body.Quote)
-	if quote == "" {
+	if quote == "" && body.Kind != "margin" {
 		writeError(w, http.StatusBadRequest, "批注必须带上被标注的原文摘录")
 		return
 	}
@@ -135,7 +141,11 @@ func (s *Server) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) 
 		kind = "highlight"
 	}
 	if _, known := annotationKinds[kind]; !known {
-		writeError(w, http.StatusBadRequest, "kind 只能是 highlight / underline / question")
+		writeError(w, http.StatusBadRequest, "不支持的批注类型")
+		return
+	}
+	if kind == "margin" && (strings.TrimSpace(body.Note) == "" || body.Locator == nil || body.Locator.Kind != "pdf" || (body.Locator.NoteRect == nil && len(body.Locator.Rects) != 1)) {
+		writeError(w, http.StatusBadRequest, "页边笔记需要内容和 PDF 页面位置")
 		return
 	}
 	color := strings.ToLower(strings.TrimSpace(body.Color))
@@ -171,10 +181,14 @@ func (s *Server) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			for _, rect := range loc.Rects {
-				if rect.X < 0 || rect.Y < 0 || rect.Width <= 0 || rect.Height <= 0 || rect.X+rect.Width > 1.002 || rect.Y+rect.Height > 1.002 {
+				if !validAnnotationRect(rect) {
 					writeError(w, 400, "选区坐标必须在页面内")
 					return
 				}
+			}
+			if loc.NoteRect != nil && (kind != "margin" || !validAnnotationRect(*loc.NoteRect)) {
+				writeError(w, 400, "页边笔记位置必须在页面内")
+				return
 			}
 		} else if loc.Kind == "epub" {
 			if doc.Format != "epub" || body.Page != nil || loc.Href == "" || loc.BlockStart < 0 || loc.BlockEnd < loc.BlockStart || loc.StartOffset < 0 || loc.EndOffset < 0 {
@@ -232,17 +246,56 @@ func (s *Server) handleAnnotationPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Note  *string   `json:"note"`
-		Color *string   `json:"color"`
-		Kind  *string   `json:"kind"`
-		Tags  *[]string `json:"tags"`
+		Note     *string         `json:"note"`
+		Color    *string         `json:"color"`
+		Kind     *string         `json:"kind"`
+		Tags     *[]string       `json:"tags"`
+		NoteRect *annotationRect `json:"noteRect"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		return
 	}
 	sets := []string{}
 	args := []any{}
+	if body.NoteRect != nil {
+		if !validAnnotationRect(*body.NoteRect) {
+			writeError(w, http.StatusBadRequest, "页边笔记位置必须在页面内")
+			return
+		}
+		var kind, raw string
+		if err := s.handle.QueryRowContext(r.Context(), `SELECT kind, locator_json FROM annotations WHERE id=?`, id).Scan(&kind, &raw); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "没有这条批注")
+			} else {
+				writeError(w, http.StatusInternalServerError, "读取批注失败")
+			}
+			return
+		}
+		var locator annotationLocator
+		if kind != "margin" || json.Unmarshal([]byte(raw), &locator) != nil || locator.Kind != "pdf" {
+			writeError(w, http.StatusBadRequest, "只有 PDF 页边笔记可以调整位置")
+			return
+		}
+		locator.NoteRect = body.NoteRect
+		encoded, err := json.Marshal(locator)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "保存笔记位置失败")
+			return
+		}
+		sets = append(sets, `locator_json = ?`)
+		args = append(args, string(encoded))
+	}
 	if body.Note != nil {
+		if strings.TrimSpace(*body.Note) == "" {
+			var kind string
+			if err := s.handle.QueryRowContext(r.Context(), `SELECT kind FROM annotations WHERE id=?`, id).Scan(&kind); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusInternalServerError, "读取批注失败")
+				return
+			} else if kind == "margin" {
+				writeError(w, http.StatusBadRequest, "页边笔记内容不能为空")
+				return
+			}
+		}
 		if len([]rune(*body.Note)) > maxAnnotationNote {
 			writeError(w, http.StatusBadRequest, "批注正文过长")
 			return
@@ -260,8 +313,17 @@ func (s *Server) handleAnnotationPatch(w http.ResponseWriter, r *http.Request) {
 		args = append(args, color)
 	}
 	if body.Kind != nil {
+		var currentKind string
+		if err := s.handle.QueryRowContext(r.Context(), `SELECT kind FROM annotations WHERE id=?`, id).Scan(&currentKind); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "读取批注失败")
+			return
+		}
+		if (*body.Kind == "margin") != (currentKind == "margin") {
+			writeError(w, http.StatusBadRequest, "页边笔记不能转换为其他批注类型")
+			return
+		}
 		if _, known := annotationKinds[*body.Kind]; !known {
-			writeError(w, http.StatusBadRequest, "kind 只能是 highlight / underline / question")
+			writeError(w, http.StatusBadRequest, "不支持的批注类型")
 			return
 		}
 		sets = append(sets, `kind = ?`)
@@ -415,8 +477,10 @@ func writeAnnotationMarkdown(out *strings.Builder, item Annotation) {
 		fmt.Fprintf(out, " `%s`", strings.Join(item.Tags, "` `"))
 	}
 	out.WriteString("\n")
-	for _, line := range strings.Split(strings.TrimSpace(item.Quote), "\n") {
-		fmt.Fprintf(out, "  > %s\n", line)
+	if item.Quote != "" {
+		for _, line := range strings.Split(strings.TrimSpace(item.Quote), "\n") {
+			fmt.Fprintf(out, "  > %s\n", line)
+		}
 	}
 	if item.Note != "" {
 		fmt.Fprintf(out, "  \n  批注：%s\n", strings.ReplaceAll(item.Note, "\n", "\n  "))

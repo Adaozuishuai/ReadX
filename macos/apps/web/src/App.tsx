@@ -2,7 +2,7 @@ import { Activity, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useS
 const ReaderScreen = lazy(() => import('./components/ReaderScreen').then((module) => ({ default: module.ReaderScreen })));
 const ReproductionSection = lazy(() => import('./components/ReproductionSection').then((module) => ({ default: module.ReproductionSection })));
 import { LibraryScreen } from './components/LibraryScreen';
-import type { DocumentSummary } from '@cbct/shared';
+import type { DocumentSummary, LauncherOpenRequest, LauncherTarget, LauncherWorkspace } from '@cbct/shared';
 const KnowledgeGraphSection = lazy(() => import('./components/KnowledgeGraphSection').then((module) => ({ default: module.KnowledgeGraphSection })));
 const ReadingCalendarSection = lazy(() => import('./components/ReadingCalendarSection').then((module) => ({ default: module.ReadingCalendarSection })));
 import { useAnnotations } from './hooks/useAnnotations';
@@ -25,6 +25,8 @@ import { STORAGE_KEYS } from './lib/storage';
 import { ResearchWorkbench } from './components/ResearchWorkbench';
 import { FocusPendant } from './components/research/FocusPendant';
 import { useResearchWorkbench } from './hooks/useResearchWorkbench';
+import { useLauncherCatalog } from './hooks/useLauncherCatalog';
+import { api } from './api/client';
 type Screen = 'library' | 'reader' | 'graph' | 'reproduction' | 'calendar' | 'presentation' | 'compare' | 'latex' | 'research';
 
 const MODE_KEY = STORAGE_KEYS.workspaceMode;
@@ -88,6 +90,8 @@ export default function App() {
   const [retranslateDocument, setRetranslateDocument] = useState<DocumentSummary | null>(null);
   const [processingDocument, setProcessingDocument] = useState<DocumentSummary | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [launcherRequest, setLauncherRequest] = useState<LauncherOpenRequest | null>(null);
+  const [launcherError, setLauncherError] = useState('');
   const [libraryView, setLibraryView] = useState<'all' | 'favorite' | 'trash' | 'shelves'>(
     'all',
   );
@@ -170,6 +174,36 @@ export default function App() {
     nonce: number;
   } | null>(null);
   const lastScreen = useRef<string>('library');
+
+  useEffect(() => {
+    if (popupTarget) return;
+    let running = false;
+    const syncIfConfigured = async () => {
+      if (running || document.visibilityState !== 'visible') return;
+      running = true;
+      try {
+        const settings = await api.syncSettings();
+        if (!settings.enabled) return;
+        const password = settings.provider === 'jianguoyun' ? await window.__READX_SYNC__?.getNutstorePassword() : '';
+        if (settings.provider === 'jianguoyun' && !password) return;
+        await api.syncNow({ password });
+        window.dispatchEvent(new Event('readx-sync-complete'));
+        reload();
+      } catch {
+        // A temporary cloud-folder delay is retried on the next focus/interval;
+        // the manual sync control reports errors directly in Settings.
+      } finally {
+        running = false;
+      }
+    };
+    void syncIfConfigured();
+    const timer = window.setInterval(() => { void syncIfConfigured(); }, 120_000);
+    window.addEventListener('focus', syncIfConfigured);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', syncIfConfigured);
+    };
+  }, [popupTarget, reload]);
 
   const pages =
     detail.phase.kind === 'ready'
@@ -268,6 +302,34 @@ export default function App() {
     [navigationDocuments],
   );
 
+  const launcherDocuments = useMemo(() => navigationDocuments.filter(doc => !libraryMeta.items[doc.key]?.deleted), [navigationDocuments, libraryMeta.items]);
+  const navigateFromLauncher = useCallback((target: LauncherTarget) => {
+    void (async () => {
+      try {
+        if (currentScreen.current === 'latex' && latexBeforeLeave.current && !await latexBeforeLeave.current()) return;
+        setLauncherError('');
+        setLauncherRequest(current => ({ ...target, nonce: (current?.nonce ?? 0) + 1 }));
+        changingMode.current = false;
+        setCurtain(null);
+        if (target.workspace === 'slack') { setMode('slack'); return; }
+        setMode('research');
+        if (target.workspace === 'library') {
+          if (target.id) openDocument(target.id);
+          else { setLibraryView('all'); commitScreen('library'); }
+        } else if (target.workspace === 'research') {
+          const tab = target.id?.startsWith('tab:') ? target.id.slice(4) : 'daily';
+          if (tab === 'daily' || tab === 'academics' || tab === 'news') researchWorkbench.setData(current => ({ ...current, activeTab: tab }));
+          commitScreen('research');
+        } else commitScreen(target.workspace);
+      } catch (error) { setLauncherError(error instanceof Error ? error.message : '打开工作区失败'); }
+    })();
+  }, [openDocument, researchWorkbench.setData]);
+  useLauncherCatalog({
+    current: mode === 'slack' ? 'slack' : (['library', 'research', 'presentation', 'latex'].includes(screen) ? screen as LauncherWorkspace : 'library'),
+    documents: launcherDocuments, workbench: researchWorkbench.data, onNavigate: navigateFromLauncher,
+    enabled: !popupTarget,
+  });
+
   return (
     <div
       className="flex h-full min-h-0 flex-col"
@@ -289,6 +351,7 @@ export default function App() {
             onExit={returnToResearch}
             theme={theme.choice}
             onThemeChange={theme.setTheme}
+            launchRequest={launcherRequest?.workspace === 'slack' ? launcherRequest : null}
           />
         </Suspense>
       ) : null}
@@ -339,7 +402,7 @@ export default function App() {
           onOpenAtPage={openSearchHit}
         />
       ) : screen === 'presentation' ? (
-        <PresentationWorkspace documents={navigationDocuments.filter((doc) => !libraryMeta.items[doc.key]?.deleted)} onBack={() => setScreen('library')} />
+        <PresentationWorkspace documents={launcherDocuments} onBack={() => setScreen('library')} launchRequest={launcherRequest?.workspace === 'presentation' ? launcherRequest : null} />
       ) : screen === 'compare' ? (
         <CompareWorkspace
           documents={navigationDocuments.filter((doc) => !libraryMeta.items[doc.key]?.deleted)}
@@ -348,7 +411,7 @@ export default function App() {
           onOpenDocument={openDocument}
         />
       ) : screen === 'latex' ? (
-        <LatexStudio registerBeforeLeave={registerLatexBeforeLeave} />
+        <LatexStudio registerBeforeLeave={registerLatexBeforeLeave} launchRequest={launcherRequest?.workspace === 'latex' ? launcherRequest : null} />
       ) : screen === 'reader' ? (
         <ReaderScreen
           key={selected?.id ?? 'empty'}
@@ -386,7 +449,7 @@ export default function App() {
           onOpenDocument={openDocument}
         />
       ) : screen === 'research' ? (
-        <ResearchWorkbench controller={researchWorkbench} documents={navigationDocuments.filter((doc) => !libraryMeta.items[doc.key]?.deleted)} onOpenDocument={openDocument} onReload={reload} onOpenLibrary={() => setScreen('library')} />
+        <ResearchWorkbench controller={researchWorkbench} documents={launcherDocuments} onOpenDocument={openDocument} onReload={reload} onOpenLibrary={() => setScreen('library')} launchRequest={launcherRequest?.workspace === 'research' ? launcherRequest : null} />
       ) : (
         <ReproductionSection
           document={selected}
@@ -465,6 +528,7 @@ export default function App() {
         }} />
       )}
       <ModePendant mode={mode} onMode={switchMode} />
+      {launcherError && <div role="alert" className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-4 rounded-xl border border-bad/30 bg-surface px-4 py-3 text-sm text-bad shadow-lg">{launcherError}<button type="button" onClick={() => setLauncherError('')} aria-label="关闭提示">×</button></div>}
       {curtain ? (
         <div className={`mode-curtain mode-curtain--${curtain.phase}`} aria-hidden="true">
           <div

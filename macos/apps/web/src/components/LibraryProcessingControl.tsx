@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { DocumentSummary } from '@cbct/shared';
 import { api, type DocumentProcessingJob, type JobStage } from '../api/client';
 import { AppDialog } from './AppDialog';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import './LibraryProcessingControl.css';
+import { jobStatus, reprocessStoppedJobs, stoppedDocumentJobs } from './processingJobs';
 
 const DocumentJobDialog = lazy(() => import('./DocumentJobDialog').then(module => ({ default: module.DocumentJobDialog })));
 
@@ -11,13 +12,6 @@ const STATUS_LABEL: Record<string, string> = {
   pending: '等待中', running: '处理中', done: '已完成', failed: '失败',
   skipped: '已跳过', cancelled: '已取消', interrupted: '已中断',
 };
-
-function jobStatus(job: DocumentProcessingJob): string {
-  if (job.status === 'running' || job.stages.some(stage => stage.status === 'running')) return 'running';
-  if (job.status === 'failed' || job.stages.some(stage => stage.status === 'failed')) return 'failed';
-  if (job.status === 'done' && job.stages.some(stage => stage.status === 'interrupted')) return 'interrupted';
-  return job.status;
-}
 
 function StageProgress({ stage, title }: { stage: JobStage; title: string }) {
   const complete = stage.status === 'done' || stage.status === 'skipped';
@@ -45,6 +39,9 @@ export function LibraryProcessingControl({ documents, onOpenDocument, onReload }
   const [revision, setRevision] = useState(0);
   // 一键重新处理：提交中标记 + 如实的结果提示（成功或服务端拒绝的原因）。
   const [restartingKey, setRestartingKey] = useState<string | null>(null);
+  const [batchRestarting, setBatchRestarting] = useState(false);
+  const [batchProgress, setBatchProgress] = useState('');
+  const restartLock = useRef(false);
   const [restartNotice, setRestartNotice] = useState('');
   const tracking = open || selectedJob !== null;
 
@@ -90,7 +87,8 @@ export function LibraryProcessingControl({ documents, onOpenDocument, onReload }
   const restartJob = async (job: DocumentProcessingJob) => {
     const documentKey = job.documentKey || job.key;
     const document = documents.find(doc => doc.key === documentKey);
-    if (!document || restartingKey) return;
+    if (!document || restartLock.current) return;
+    restartLock.current = true;
     setRestartingKey(job.key);
     setRestartNotice('');
     try {
@@ -100,7 +98,36 @@ export function LibraryProcessingControl({ documents, onOpenDocument, onReload }
     } catch (cause) {
       setRestartNotice(`重新处理失败：${cause instanceof Error ? cause.message : String(cause)}`);
     } finally {
+      restartLock.current = false;
       setRestartingKey(null);
+    }
+  };
+
+  const restartStopped = async () => {
+    if (restartLock.current) return;
+    restartLock.current = true;
+    setBatchRestarting(true);
+    setBatchProgress('正在检查任务…');
+    setRestartNotice('');
+    try {
+      // Reload before submitting so a task that has since started is never retried from a stale list.
+      const current = await api.documentJobs();
+      setJobs(current.jobs);
+      setError('');
+      const result = await reprocessStoppedJobs(current.jobs, key => api.retranslate(key), (finished, total) => setBatchProgress(`正在提交 ${finished}/${total}…`));
+      if (!result.total) setRestartNotice('没有需要重新处理的失败或中断任务。');
+      else {
+        const failures = result.failures.map(item => `「${item.title}」：${item.message}`).join('\n');
+        setRestartNotice(`已提交 ${result.submitted} 个任务${result.failures.length ? `，${result.failures.length} 个未能提交：\n${failures}` : '。'}`);
+      }
+      setRevision(value => value + 1);
+      onReload();
+    } catch (cause) {
+      setRestartNotice(`无法检查处理任务：${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      restartLock.current = false;
+      setBatchRestarting(false);
+      setBatchProgress('');
     }
   };
 
@@ -128,9 +155,9 @@ export function LibraryProcessingControl({ documents, onOpenDocument, onReload }
           </header>
           <div className="processing-panel-summary">
             <span>未完成 <strong>{unfinishedJobs.length}</strong></span><span>处理中 <strong>{running}</strong></span><span>已停止 <strong>{stopped}</strong></span>
-            <button type="button" onClick={() => setRevision(value => value + 1)}>刷新</button>
+            <button type="button" disabled={batchRestarting || Boolean(restartingKey) || !loaded || (!error && stoppedDocumentJobs(jobs).length === 0)} onClick={() => void restartStopped()} title="重新处理失败或中断的文档，不影响正在处理的任务">{batchRestarting ? batchProgress : '重新处理'}</button>
           </div>
-          {error ? <p className="processing-panel-error" role="alert">进度更新失败：{error}，可以点击刷新重试。</p> : null}
+          {error ? <p className="processing-panel-error" role="alert">进度更新失败：{error}，面板会自动重试。</p> : null}
           {restartNotice ? <p className="processing-panel-notice" role="status">{restartNotice}</p> : null}
           {!loaded ? <p className="processing-panel-empty" role="status">正在加载处理任务…</p> : unfinishedJobs.length === 0 && !error ? <p className="processing-panel-empty">暂无未完成的处理任务。</p> : null}
           <ul className="processing-task-list" aria-label="未完成文档处理进度">
@@ -152,7 +179,7 @@ export function LibraryProcessingControl({ documents, onOpenDocument, onReload }
                       <button
                         type="button"
                         className="processing-task-restart"
-                        disabled={restartingKey === job.key}
+                        disabled={batchRestarting || Boolean(restartingKey)}
                         onClick={() => void restartJob(job)}
                         title="重新提交处理任务：复用已有识别结果继续翻译与排版；缺少可复用结果时会如实说明"
                       >

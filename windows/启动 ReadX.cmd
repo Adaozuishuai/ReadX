@@ -11,13 +11,10 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-
 echo Starting ReadX ...
-node scripts\ensure-built.mjs
+node scripts\start-desktop.mjs
 if errorlevel 1 (
   echo [ERROR] Build failed. See the output above.
   pause
   exit /b 1
 )
-
-start "" "node_modules\electron\dist\electron.exe" "apps\desktop"

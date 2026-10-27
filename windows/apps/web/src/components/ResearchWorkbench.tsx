@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DocumentSummary } from '@cbct/shared';
+import type { DocumentSummary, LauncherOpenRequest } from '@cbct/shared';
 import { focusSeconds, formatFocusClock, isFocusRunning, localDay, totalFocusMinutes, type WorkbenchTab } from '../lib/researchWorkbench';
 import { useFocusClock, type ResearchWorkbenchController } from '../hooks/useResearchWorkbench';
 import { WorkspaceIcon } from './WorkspaceIcon';
@@ -14,9 +14,10 @@ const pages = {
   news: { title: '资讯追踪', description: '浏览领域更新，把值得继续阅读的内容留下来。', icon: 'rss' },
 } as const;
 
-export function ResearchWorkbench({ documents, onOpenDocument, onReload, onOpenLibrary, controller }: {
+export function ResearchWorkbench({ documents, onOpenDocument, onReload, onOpenLibrary, controller, launchRequest }: {
   documents: DocumentSummary[]; onOpenDocument: (id: string) => void; onReload: () => void; onOpenLibrary: () => void;
   controller: ResearchWorkbenchController;
+  launchRequest?: LauncherOpenRequest | null;
 }) {
   const { data, setData } = controller;
   const now = useFocusClock(data.focusSession);
@@ -39,7 +40,7 @@ export function ResearchWorkbench({ documents, onOpenDocument, onReload, onOpenL
       <div className="rw-sidebar-brand"><span className="rw-brand-mark"><WorkspaceIcon name="grid" size={21} /></span><div><strong>工作台</strong><span>ReadX Workspace</span></div></div>
       <div className="rw-sidebar-primary">
         <button className="rw-side-link" onClick={onOpenLibrary}><WorkspaceIcon name="library" /><span>个人书库</span><WorkspaceIcon name="chevronRight" size={14} /></button>
-        <button className="rw-side-link active" aria-current="page"><WorkspaceIcon name="panel" /><span>学术工作台</span></button>
+        <button className="rw-side-link active" aria-current="page"><WorkspaceIcon name="graduation" /><span>学术工作台</span></button>
       </div>
       <div className="rw-sidebar-caption">研究空间</div>
       <nav className="rw-sidebar-subnav" aria-label="学术工作台页面">
@@ -64,7 +65,7 @@ export function ResearchWorkbench({ documents, onOpenDocument, onReload, onOpenL
           {tab === 'daily' && <button className="rw-button rw-primary" onClick={() => { const input = document.getElementById('rw-task-input'); input?.scrollIntoView({ behavior: 'smooth', block: 'center' }); input?.focus({ preventScroll: true }); }}><WorkspaceIcon name="plus" size={16} />添加任务</button>}
           {tab === 'academics' && <button className="rw-button" onClick={() => setSettingsOpen(true)}><WorkspaceIcon name="settings" size={16} />培养设置</button>}
         </header>
-        {tab === 'daily' ? <ResearchDaily data={data} setData={setData} now={now} documents={documents} onOpenDocument={onOpenDocument} onOpenLibrary={onOpenLibrary} />
+        {tab === 'daily' ? <ResearchDaily data={data} setData={setData} now={now} documents={documents} onOpenDocument={onOpenDocument} onOpenLibrary={onOpenLibrary} launchRequest={launchRequest} />
           : tab === 'academics' ? <ResearchAcademics data={data} setData={setData} now={now} settingsOpen={settingsOpen} onCloseSettings={() => setSettingsOpen(false)} />
           : <ResearchNews data={data} setData={setData} documents={documents} onReload={onReload} />}
       </div>

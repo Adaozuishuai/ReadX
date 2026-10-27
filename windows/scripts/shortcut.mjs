@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const useBrowser = args.includes('--browser');
+const useDesktop = args.includes('--desktop');
 const nameIndex = args.indexOf('--name');
 const shortcutName = nameIndex >= 0 && args[nameIndex + 1] ? args[nameIndex + 1] : 'ReadX';
 
@@ -114,7 +115,7 @@ function main() {
   let shortcutArgs;
   let workingDirectory;
   let windowStyle = 1;
-  if (existing) {
+  if (existing && !useDesktop && !useBrowser) {
     ({ target, args: shortcutArgs, workingDirectory } = existing);
     // 原先用隐藏窗口的 PowerShell 启动器：继续最小化，避免闪一下控制台。
     if (/powershell(?:\.exe)?$/i.test(target)) windowStyle = 7;
@@ -124,9 +125,10 @@ function main() {
     workingDirectory = root;
     windowStyle = 7;
   } else {
-    target = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe');
-    shortcutArgs = `"${path.join(root, 'apps', 'desktop')}"`;
+    target = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    shortcutArgs = `-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(root, 'scripts', 'start-desktop.ps1')}"`;
     workingDirectory = root;
+    windowStyle = 7;
   }
   if (!fs.existsSync(target)) throw new Error(`启动目标不存在：${target}`);
 

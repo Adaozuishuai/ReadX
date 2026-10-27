@@ -1,7 +1,9 @@
 {
   "name": "cbct-reading-v2",
   "version": "1.0.3",
-  "author": { "name": "Lee" },
+  "author": {
+    "name": "Lee"
+  },
   "private": true,
   "description": "ReadX — macOS / Go + React + Electron；核心源码由 Windows 基准同步",
   "workspaces": [
@@ -25,8 +27,10 @@
     "test:import": "node scripts/import-smoke.cjs",
     "test:presentation": "node scripts/test-presentation.cjs",
     "build:go": "node scripts/build-server.mjs",
-    "test": "npm run test:go && npm run test -w @cbct/shared && npm run test:latex && npm run test:books && node --test scripts/research-workbench.test.cjs && npm run typecheck && npm run test -w @cbct/desktop",
+    "test": "npm run test:go && npm run test -w @cbct/shared && npm run test:latex && npm run test:books && npm run test:margin-notes && npm run test:processing && node --test scripts/research-workbench.test.cjs && npm run typecheck && npm run test -w @cbct/desktop",
     "test:books": "node --test scripts/book-sources.test.cjs",
+    "test:margin-notes": "node --test scripts/margin-note.test.cjs",
+    "test:processing": "node --test scripts/processing-jobs.test.cjs",
     "test:latex": "node --test scripts/latex-state.test.cjs",
     "dev": "node scripts/dev.mjs",
     "start": "node scripts/dev.mjs --built",
@@ -40,7 +44,8 @@
   },
   "allowScripts": {
     "electron@44.2.0": true,
-    "electron-winstaller@5.4.0": true
+    "electron-winstaller@5.4.0": true,
+    "uiohook-napi@1.5.5": true
   },
   "devDependencies": {
     "electron-builder": "^26.15.3"

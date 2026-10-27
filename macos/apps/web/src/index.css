@@ -1374,6 +1374,48 @@
   .reader-find-count { max-width:125px; }
 }
 .pdf-marks { position:absolute;inset:0;z-index:1;pointer-events:none; }
+@font-face { font-family:'ReadX Handwriting';src:url('/fonts/MaShanZheng-Regular.ttf') format('truetype');font-display:swap; }
+.pdf-margin-note { position:absolute;z-index:4;display:block;padding:2px;border:0;background:transparent;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.32;font-family:'ReadX Handwriting',KaiTi,STKaiti,cursive;cursor:move;touch-action:none;user-select:none; }
+.pdf-margin-note-text { display:block;width:100%;height:100%;overflow:auto; }
+.pdf-margin-resize { position:absolute;right:0;bottom:0;width:14px;height:14px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;opacity:0;cursor:nwse-resize; }
+.pdf-margin-note:hover .pdf-margin-resize,.pdf-margin-note:focus-visible .pdf-margin-resize,.pdf-margin-note.ann-focused .pdf-margin-resize { opacity:.8; }
+@media (hover:none) { .pdf-margin-resize { opacity:.65; } }
+.pdf-margin-note:hover,.pdf-margin-note:focus-visible,.pdf-margin-note.ann-focused { outline:1px dashed currentColor;outline-offset:3px; }
+.pdf-margin-note--sky { color:#315d99; }.pdf-margin-note--amber { color:#8b603a; }.pdf-margin-note--rose { color:#ad4f50; }.pdf-margin-note--green { color:#39745b; }.pdf-margin-note--violet { color:#785998; }
+.app-dialog.margin-note-dialog { width:min(520px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:0;overflow:auto;border:1px solid var(--color-line);border-radius:20px;background:var(--color-surface);box-shadow:0 24px 80px #10291e38; }
+.margin-note-dialog-head { display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:25px 26px 19px; }
+.margin-note-page { display:flex;align-items:center;gap:7px;color:var(--color-accent);font-size:11px;font-weight:650;letter-spacing:.04em; }
+.margin-note-page i { width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.6; }
+.margin-note-dialog-head h2 { margin:7px 0 0;color:var(--color-ink);font-size:22px;line-height:1.3;font-weight:700;letter-spacing:-.03em; }
+.margin-note-dialog-head p { margin:6px 0 0;color:var(--color-ink-soft);font-size:12px;line-height:1.6; }
+.margin-note-dialog .margin-note-close { display:grid;place-items:center;flex:none;width:32px;height:32px;padding:0;border:1px solid var(--color-line);border-radius:10px;background:var(--color-surface);color:var(--color-ink-soft);font-size:20px;line-height:1; }
+.margin-note-dialog .margin-note-close:hover { background:var(--color-surface-sunk);color:var(--color-ink); }
+.margin-note-quote { margin:0 26px 18px;padding:11px 14px;border-left:2px solid var(--color-accent);border-radius:0 8px 8px 0;background:var(--color-surface-sunk); }
+.margin-note-quote span { color:var(--color-accent);font-size:10px;font-weight:650; }
+.margin-note-quote p { display:-webkit-box;overflow:hidden;-webkit-line-clamp:2;-webkit-box-orient:vertical;margin:5px 0 0;color:var(--color-ink-soft);font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
+.margin-note-writing { --note-ink:#315d99;margin:0 26px; }
+.margin-note-writing[data-color='amber'] { --note-ink:#8b603a; }.margin-note-writing[data-color='rose'] { --note-ink:#ad4f50; }.margin-note-writing[data-color='green'] { --note-ink:#39745b; }.margin-note-writing[data-color='violet'] { --note-ink:#785998; }
+.margin-note-writing label,.margin-note-options legend { display:block;margin:0 0 8px;padding:0;color:var(--color-ink);font-size:12px;font-weight:650; }
+.margin-note-writing textarea { display:block;width:100%;min-height:145px;max-height:32vh;resize:vertical;padding:14px 16px;border:1px solid var(--color-line);border-radius:12px;background:var(--color-surface);color:var(--note-ink);font:19px/1.65 'ReadX Handwriting',KaiTi,STKaiti,cursive; }
+.margin-note-writing textarea::placeholder { color:var(--color-ink-faint);opacity:.7; }
+.margin-note-writing textarea:focus { border-color:var(--color-accent);outline:3px solid color-mix(in srgb,var(--color-accent) 13%,transparent); }
+.margin-note-options { display:flex;align-items:end;justify-content:space-between;gap:12px;margin:19px 26px 21px; }
+.margin-note-options fieldset { min-width:0;margin:0;padding:0;border:0; }
+.margin-note-colors { display:flex;align-items:center;gap:8px; }
+.margin-note-dialog .margin-note-color { display:grid;place-items:center;width:27px;height:27px;padding:3px;border:1px solid transparent;border-radius:50%;background:transparent; }
+.margin-note-color span { display:block;width:17px;height:17px;border-radius:50%;background:var(--swatch); }
+.margin-note-color--sky { --swatch:#315d99; }.margin-note-color--amber { --swatch:#8b603a; }.margin-note-color--rose { --swatch:#ad4f50; }.margin-note-color--green { --swatch:#39745b; }.margin-note-color--violet { --swatch:#785998; }
+.margin-note-dialog .margin-note-color[aria-pressed='true'] { border-color:var(--swatch); }
+.margin-note-dialog .margin-note-color:hover { background:var(--color-surface-sunk); }
+.margin-note-options > p { margin:0 0 5px;color:var(--color-ink-faint);font-size:11px;line-height:1.4;text-align:right; }
+.margin-note-error { margin:0 26px 14px;color:var(--color-bad);font-size:12px; }
+.margin-note-dialog-actions { display:flex;align-items:center;gap:8px;padding:16px 26px;border-top:1px solid var(--color-line);background:var(--color-surface-sunk); }
+.margin-note-dialog-actions > :first-child { margin-right:auto; }
+.margin-note-dialog .margin-note-delete,.margin-note-dialog .margin-note-cancel,.margin-note-dialog .margin-note-save { min-height:36px;padding:7px 14px;border:1px solid var(--color-line);border-radius:9px;background:var(--color-surface);color:var(--color-ink);font-size:12px;font-weight:600; }
+.margin-note-dialog .margin-note-delete { border-color:transparent;background:transparent;color:var(--color-bad); }
+.margin-note-dialog .margin-note-save { border-color:var(--color-accent);background:var(--color-accent);color:var(--color-on-accent); }
+.margin-note-dialog .margin-note-save:hover:not(:disabled) { filter:brightness(.94); }
+@media (max-width:480px) { .margin-note-dialog-head { padding:20px 20px 16px; }.margin-note-quote { margin:0 20px 16px; }.margin-note-writing { margin:0 20px; }.margin-note-options { align-items:start;flex-direction:column;margin:16px 20px 18px; }.margin-note-options > p { text-align:left; }.margin-note-dialog-actions { padding:14px 20px; } }
 .pdf-mark { position:absolute;opacity:1;mix-blend-mode:normal; }
 .pdf-mark-highlight { inset:0;width:100%;height:100%;overflow:visible; }
 .epub-scroll { flex:1;min-height:0;overflow:auto;padding:36px clamp(20px,4vw,64px);background:var(--color-surface); }
@@ -1580,6 +1622,9 @@ button:disabled { opacity:.5;cursor:default; }
 .ai-ocr-card .checkbox-label { display:flex;align-items:center;gap:6px; }
 .ai-ocr-card > header .ai-chip { margin-left:auto; }
 .ai-ocr-actions { display:flex;justify-content:flex-end;margin-top:10px; }
+.ai-sync-folder { display:flex;gap:8px; }
+.ai-sync-folder input { min-width:0;flex:1; }
+.ai-sync-folder button { flex:0 0 auto; }
 
 .import-result { padding:12px 0;border-bottom:1px solid var(--color-line); }
 .import-result button { margin-top:8px; }
@@ -1985,6 +2030,8 @@ button:disabled { opacity:.5;cursor:default; }
 .library-view-actions { display:flex; flex:none; align-items:center; gap:var(--space-2); flex-wrap:nowrap; margin-left:auto; }
 .library-toolbar-inline { display:flex; align-items:center; gap:var(--space-2); white-space:nowrap; }
 .library-toolbar-command { display:inline-flex; align-items:center; min-height:36px; padding:var(--space-2) var(--space-3); border:1px solid var(--color-line); border-radius:var(--radius-md); background:var(--color-surface); color:var(--color-ink-soft); font-size:var(--type-sm); white-space:nowrap; }
+.library-toolbar-command.sync-command { flex-shrink:0; color:#2563eb; }
+.library-toolbar-command.sync-command:hover:not(:disabled) { color:#1d4ed8; }
 .library-toolbar-command:hover:not(:disabled) { border-color:var(--color-accent); color:var(--color-accent); }
 .library-toolbar-command.danger { color:var(--color-bad); }
 .library-toolbar-command:disabled { opacity:.5; }

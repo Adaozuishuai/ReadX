@@ -39,6 +39,7 @@ type Server struct {
 	zLibrary            *booksources.ZLibrary
 	downloadPublication func(context.Context, string, int64, func(int64, int64)) ([]byte, string, error)
 	settingsMu          sync.Mutex
+	syncMu              sync.Mutex
 	realtimeMu          sync.Mutex
 	realtimeSessions    map[string]*latexRealtimeSession
 	workBuddyLoginMu    sync.Mutex
@@ -84,6 +85,8 @@ func (s *Server) Handler() http.Handler {
 
 	withAuth := func(h http.HandlerFunc) http.Handler { return s.requireBearer(h) }
 	mux.Handle("/v1/meta", withAuth(s.handleMeta))
+	mux.Handle("/v1/sync/settings", withAuth(s.handleSyncSettings))
+	mux.Handle("/v1/sync", withAuth(s.handleSyncNow))
 	mux.Handle("GET /v1/books/search", withAuth(s.handleSlackBookSearch))
 	mux.Handle("GET /v1/books/download", withAuth(s.handleSlackBookDownload))
 	mux.Handle("GET /v1/books/fetch-web", withAuth(s.handleSlackWebSourceFetch))
