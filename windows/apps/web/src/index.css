@@ -2504,6 +2504,10 @@ button:disabled { opacity:.5;cursor:default; }
 .job-live-shortcut { padding:6px 11px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-surface); color:var(--color-ink-soft); font-size:10px; }
 .job-actions { display:flex; align-items:center; gap:12px; min-height:45px; padding:7px 11px; border:1px solid var(--color-line); border-radius:11px; background:var(--color-surface); }
 .job-dialog .job-cancel { border:0; background:transparent; color:var(--color-bad); font-size:11px; }
+/* 中断/失败后的一键重新处理：放在「取消任务」的位置，但更醒目。 */
+.job-dialog .job-restart { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid var(--color-accent); border-radius:8px; background:var(--color-accent-soft); color:var(--color-accent); font-size:11px; font-weight:550; cursor:pointer; }
+.job-dialog .job-restart:hover:not(:disabled) { background:var(--color-accent); color:var(--color-canvas); }
+.job-dialog .job-restart:disabled { opacity:.55; cursor:default; }
 .job-action-note { color:var(--color-ink-faint); font-size:10px; }
 .job-meta { margin-left:auto; color:var(--color-ink-faint); font-size:10px; }
 .job-dialog .job-actions button:last-child { padding:6px 10px; border:1px solid var(--color-line); border-radius:8px; background:var(--color-surface); color:var(--color-ink-soft); font-size:10px; }

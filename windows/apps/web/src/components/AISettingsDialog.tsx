@@ -7,9 +7,8 @@ import { AppDialog } from './AppDialog';
 /**
  * 服务商预设：点一下即填好「渠道 + 地址 + 建议模型」，仍然只落一份配置。
  *
- * 关键映射：DeepSeek / Kimi / 通义 / GLM / 硅基流动 / 火山方舟 / OpenRouter / Ollama /
- * LM Studio 在本应用里都是「OpenAI 兼容」渠道，差异只在服务地址与建议模型；Anthropic 与
- * 三个 CLI 渠道才是真正的另一种接入方式。logo 指向 providerLogos 里的品牌标识。
+ * 多数云服务与本地模型使用「OpenAI 兼容」渠道，差异在服务地址与建议模型；
+ * Anthropic 和本机登录渠道使用各自的接入方式。logo 指向 providerLogos 里的品牌标识。
  */
 interface ProviderPreset {
   id: string;
@@ -33,7 +32,15 @@ const PRESETS: ProviderPreset[] = [
   { id: 'glm', name: '智谱 GLM', kind: 'openai', baseURL: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus' },
   { id: 'siliconflow', name: '硅基流动', kind: 'openai', baseURL: 'https://api.siliconflow.cn/v1' },
   { id: 'volcengine', name: '火山方舟', kind: 'openai', baseURL: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { id: 'qianfan', name: '百度千帆', kind: 'openai', baseURL: 'https://qianfan.baidubce.com/v2', model: 'deepseek-r1' },
+  { id: 'tokenhub', name: '腾讯 TokenHub', kind: 'openai', baseURL: 'https://tokenhub.tencentmaas.com/v1', model: 'hy3' },
+  { id: 'hunyuan', name: '腾讯混元（原平台）', kind: 'openai', baseURL: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-turbos-latest' },
   { id: 'openai', name: 'OpenAI', kind: 'openai', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  { id: 'gemini', name: 'Google Gemini', kind: 'openai', baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.8-flash' },
+  { id: 'xai', name: 'xAI / Grok', kind: 'openai', baseURL: 'https://api.x.ai/v1', model: 'grok-4.7' },
+  { id: 'groq', name: 'Groq', kind: 'openai', baseURL: 'https://api.groq.com/openai/v1', model: 'llama-3.1-8b-instant' },
+  { id: 'mistral', name: 'Mistral AI', kind: 'openai', baseURL: 'https://api.mistral.ai/v1', model: 'mistral-small-latest' },
+  { id: 'deepinfra', name: 'DeepInfra', kind: 'openai', baseURL: 'https://api.deepinfra.com/v1/openai', model: 'deepseek-ai/DeepSeek-V4.1-Flash' },
   { id: 'anthropic', name: 'Anthropic', kind: 'anthropic', baseURL: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5' },
   { id: 'openrouter', name: 'OpenRouter', kind: 'openai', baseURL: 'https://openrouter.ai/api/v1' },
   { id: 'ollama', name: '本机 Ollama', kind: 'openai', baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5:7b', local: true },
@@ -124,6 +131,8 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
   }, [modelOpen]);
   const cli = ['codex', 'claude', 'kimi'].includes(provider);
   const active = presetOf(provider, baseURL);
+  const currentConnectionHasKey = settings?.keyConfigured && settings.provider === provider
+    && settings.baseURL.trim().replace(/\/+$/, '').toLowerCase() === baseURL.trim().replace(/\/+$/, '').toLowerCase();
   /** 界面统一用这个判断"当前是哪家"：自定义优先，否则靠地址反推。 */
   const activeId = customMode ? 'custom' : active?.id;
   /**
@@ -493,7 +502,7 @@ export function AISettingsDialog({ onClose }: { onClose: () => void }) {
                 value={key}
                 disabled={busy}
                 onChange={(event) => setKey(event.target.value)}
-                placeholder={settings?.keyConfigured ? '已保存 Key；留空保留当前地址的 Key' : '填写服务商提供的密钥'}
+                placeholder={currentConnectionHasKey ? '已保存 Key；留空保留当前地址的 Key' : '填写服务商提供的密钥；留空使用该地址已保存的 Key'}
                 aria-label="API Key"
               />
               <label className="checkbox-label">

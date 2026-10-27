@@ -3,6 +3,7 @@ import { statusLabel } from '@cbct/shared';
 import type { Category, DocumentMeta } from '../api/client';
 import { categoryDot } from '../categories';
 import { LibraryTrashButton } from './LibraryTrashButton';
+import { PaperLineArt } from './PaperLineArt';
 
 /** 封面四色循环：复刻参考实现的 cover-0..3 配色与几何装饰。 */
 function coverIndex(key: string): number {
@@ -13,8 +14,7 @@ function coverIndex(key: string): number {
 
 /**
  * 书库封面卡：参考实现的书卡布局（大封面 + 标题行 + 状态行 + 进度条）。
- * 封面不加载真实缩略图——v2 没有封面图管线，用色块 + 标题排印代替，
- * 保留参考实现的版式与信息层级。
+ * 文献封面根据题名、标签和已有首页正文选择线稿。
  */
 export function LibraryCard({
   doc,
@@ -54,6 +54,7 @@ export function LibraryCard({
         className={`book-cover cover-${cover}`}
         title={doc.title || doc.key}
       >
+        <PaperLineArt doc={doc} meta={meta} />
         <span className="cover-top">
           <span>{doc.format === 'epub' ? 'EPUB' : 'PDF'}</span>
           <span>{doc.year ?? ''}</span>
@@ -66,7 +67,6 @@ export function LibraryCard({
           </span>
         </span>
         <span className="cover-bottom">
-          <span className="cover-decoration" aria-hidden="true" />
         </span>
       </button>
       <LibraryTrashButton title={doc.title || doc.key} deleted={Boolean(meta?.deleted)} onToggle={onToggleTrash} className="book-trash-button" />

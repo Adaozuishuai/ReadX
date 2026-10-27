@@ -1034,7 +1034,7 @@ function ShelfOverview({
       {!categories.length ? <p className="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-ink-soft">先在左侧点击「+ 新建书架」，再用论文卡片上的「归入书架」整理同领域论文。</p> : null}
       {groups.map((shelf, index) => (
         <section key={shelf.name} className="shelf-collection">
-          <ShelfCover name={shelf.name} color={shelf.color} count={shelf.docs.length} index={index} />
+          <ShelfCover name={shelf.name} color={shelf.color} documents={shelf.docs} index={index} />
           <div className="shelf-collection-body">
           {shelf.docs.length ? <div className="book-grid">
             {shelf.docs.map((doc) => <LibraryCard

@@ -43,6 +43,9 @@ export function LibraryProcessingControl({ documents, onOpenDocument, onReload }
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  // 一键重新处理：提交中标记 + 如实的结果提示（成功或服务端拒绝的原因）。
+  const [restartingKey, setRestartingKey] = useState<string | null>(null);
+  const [restartNotice, setRestartNotice] = useState('');
   const tracking = open || selectedJob !== null;
 
   useEffect(() => {
@@ -77,6 +80,36 @@ export function LibraryProcessingControl({ documents, onOpenDocument, onReload }
     ? documents.find(doc => doc.key === (selectedTask.documentKey || selectedTask.key))
     : undefined;
 
+  /**
+   * 一键重新处理停在中途的任务（中断/失败/取消）。
+   *
+   * 走书库里「重新翻译」的同一条接口：有可复用的识别结果就续着翻，
+   * 没有就把服务端的原因原样带回来（例如要先重新识别），不假装成功。
+   * 只有已入库的 PDF 能走这条路：还在导入中的文档没有库键，EPUB 不参与翻译。
+   */
+  const restartJob = async (job: DocumentProcessingJob) => {
+    const documentKey = job.documentKey || job.key;
+    const document = documents.find(doc => doc.key === documentKey);
+    if (!document || restartingKey) return;
+    setRestartingKey(job.key);
+    setRestartNotice('');
+    try {
+      await api.retranslate(document.key);
+      setRestartNotice(`已重新提交「${document.title || document.key}」的处理任务。`);
+      setRevision(value => value + 1);
+    } catch (cause) {
+      setRestartNotice(`重新处理失败：${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setRestartingKey(null);
+    }
+  };
+
+  const restartable = (job: DocumentProcessingJob, status: string) => {
+    if (!['failed', 'interrupted', 'cancelled'].includes(status)) return false;
+    const document = documents.find(doc => doc.key === (job.documentKey || job.key));
+    return Boolean(document && document.format !== 'epub');
+  };
+
   useEffect(() => {
     if (selectedTask && !selectedDocument && (selectedTask.documentKey || selectedTask.status === 'done')) onReload();
   }, [selectedTask?.key, selectedTask?.documentKey, selectedTask?.status, selectedDocument?.id, onReload]);
@@ -98,6 +131,7 @@ export function LibraryProcessingControl({ documents, onOpenDocument, onReload }
             <button type="button" onClick={() => setRevision(value => value + 1)}>刷新</button>
           </div>
           {error ? <p className="processing-panel-error" role="alert">进度更新失败：{error}，可以点击刷新重试。</p> : null}
+          {restartNotice ? <p className="processing-panel-notice" role="status">{restartNotice}</p> : null}
           {!loaded ? <p className="processing-panel-empty" role="status">正在加载处理任务…</p> : unfinishedJobs.length === 0 && !error ? <p className="processing-panel-empty">暂无未完成的处理任务。</p> : null}
           <ul className="processing-task-list" aria-label="未完成文档处理进度">
             {unfinishedJobs.map(job => {
@@ -113,6 +147,19 @@ export function LibraryProcessingControl({ documents, onOpenDocument, onReload }
                     <span className="processing-task-stages">{job.stages.map(stage => <StageProgress key={stage.key} stage={stage} title={title} />)}</span>
                     {message ? <span className="processing-task-message" title={message}>{message}</span> : null}
                   </button>
+                  {restartable(job, status) ? (
+                    <div className="processing-task-actions">
+                      <button
+                        type="button"
+                        className="processing-task-restart"
+                        disabled={restartingKey === job.key}
+                        onClick={() => void restartJob(job)}
+                        title="重新提交处理任务：复用已有识别结果继续翻译与排版；缺少可复用结果时会如实说明"
+                      >
+                        <span aria-hidden="true">↻</span> {restartingKey === job.key ? '正在提交…' : '重新处理'}
+                      </button>
+                    </div>
+                  ) : null}
                 </li>
               );
             })}

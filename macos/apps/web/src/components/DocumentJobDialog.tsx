@@ -85,10 +85,15 @@ export function DocumentJobDialog({
   onClose: () => void;
   onOpenReader: () => void;
 }) {
-  const effectiveKey = pending && !jobKey ? '' : jobKey || document.key;
-  const assetKey = fileKey || effectiveKey;
+  // 重新处理后改追新的任务键（retranslate-*）：任务键会变，但资源永远属于文档。
+  const [restartJobKey, setRestartJobKey] = useState<string | null>(null);
+  const activeJobKey = restartJobKey ?? jobKey ?? null;
+  const effectiveKey = pending && !jobKey ? '' : activeJobKey || document.key;
+  // 追 retranslate 任务时不能用任务键找文件：原版 PDF 与封面都在文档名下。
+  const assetKey = fileKey || (restartJobKey ? document.key : effectiveKey);
   const [tab, setTab] = useState<Tab>('progress');
   const [job, setJob] = useState<DocumentJob | null>(null);
+  const [restarting, setRestarting] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [cover, setCover] = useState('');
   const [notice, setNotice] = useState('');
@@ -205,6 +210,28 @@ export function DocumentJobDialog({
     }
   };
 
+  /**
+   * 一键重新处理：中断/失败/取消之后，点一下就把处理任务重新提交。
+   *
+   * 走的是书库里「重新翻译」的同一条接口：有可复用的识别结果就直接续着翻，
+   * 没有就如实把服务端的原因带回来（例如需要先重新识别），绝不假装成功。
+   */
+  const restart = async () => {
+    if (!libraryKey || restarting) return;
+    setRestarting(true);
+    setNotice('');
+    try {
+      const result = await api.retranslate(libraryKey);
+      setRestartJobKey(result.jobKey);
+      setNotice('已重新提交处理任务，正在跟踪新的进度。');
+      setRefreshKey((value) => value + 1);
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRestarting(false);
+    }
+  };
+
   const status = job?.status ?? '';
   const jobRunning = status === 'running' || pending;
   const pages = job?.pages || 0;
@@ -240,6 +267,14 @@ export function DocumentJobDialog({
       ? document.format === 'epub' ? '正在上传文件，任务创建后显示章节导入状态' : '正在上传文件，任务创建后显示 OCR 进度'
       : document.format === 'epub' ? '导入后这里会显示 EPUB 章节导入状态。' : '导入后这里会显示 LeePDF 的 OCR、翻译与渲染进度。';
   const openDisabled = importing || !effectiveKey || job?.status === 'failed' || job?.status === 'cancelled';
+  // 能否一键重新处理：文档已入库（PDF）、当前没有在跑的任务、且翻译这一段确实停在中途。
+  const translateInterrupted = translateStage
+    ? ['interrupted', 'failed', 'cancelled'].includes(translateStage.status)
+    : false;
+  const libraryKey = fileKey || (!importing ? document.key : '');
+  const reprocessable = Boolean(job) && Boolean(libraryKey) && !importing && !pending
+    && !tracking && document.format !== 'epub'
+    && (['interrupted', 'failed', 'cancelled'].includes(status) || translateInterrupted);
 
   return (
     <AppDialog open onClose={onClose} className="job-dialog" aria-label="文档任务">
@@ -365,7 +400,20 @@ export function DocumentJobDialog({
                 {jobRunning ? (
                   <button type="button" className="job-cancel" onClick={cancel}>取消任务</button>
                 ) : (
-                  <span className="job-action-note">{memoryRunning ? '译文已入库，论文记忆后台整理中' : job ? `任务${STATUS_LABEL[status] ?? status}` : '尚无运行中的任务'}</span>
+                  <>
+                    {reprocessable ? (
+                      <button
+                        type="button"
+                        className="job-restart"
+                        onClick={() => void restart()}
+                        disabled={restarting}
+                        title="重新提交处理任务：复用已有识别结果继续翻译与排版；缺少可复用结果时会如实说明"
+                      >
+                        <span aria-hidden="true">↻</span> {restarting ? '正在提交…' : '重新处理'}
+                      </button>
+                    ) : null}
+                    <span className="job-action-note">{memoryRunning ? '译文已入库，论文记忆后台整理中' : job ? `任务${STATUS_LABEL[status] ?? status}` : '尚无运行中的任务'}</span>
+                  </>
                 )}
                 <span className="job-meta">{document.format === 'epub' ? 'EPUB · 章节结构' : `OCR · ${job?.stages.find((stage) => stage.key === 'ocr')?.status === 'done' ? '已识别' : '未完成'}`}</span>
                 <button type="button" onClick={() => setDetailsOpen((value) => !value)}>

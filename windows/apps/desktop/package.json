@@ -1,6 +1,6 @@
 {
   "name": "@cbct/desktop",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": { "name": "Lee" },
   "private": true,
   "description": "v2 Electron 壳：负责 Go server 生命周期与本地 token 注入，不含业务逻辑",
